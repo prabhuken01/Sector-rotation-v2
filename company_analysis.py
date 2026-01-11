@@ -67,11 +67,21 @@ def display_company_momentum_tab():
         weight = company_info.get('weight', 0)
         
         # Calculate indicators
-        rsi = calculate_rsi(data)
-        adx, plus_di, minus_di, di_spread = calculate_adx(data)
-        cmf = calculate_cmf(data)
-        mansfield_rs = calculate_mansfield_rs(data, benchmark_data)
-        adx_z = calculate_z_score(adx.dropna())
+        rsi_series = calculate_rsi(data)
+        adx_series, plus_di_series, minus_di_series, di_spread_series = calculate_adx(data)
+        cmf_series = calculate_cmf(data)
+        mansfield_rs_series = calculate_mansfield_rs(data, benchmark_data)
+        adx_z_series = calculate_z_score(adx_series.dropna())
+        
+        # Get latest values from Series
+        rsi = rsi_series.iloc[-1] if len(rsi_series) > 0 else None
+        adx = adx_series.iloc[-1] if len(adx_series) > 0 else None
+        plus_di = plus_di_series.iloc[-1] if len(plus_di_series) > 0 else None
+        minus_di = minus_di_series.iloc[-1] if len(minus_di_series) > 0 else None
+        di_spread = di_spread_series.iloc[-1] if len(di_spread_series) > 0 else None
+        cmf = cmf_series.iloc[-1] if len(cmf_series) > 0 else None
+        mansfield_rs = mansfield_rs_series.iloc[-1] if len(mansfield_rs_series) > 0 else None
+        adx_z = adx_z_series.iloc[-1] if len(adx_z_series) > 0 else None
         
         # RS Rating vs Nifty 50
         sector_returns = data['Close'].pct_change().dropna()
@@ -98,15 +108,15 @@ def display_company_momentum_tab():
             'Company': company_name,
             'Symbol': company_symbol,
             'Weight (%)': f"{weight:.1f}" if weight > 0 else "N/A",
-            'RSI ℹ️': f"{float(rsi):.1f}" if pd.notna(rsi) else "N/A",
-            'ADX ℹ️': f"{float(adx):.1f}" if pd.notna(adx) else "N/A",
-            'ADX_Z ℹ️': f"{float(adx_z):.1f}" if pd.notna(adx_z) else "N/A",
-            '+DI ℹ️': f"{float(plus_di):.1f}" if pd.notna(plus_di) else "N/A",
-            '-DI ℹ️': f"{float(minus_di):.1f}" if pd.notna(minus_di) else "N/A",
-            'DI_Spread ℹ️': f"{float(di_spread):.1f}" if pd.notna(di_spread) else "N/A",
-            'CMF ℹ️': f"{float(cmf):.2f}" if pd.notna(cmf) else "N/A",
+            'RSI ℹ️': f"{float(rsi):.1f}" if rsi is not None and pd.notna(rsi) else "N/A",
+            'ADX ℹ️': f"{float(adx):.1f}" if adx is not None and pd.notna(adx) else "N/A",
+            'ADX_Z ℹ️': f"{float(adx_z):.1f}" if adx_z is not None and pd.notna(adx_z) else "N/A",
+            '+DI ℹ️': f"{float(plus_di):.1f}" if plus_di is not None and pd.notna(plus_di) else "N/A",
+            '-DI ℹ️': f"{float(minus_di):.1f}" if minus_di is not None and pd.notna(minus_di) else "N/A",
+            'DI_Spread ℹ️': f"{float(di_spread):.1f}" if di_spread is not None and pd.notna(di_spread) else "N/A",
+            'CMF ℹ️': f"{float(cmf):.2f}" if cmf is not None and pd.notna(cmf) else "N/A",
             'RS_Rating ℹ️': f"{rs_rating:.1f}",
-            'Mansfield_RS ℹ️': f"{float(mansfield_rs):.1f}" if pd.notna(mansfield_rs) else "N/A",
+            'Mansfield_RS ℹ️': f"{float(mansfield_rs):.1f}" if mansfield_rs is not None and pd.notna(mansfield_rs) else "N/A",
             'Momentum_Score ℹ️': f"{momentum_score:.1f}",
         })
     
@@ -186,19 +196,26 @@ def display_company_reversal_tab():
         weight = company_info.get('weight', 0)
         
         # Calculate indicators
-        rsi = calculate_rsi(data)
-        adx, plus_di, minus_di, di_spread = calculate_adx(data)
-        cmf = calculate_cmf(data)
-        adx_z = calculate_z_score(adx.dropna())
-        mansfield_rs = calculate_mansfield_rs(data, benchmark_data)
+        rsi_series = calculate_rsi(data)
+        adx_series, plus_di_series, minus_di_series, di_spread_series = calculate_adx(data)
+        cmf_series = calculate_cmf(data)
+        adx_z_series = calculate_z_score(adx_series.dropna())
+        mansfield_rs_series = calculate_mansfield_rs(data, benchmark_data)
+        
+        # Get latest values from Series
+        rsi = rsi_series.iloc[-1] if len(rsi_series) > 0 else None
+        adx_z = adx_z_series.iloc[-1] if len(adx_z_series) > 0 else None
+        cmf = cmf_series.iloc[-1] if len(cmf_series) > 0 else None
+        mansfield_rs = mansfield_rs_series.iloc[-1] if len(mansfield_rs_series) > 0 else None
         
         # Determine reversal status
         status = "No"
-        if pd.notna(rsi) and pd.notna(adx_z) and pd.notna(cmf):
-            if rsi < reversal_thresholds['RSI'] and adx_z < reversal_thresholds['ADX_Z'] and cmf > reversal_thresholds['CMF']:
-                status = "BUY_DIV"
-            elif rsi < 50 and adx_z < 0.5 and cmf > 0:
-                status = "Watch"
+        if rsi is not None and adx_z is not None and cmf is not None:
+            if pd.notna(rsi) and pd.notna(adx_z) and pd.notna(cmf):
+                if rsi < reversal_thresholds['RSI'] and adx_z < reversal_thresholds['ADX_Z'] and cmf > reversal_thresholds['CMF']:
+                    status = "BUY_DIV"
+                elif rsi < 50 and adx_z < 0.5 and cmf > 0:
+                    status = "Watch"
         
         if status != "No":  # Only show reversals
             company_results.append({
@@ -206,10 +223,10 @@ def display_company_reversal_tab():
                 'Symbol': company_symbol,
                 'Weight (%)': f"{weight:.1f}" if weight > 0 else "N/A",
                 'Status ℹ️': status,
-                'RSI ℹ️': f"{float(rsi):.1f}" if pd.notna(rsi) else "N/A",
-                'ADX_Z ℹ️': f"{float(adx_z):.1f}" if pd.notna(adx_z) else "N/A",
-                'CMF ℹ️': f"{float(cmf):.2f}" if pd.notna(cmf) else "N/A",
-                'Mansfield_RS ℹ️': f"{float(mansfield_rs):.1f}" if pd.notna(mansfield_rs) else "N/A",
+                'RSI ℹ️': f"{float(rsi):.1f}" if rsi is not None and pd.notna(rsi) else "N/A",
+                'ADX_Z ℹ️': f"{float(adx_z):.1f}" if adx_z is not None and pd.notna(adx_z) else "N/A",
+                'CMF ℹ️': f"{float(cmf):.2f}" if cmf is not None and pd.notna(cmf) else "N/A",
+                'Mansfield_RS ℹ️': f"{float(mansfield_rs):.1f}" if mansfield_rs is not None and pd.notna(mansfield_rs) else "N/A",
             })
     
     if company_results:
