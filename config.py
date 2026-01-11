@@ -24,45 +24,41 @@ DECIMAL_PLACES = {
 # NSE Sector Symbols (Indices)
 SECTORS = {
     'Nifty 50': '^NSEI',
-    'PSU Bank': '^NIFTYPSUBANK',
-    'Pvt Bank': '^NIFTYBANK',
-    'IT': '^CNXIT',
-    'Pharma': '^CNXPHARMA',
-    'FMCG': '^CNXFMCG',
     'Auto': '^CNXAUTO',
-    'Metal': '^CNXMETAL',
-    'Realty': '^CNXREALTY',
-    'Media': '^CNXMEDIA',
-    'Energy': '^CNXENERGY',
-    'Infra': '^CNXINFRA',
     'Commodities': '^CNXCOMMODITIES',
-    'Defence': '^CNXDEFENCE',
-    'Oil & Gas': '^CNXOILGAS',
-    'Nifty Oil & Gas': '^NIFTIT_OIL_AND_GAS',
-    'Nifty India Defence': '^NIFTY_INFRA',  # Using Infra as proxy - Defence data limited
-    'Nifty Fin Services Ex-Bank': '^NIFTYFINSERV'
+    'Defence': '^NSEDEFENCE.NS',
+    'Energy': '^CNXENERGY',
+    'FMCG': '^CNXFMCG',
+    'IT': '^CNXIT',
+    'Infra': '^CNXINFRA',
+    'Media': '^CNXMEDIA',
+    'Metal': '^CNXMETAL',
+    'Fin Services': '^NIFTYFINSERV',
+    'Pharma': '^CNXPHARMA',
+    'PSU Bank': '^NIFTYPSUBANK',
+    'Pvt Bank': '^CNXPVTBANK',
+    'Realty': '^CNXREALTY',
+    'Oil & Gas': '^CNXOILGAS'
 }
 
 # ETF Proxy Symbols (alternative to indices)
 SECTOR_ETFS = {
-    'Nifty 50': '^NSEI',  # No ETF for benchmark
-    'PSU Bank': 'PSUBNKBEES.NS',
-    'Pvt Bank': 'PVTBANIETF.NS',
-    'IT': 'ITBEES.NS',
-    'Pharma': 'PHARMABEES.NS',
-    'FMCG': 'ICICIFMCG.NS',
+    'Nifty 50': 'NIFTYBEES.NS',
     'Auto': 'AUTOBEES.NS',
-    'Metal': 'METALIETF.NS',
-    'Realty': 'MOREALTY.NS',
-    'Media': '^CNXMEDIA',  # No ETF available
-    'Energy': 'MOENERGY.NS',
-    'Infra': 'INFRAIETF.NS',
-    'Commodities': '^CNXCOMMODITIES',  # No ETF available
-    'Defence': 'DEFENCEBEES.NS',
-    'Oil & Gas': 'OILETF.NS',
-    'Nifty Oil & Gas': '^NIFTY_OIL_AND_GAS',  # Limited data
-    'Nifty India Defence': '^NIFTY_INFRA',  # Using Infra proxy
-    'Nifty Fin Services Ex-Bank': '^NIFTYFINSERV'
+    'Commodities': 'N/A',
+    'Defence': 'DEFENCE.NS',
+    'Energy': 'MOENERGY',
+    'FMCG': 'ICIFMCG.NS',
+    'IT': 'ITBEES.NS',
+    'Infra': 'INFRABEES.NS',
+    'Media': 'N/A',
+    'Metal': 'METALBEES.NS',
+    'Fin Services': 'FINIETF.NS',
+    'Pharma': 'PHARMABEES.NS',
+    'PSU Bank': 'PSUBNKBEES.NS',
+    'Pvt Bank': 'PVTBANKBEES.NS',
+    'Realty': 'N/A',
+    'Oil & Gas': 'OILIETF.NS'
 }
 
 # Analysis Thresholds
