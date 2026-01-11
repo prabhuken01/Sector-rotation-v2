@@ -18,6 +18,7 @@ try:
     from data_fetcher import fetch_sector_data, fetch_sector_data_with_alternate
     from analysis import analyze_all_sectors, format_results_dataframe, analyze_sector
     from indicators import calculate_rsi, calculate_adx, calculate_cmf, calculate_z_score, calculate_mansfield_rs
+    from company_analysis import display_company_momentum_tab, display_company_reversal_tab
 except ImportError as e:
     st.error(f"❌ Import Error: {str(e)}")
     st.info("Please ensure all required modules are installed: yfinance, pandas, numpy")
@@ -95,6 +96,40 @@ st.markdown("""
     }
     </style>
 """, unsafe_allow_html=True)
+
+
+# Tooltip definitions for all technical indicators
+INDICATOR_TOOLTIPS = {
+    'RSI': 'Relative Strength Index (0-100). >70 = overbought, <30 = oversold. Shows momentum strength.',
+    'ADX': 'Average Directional Index (0-50). >25 = strong trend, <20 = weak trend. Measures trend strength.',
+    'ADX_Z': 'Z-Score of ADX normalized relative to other sectors. Negative = weaker trend vs peers, Positive = stronger.',
+    '+DI': 'Positive Directional Indicator. Shows upward pressure/bullish strength in the trend.',
+    '-DI': 'Negative Directional Indicator. Shows downward pressure/bearish strength in the trend.',
+    'DI_Spread': 'Difference between +DI and -DI. Positive = more bullish, Negative = more bearish.',
+    'CMF': 'Chaikin Money Flow (-1 to +1). >0 = money flowing in (accumulation), <0 = flowing out (distribution).',
+    'RS_Rating': 'Relative Strength Rating (0-10) vs Nifty 50. >7 = outperformer, <3 = underperformer.',
+    'Mansfield_RS': 'Relative strength based on 52-week moving average. >0 = outperforming Nifty 50, <0 = underperforming.',
+    'Momentum_Score': 'Composite rank-based score. Top sectors = strongest momentum across all indicators.',
+    'Reversal_Score': 'Score for reversal candidates. Only calculated for eligible sectors (RSI/ADX filters met).',
+    'Status': 'Reversal Status: BUY_DIV = strong buy divergence, Watch = potential zone, No = ineligible.',
+    'Rank': 'Sector/Company rank by score. 1 = strongest, N = weakest within analysis group.',
+    'Weight': 'Index weight (%). Shows company/sector importance in the index.',
+}
+
+def get_column_with_tooltip(col_name, show_tooltip=True):
+    """Return column name with tooltip hover text."""
+    if show_tooltip and col_name in INDICATOR_TOOLTIPS:
+        return f"{col_name} ℹ️"
+    return col_name
+
+def display_tooltip_legend():
+    """Display tooltip legend at bottom of page."""
+    with st.expander("📋 **Indicator Definitions** (Click to expand)", expanded=False):
+        cols = st.columns(2)
+        indicators = list(INDICATOR_TOOLTIPS.items())
+        for idx, (indicator, tooltip) in enumerate(indicators):
+            with cols[idx % 2]:
+                st.markdown(f"**{indicator}**: {tooltip}")
 
 
 def get_sidebar_controls():
@@ -1885,13 +1920,15 @@ def main():
         
         st.success("✅ Analysis complete!")
         
-        # Create tabs
+        # Create tabs (6 total: 4 sector-level + 2 company-level)
         try:
-            tab1, tab2, tab3, tab4 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
                 "📈 Momentum Ranking",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
-                "🔌 Data Sources"
+                "🔌 Data Sources",
+                "🏢 Company Momentum",
+                "🏢 Company Reversals"
             ])
             
             # Get benchmark data for trend analysis
@@ -1901,6 +1938,7 @@ def main():
             with tab1:
                 try:
                     display_momentum_tab(df, sector_data, benchmark_data, enable_color_coding)
+                    display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying momentum tab: {str(e)}")
                     st.text(traceback.format_exc())
@@ -1908,6 +1946,7 @@ def main():
             with tab2:
                 try:
                     display_reversal_tab(df, sector_data, benchmark_data, reversal_weights, reversal_thresholds, enable_color_coding)
+                    display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying reversal tab: {str(e)}")
                     st.text(traceback.format_exc())
@@ -1915,6 +1954,7 @@ def main():
             with tab3:
                 try:
                     display_interpretation_tab()
+                    display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying interpretation tab: {str(e)}")
             
@@ -1923,6 +1963,22 @@ def main():
                     display_data_sources_tab()
                 except Exception as e:
                     st.error(f"❌ Error displaying data sources tab: {str(e)}")
+                    st.text(traceback.format_exc())
+            
+            with tab5:
+                try:
+                    display_company_momentum_tab()
+                    display_tooltip_legend()
+                except Exception as e:
+                    st.error(f"❌ Error displaying company momentum tab: {str(e)}")
+                    st.text(traceback.format_exc())
+            
+            with tab6:
+                try:
+                    display_company_reversal_tab()
+                    display_tooltip_legend()
+                except Exception as e:
+                    st.error(f"❌ Error displaying company reversal tab: {str(e)}")
                     st.text(traceback.format_exc())
                     
         except Exception as e:
