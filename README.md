@@ -1,67 +1,85 @@
-# Market Sector Analysis Tool 📊
+# NSE Market Sector Analysis Tool 📊
 
-A comprehensive Python-based tool for analyzing NSE (National Stock Exchange) sector performance using advanced technical indicators and momentum/reversal scoring strategies.
+A comprehensive Python-based tool for analyzing NSE (National Stock Exchange) sector performance using advanced technical indicators and momentum/reversal scoring strategies. Powered by Streamlit with real-time data from Yahoo Finance.
 
 ## 🎯 Overview
 
-This tool analyzes 13 major NSE sectors to identify:
-- **Momentum Opportunities**: Sectors outperforming Nifty 50
-- **Reversal Candidates**: Oversold sectors with institutional buying signals
+This tool analyzes **16 major NSE sectors** (plus Nifty 50 benchmark) to identify:
+- **Momentum Opportunities**: Sectors outperforming Nifty 50 with strong trend signals
+- **Reversal Candidates**: Oversold sectors with institutional buying signals and recovery potential
 
 Perfect for traders, analysts, and investment professionals seeking data-driven sector insights.
 
 ## ✨ Key Features
 
+### 🔴 **Recent Updates (Jan 2026)**
+
+| Date | Update | Impact |
+|------|--------|--------|
+| Jan 11 | Added Data Sources tab with real-time connectivity status | Full transparency on data availability |
+| Jan 11 | Corrected all sector symbols (16 sectors) and ETF tickers | Accurate data fetching for all sectors |
+| Jan 11 | Added alternate ETF fallback logic | Automatic retry if primary ETF fails |
+| Jan 11 | Fixed Metal ETF (METALIETF.NS) and added Realty ETF (MOREALTY.NS) | Complete coverage for all sectors |
+| Jan 10 | Fixed reversal filtering logic with proper RSI/ADX thresholds | Accurate reversal status determination |
+
 ### Technical Indicators
-- **RSI (Relative Strength Index)**: Momentum and overbought/oversold conditions
-- **ADX (Average Directional Index)**: Trend strength measurement
-- **DI Spread (Directional Movement)**: Bullish vs bearish pressure
-- **CMF (Chaikin Money Flow)**: Institutional buying/selling pressure
-- **Z-Score ADX**: Normalized trend strength for comparative analysis
+- **RSI (Relative Strength Index)**: Momentum and overbought/oversold conditions (Wilder's smoothing, 14-period)
+- **ADX (Average Directional Index)**: Trend strength measurement with +DI/-DI components
+- **DI Spread (Directional Movement)**: Bullish vs bearish pressure differential
+- **CMF (Chaikin Money Flow)**: Institutional buying/selling pressure (20-period)
+- **Z-Score ADX**: Normalized trend strength for comparative analysis across sectors
+- **Mansfield RS**: Relative strength vs Nifty 50 (52-week moving average)
 
 ### Dual Analysis Approach
 1. **Momentum Scoring** (Trend Following)
    - **Rank-based composite score** combining:
-     - ADX Z-Score Rank (20% weight)
-     - RS Rating Rank (40% weight)
-     - RSI Rank (30% weight)
-     - DI Spread Rank (10% weight)
-   - Each sector ranked independently on each indicator, then combined with configurable weights
-   - Identifies strongest performing sectors
+     - ADX Z-Score Rank (20% weight, configurable)
+     - RS Rating Rank (40% weight, configurable)
+     - RSI Rank (30% weight, configurable)
+     - DI Spread Rank (10% weight, configurable)
+   - Each sector ranked independently on each indicator, then combined with weights
+   - Identifies strongest performing sectors across all metrics
 
 2. **Reversal Detection** (Bottom Fishing)
-   - Strict filtering for beaten-down sectors with recovery signals
-   - **Watch**: RSI < 50 AND ADX_Z < 0.5 AND CMF > 0
-   - **BUY_DIV**: RSI < 40 AND ADX_Z < -0.5 AND CMF > 0.1
-   - Reversal score calculated only for eligible sectors using RS Rating, CMF, RSI, and ADX Z rankings
+   - Strict dual-filter approach ensuring reliability:
+     - **BUY_DIV** (Best): RSI < 40 AND ADX_Z < -0.5 AND CMF > 0.1
+     - **Watch**: RSI < 50 AND ADX_Z < 0.5 AND CMF > 0
+     - **No**: Does not meet reversal criteria
+   - Reversal score calculated ONLY for eligible sectors using RS Rating (40%), CMF (40%), RSI (10%), ADX Z (10%)
+   - Status column shows historical reversal signals over time
 
-### Sectors Analyzed
-- ✅ Nifty 50 (Benchmark)
-- ✅ PSU Bank
-- ✅ Private Bank
-- ✅ IT
-- ✅ Pharma
-- ✅ FMCG
-- ✅ Auto
-- ✅ Metal
-- ✅ Realty
-- ✅ Media
-- ✅ Energy
-- ✅ Infrastructure
-- ✅ Commodities
+### Sectors Analyzed (16 Total)
+| # | Sector | Index | Primary ETF | Alternate ETF |
+|----|--------|-------|------------|---------------|
+| 0 | Nifty 50 | ^NSEI | NIFTYBEES.NS | - |
+| 1 | Auto | ^CNXAUTO | AUTOBEES.NS | - |
+| 2 | Commodities | ^CNXCOMMODITIES | N/A | - |
+| 3 | Defence | ^NSEDEFENCE.NS | DEFENCE.NS | - |
+| 4 | Energy | ^CNXENERGY | MOENERGY.NS | CPSEETF.NS |
+| 5 | FMCG | ^CNXFMCG | ICIFMCG.NS | - |
+| 6 | IT | ^CNXIT | ITBEES.NS | - |
+| 7 | Infra | ^CNXINFRA | INFRABEES.NS | INFRAIETF.NS |
+| 8 | Media | ^CNXMEDIA | N/A | - |
+| 9 | Metal | ^CNXMETAL | METALIETF.NS | METALBEES.NS |
+| 10 | Fin Services | ^NIFTYFINSERV | FINIETF.NS | - |
+| 11 | Pharma | ^CNXPHARMA | PHARMABEES.NS | - |
+| 12 | PSU Bank | ^NIFTYPSUBANK | PSUBNKBEES.NS | - |
+| 13 | Pvt Bank | ^CNXPVTBANK | PVTBANKBEES.NS | PVTBANIETF.NS |
+| 14 | Realty | ^CNXREALTY | MOREALTY.NS | - |
+| 15 | Oil & Gas | ^CNXOILGAS | OILIETF.NS | - |
 
 ## 📋 Requirements
 
 - Python 3.8+
 - pip (Python package manager)
-- Internet connection (for live market data)
+- Internet connection (for live market data via Yahoo Finance)
 
 ## 🚀 Quick Start
 
 ### 1. Clone Repository
 ```bash
-git clone https://github.com/prabhuken01/market-sector-analysis.git
-cd market-sector-analysis
+git clone https://github.com/prabhuken01/Sector-rotation-v2.git
+cd Sector-rotation-v2
 ```
 
 ### 2. Set Up Virtual Environment (Recommended)
@@ -75,6 +93,12 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+**Dependencies:**
+- streamlit >= 1.28.0
+- yfinance >= 0.2.32
+- pandas >= 2.0.0
+- numpy >= 1.24.0
+
 ### 4. Run the Web Application
 ```bash
 streamlit run streamlit_app.py
@@ -85,17 +109,22 @@ The application will open at `http://localhost:8501` in your default browser.
 ### 5. Using the Application
 
 **Sidebar Controls:**
-- 📅 **Analysis Date**: Select any date for historical analysis
-- ⏱️ **Analysis Interval**: Choose Daily, Weekly, or Hourly data
-- 🔄 **Data Source**: Toggle between NSE Indices and ETF Proxy
-- ⚖️ **Momentum Score Weights**: Customize how momentum is calculated
-- 📊 **Reversal Score Weights**: Customize reversal candidate ranking
-- 🎯 **Reversal Filters**: Set RSI and ADX Z-Score thresholds
+- 📅 **Analysis Date**: Select any historical date with ⬅️ ➡️ navigation arrows
+- ⏱️ **Analysis Interval**: Choose Daily, Weekly, or Hourly data frequency
+- 🔄 **Data Source**: Toggle between NSE Indices (raw) or ETF Proxy (more traded)
+- ⚖️ **Momentum Score Weights**: Customize all 4 indicator weights (sum = 100%)
+- 📊 **Reversal Score Weights**: Customize reversal ranking weights
+- 🎯 **Reversal Filters**: Adjust RSI and ADX Z-Score thresholds
+- 🎨 **Color Coding**: Enable/disable Bullish (Green) vs Bearish (Red) highlighting
 
-**Three Main Tabs:**
-1. **📈 Momentum Ranking**: Top performing sectors with trend analysis
-2. **🔄 Reversal Candidates**: Oversold sectors with recovery potential
-3. **📊 Interpretation Guide**: Understanding the indicators and scores
+**Four Main Tabs:**
+
+| Tab | Name | Purpose |
+|-----|------|---------|
+| 1 | **📈 Momentum Ranking** | Top performing sectors with trend analysis, historical 6-month performance download |
+| 2 | **🔄 Reversal Candidates** | Oversold sectors meeting criteria, trend analysis with status history |
+| 3 | **📊 Interpretation Guide** | Detailed explanations of all indicators, formulas, and scoring methodology |
+| 4 | **🔌 Data Sources** | Real-time connectivity status for all 16 sectors with index/ETF availability |
 
 ## 📚 Documentation
 
@@ -114,40 +143,63 @@ The application will open at `http://localhost:8501` in your default browser.
 
 ```
 Sector-rotation-v2/
-├── streamlit_app.py             # Main Streamlit web application
-├── analysis.py                   # Core analysis logic
-├── data_fetcher.py               # Yahoo Finance data fetching
-├── indicators.py                 # Technical indicator calculations
-├── market_analysis.py            # Standalone CLI analysis script
-├── config.py                     # Configuration and sector symbols
+├── streamlit_app.py             # Main Streamlit web app (1900+ lines)
+│   ├── get_sidebar_controls()   # Sidebar UI and configuration
+│   ├── display_momentum_tab()   # Momentum ranking display
+│   ├── display_reversal_tab()   # Reversal candidates display
+│   ├── display_interpretation_tab()  # Indicator explanations
+│   ├── display_data_sources_tab()    # Connectivity status
+│   └── analyze_sectors_with_progress()  # Data fetching with progress
+├── analysis.py                   # Core analysis logic (315 lines)
+│   ├── analyze_all_sectors()    # Main orchestration
+│   ├── determine_reversal_status()  # BUY_DIV/Watch/No determination
+│   └── analyze_sector()         # Per-sector calculations
+├── data_fetcher.py               # Yahoo Finance integration (94+ lines)
+│   ├── fetch_sector_data()      # Single symbol fetching
+│   └── fetch_sector_data_with_alternate()  # Fallback to alternate ETF
+├── indicators.py                 # Technical calculations (200+ lines)
+│   ├── calculate_rsi()          # RSI (Wilder's)
+│   ├── calculate_adx()          # ADX with DI
+│   ├── calculate_cmf()          # Chaikin Money Flow
+│   ├── calculate_z_score()      # Normalization
+│   └── calculate_mansfield_rs() # Relative strength
+├── market_analysis.py            # Standalone CLI (for batch analysis)
+├── config.py                     # Configuration (107 lines)
+│   ├── SECTORS                  # Index symbols
+│   ├── SECTOR_ETFS              # Primary ETF choices
+│   └── SECTOR_ETFS_ALTERNATE    # Fallback ETFs
 ├── requirements.txt              # Python dependencies
-├── README.md                     # This file
+├── README.md                     # This file (Main documentation)
 ├── ANALYSIS_METHODOLOGY.md       # Detailed methodology documentation
-├── SYMBOLS.txt                   # Complete list of symbols used
+├── SYMBOLS.txt                   # Complete list of all symbols used
 ├── Quick_Start/
-│   ├── README.md                 # Installation & getting started
-│   └── REFERENCE_MANUAL.md       # Technical documentation
-└── .gitignore
+│   ├── README.md                 # Installation & getting started guide
+│   └── REFERENCE_MANUAL.md       # Technical deep-dive documentation
+└── .gitignore                    # Git ignore rules
 ```
 
 ## 🔧 Configuration
 
-All parameters can be adjusted directly in the web interface:
+All parameters can be adjusted directly in the Streamlit web interface sidebar. Changes apply immediately without code modifications.
 
-### Momentum Score Weights (Configurable in Sidebar)
-- **RS Rating Weight**: How much relative strength ranking contributes (default 40%)
-- **ADX Z-Score Weight**: Trend strength comparison (default 20%)
-- **RSI Weight**: Momentum indicator (default 30%)
-- **DI Spread Weight**: Directional movement (default 10%)
+### Momentum Score Weights (Configurable)
+Default allocations (must sum to 100%):
+- **RS Rating Weight**: 40% - Relative strength vs Nifty 50 ranking
+- **ADX Z-Score Weight**: 20% - Normalized trend strength ranking
+- **RSI Weight**: 30% - Momentum and overbought/oversold ranking
+- **DI Spread Weight**: 10% - Directional movement ranking
 
-### Reversal Detection Weights (Configurable in Sidebar)
-- **RS Rating Weight**: Underperformance signal (default 40%)
-- **CMF Weight**: Money flow accumulation (default 40%)
-- **RSI Weight**: Oversold condition (default 10%)
-- **ADX Z-Score Weight**: Weak trend indicator (default 10%)
+### Reversal Detection Weights (Configurable)
+Default allocations (must sum to 100%):
+- **RS Rating Weight**: 40% - Sector underperformance signal
+- **CMF Weight**: 40% - Institutional money flow accumulation
+- **RSI Weight**: 10% - Oversold condition severity
+- **ADX Z-Score Weight**: 10% - Weak trend indicator strength
 
-### Reversal Filters (Configurable in Sidebar)
-- **RSI Threshold**: Minimum RSI for reversal candidates (default 40)
+### Reversal Filters (Configurable)
+- **RSI Threshold for BUY_DIV**: Default 40 (can range 30-50)
+- **ADX Z-Score Threshold for BUY_DIV**: Default -0.5 (negative = weak trend)
+- **CMF Threshold for BUY_DIV**: Default 0.1 (positive = money flowing in)
 - **ADX Z-Score Threshold**: Maximum ADX Z for weak trend detection (default -0.5)
 
 All weights sum to 100% and are validated in real-time in the interface.
@@ -249,7 +301,34 @@ This tool is for educational and analytical purposes only. Not financial advice.
 - **Historical Period**: Up to 1 year (configurable)
 - **Timezone**: IST (Indian Standard Time)
 
-## 🐛 Troubleshooting
+## � Upcoming Features (Q1 2026)
+
+### Company-Level Analysis (In Development)
+Drill down from sector momentum/reversal into individual companies:
+
+**📈 Tab 5: Company Momentum**
+- Sector/ETF dropdown selector
+- Auto-fetch constituent companies with index weights
+- Same technical analysis as sector level: RSI, ADX, CMF, RS Rating
+- Rank companies by momentum score within selected sector
+- Identify which companies are gaining momentum within their sector
+- Trend analysis showing historical company performance vs sector
+
+**🔄 Tab 6: Company Reversals**
+- Same selector and constituent display as momentum tab
+- Reversal status (BUY_DIV/Watch/No) at company level
+- Trend analysis showing historical reversals
+- Find oversold companies with recovery potential within sector
+
+**Implementation Roadmap:**
+1. Create company symbol mappings for each ETF (e.g., ITBEES.NS → [TCS.NS, INFY.NS, ...])
+2. Fetch constituent weights from index/ETF data
+3. Extend analysis.py to support company-level scoring
+4. Add company selector dropdown in streamlit_app.py
+5. Create display functions for company tabs
+6. Test and validate with major sectors (IT, Banking, FMCG)
+
+## �🐛 Troubleshooting
 
 ### Issue: Streamlit app won't start
 ```bash
