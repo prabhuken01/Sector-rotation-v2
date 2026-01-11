@@ -1,0 +1,49 @@
+NSE Market Sector Analysis - Symbols Reference
+==============================================
+
+NSE INDEX SYMBOLS (Default):
+----------------------------
+Nifty 50: ^NSEI
+Auto: ^CNXAUTO
+Bank: ^NSEBANK
+Financial Services: NIFTY_FIN_SERVICE.NS
+FMCG: ^CNXFMCG
+IT: ^CNXIT
+Media: ^CNXMEDIA
+Metal: ^CNXMETAL
+Pharma: ^CNXPHARMA
+PSU Bank: ^CNXPSUBANK
+Private Bank: NIFTY_PVT_BANK.NS
+Realty: ^CNXREALTY
+Energy: ^CNXENERGY
+Infrastructure: NIFTY_INFRA.NS
+Commodities: NIFTY_COMMODITIES.NS
+
+ETF PROXY SYMBOLS (Alternative):
+--------------------------------
+Nifty 50: NIFTYBEES.NS
+Auto: AUTOETF.NS
+Bank: BANKBEES.NS
+Financial Services: (Use BANKBEES.NS as proxy)
+FMCG: FMCGETF.NS
+IT: NETFIT.NS
+Media: (Use Nifty 50 as proxy)
+Metal: (Use Nifty 50 as proxy)
+Pharma: PHARMABEES.NS
+PSU Bank: PSUBNKBEES.NS
+Private Bank: PVTBNKBEES.NS
+Realty: (Use Nifty 50 as proxy)
+Energy: (Use Nifty 50 as proxy)
+Infrastructure: (Use Nifty 50 as proxy)
+Commodities: (Use Nifty 50 as proxy)
+
+NOTES:
+------
+1. Index symbols (^CNX*) provide real-time NSE sector index data
+2. ETF symbols provide tradeable proxy data with slight tracking differences
+3. Some sectors don't have dedicated ETFs, fallback to Nifty 50 benchmark
+4. All symbols are validated against Yahoo Finance data availability
+5. Historical data availability may vary (typically 5+ years for indices)
+
+DATA SOURCE: Yahoo Finance (yfinance library)
+LAST UPDATED: 2026-01-10
