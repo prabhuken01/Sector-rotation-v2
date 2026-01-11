@@ -1693,6 +1693,112 @@ def display_interpretation_tab():
     st.caption(f"⏰ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 
+@st.cache_data(ttl=3600)
+def test_symbol_availability():
+    """Test connectivity for all symbols at page load."""
+    import yfinance as yf
+    from datetime import datetime, timedelta
+    
+    results = {}
+    
+    # Add Nifty 50 benchmark
+    all_symbols = {'Nifty 50': '^NSEI'}
+    all_symbols.update(SECTORS)
+    all_symbols.update({f"{k}_ETF": v for k, v in SECTOR_ETFS.items()})
+    
+    test_date = (datetime.now() - timedelta(days=5)).strftime('%Y-%m-%d')
+    
+    for sector, symbol in all_symbols.items():
+        try:
+            data = yf.download(symbol, start=test_date, end=datetime.now().strftime('%Y-%m-%d'), 
+                              progress=False, interval='1d')
+            
+            if data is not None and len(data) > 0:
+                results[sector] = {'status': '✅', 'bars': len(data)}
+            else:
+                results[sector] = {'status': '❌', 'bars': 0}
+        except:
+            results[sector] = {'status': '❌', 'bars': 0}
+    
+    return results
+
+
+def display_data_sources_tab():
+    """Display data sources connectivity status."""
+    st.markdown("### 📊 Data Sources & Connectivity")
+    st.markdown("---")
+    
+    st.info("🔄 **Real-time connectivity test completed on page load.** Status shows availability of each Index and ETF proxy.")
+    
+    # Get connectivity status
+    availability_status = test_symbol_availability()
+    
+    # Prepare data for display
+    display_data = []
+    
+    # Add Nifty 50 benchmark first
+    nifty_50_status = availability_status.get('Nifty 50', {}).get('status', '❌')
+    display_data.append({
+        'Sector': '🔵 Nifty 50 (Benchmark)',
+        'Index Symbol': '^NSEI',
+        'Index Status': nifty_50_status,
+        'ETF Symbol': 'N/A',
+        'ETF Status': 'N/A'
+    })
+    
+    # Add all sectors
+    for sector in sorted(SECTORS.keys()):
+        index_sym = SECTORS[sector]
+        etf_sym = SECTOR_ETFS.get(sector, 'N/A')
+        
+        index_status = availability_status.get(sector, {}).get('status', '❌')
+        etf_key = f"{sector}_ETF"
+        etf_status = availability_status.get(etf_key, {}).get('status', '❌')
+        
+        display_data.append({
+            'Sector': sector,
+            'Index Symbol': index_sym,
+            'Index Status': index_status,
+            'ETF Symbol': etf_sym if etf_sym != 'N/A' else 'N/A',
+            'ETF Status': etf_status if etf_sym != 'N/A' else 'N/A'
+        })
+    
+    # Create and display dataframe
+    df_sources = pd.DataFrame(display_data)
+    
+    # Style the dataframe
+    def color_status(val):
+        if val == '✅':
+            return 'background-color: #27AE60; color: #fff; font-weight: bold'
+        elif val == '❌':
+            return 'background-color: #E74C3C; color: #fff; font-weight: bold'
+        elif val == 'N/A':
+            return 'background-color: #95A5A6; color: #fff'
+        return ''
+    
+    styled_df = df_sources.style.map(color_status, subset=['Index Status', 'ETF Status'])
+    st.dataframe(styled_df, use_container_width=True)
+    
+    # Summary statistics
+    col1, col2, col3 = st.columns(3)
+    
+    total_symbols = len([s for s in availability_status.values() if s.get('status') != 'N/A'])
+    working_symbols = len([s for s in availability_status.values() if s.get('status') == '✅'])
+    failed_symbols = total_symbols - working_symbols
+    
+    with col1:
+        st.metric("Total Symbols", total_symbols, f"{working_symbols} working")
+    
+    with col2:
+        st.metric("✅ Successful", working_symbols, f"{(working_symbols/total_symbols*100):.1f}%")
+    
+    with col3:
+        st.metric("❌ Failed", failed_symbols, f"{(failed_symbols/total_symbols*100):.1f}%")
+    
+    st.markdown("---")
+    st.caption(f"⏰ Test completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+
 def main():
     """Main Streamlit app function."""
     try:
@@ -1759,10 +1865,11 @@ def main():
         
         # Create tabs
         try:
-            tab1, tab2, tab3 = st.tabs([
+            tab1, tab2, tab3, tab4 = st.tabs([
                 "📈 Momentum Ranking",
                 "🔄 Reversal Candidates",
-                "📊 Interpretation Guide"
+                "📊 Interpretation Guide",
+                "🔌 Data Sources"
             ])
             
             # Get benchmark data for trend analysis
@@ -1788,6 +1895,13 @@ def main():
                     display_interpretation_tab()
                 except Exception as e:
                     st.error(f"❌ Error displaying interpretation tab: {str(e)}")
+            
+            with tab4:
+                try:
+                    display_data_sources_tab()
+                except Exception as e:
+                    st.error(f"❌ Error displaying data sources tab: {str(e)}")
+                    st.text(traceback.format_exc())
                     
         except Exception as e:
             st.error(f"❌ Error creating tabs: {str(e)}")

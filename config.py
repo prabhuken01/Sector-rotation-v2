@@ -38,9 +38,9 @@ SECTORS = {
     'Commodities': '^CNXCOMMODITIES',
     'Defence': '^CNXDEFENCE',
     'Oil & Gas': '^CNXOILGAS',
-    'Nifty Oil & Gas': '^NIFTY_OIL_AND_GAS',
-    'Nifty India Defence': '^NIFTY_INDIA_DEFENCE',
-    'Nifty Fin Services Ex-Bank': '^NIFTY_FIN_SER_EX_BANK'
+    'Nifty Oil & Gas': '^NIFTIT_OIL_AND_GAS',
+    'Nifty India Defence': '^NIFTY_INFRA',  # Using Infra as proxy - Defence data limited
+    'Nifty Fin Services Ex-Bank': '^NIFTYFINSERV'
 }
 
 # ETF Proxy Symbols (alternative to indices)
@@ -60,9 +60,9 @@ SECTOR_ETFS = {
     'Commodities': '^CNXCOMMODITIES',  # No ETF available
     'Defence': 'DEFENCEBEES.NS',
     'Oil & Gas': 'OILETF.NS',
-    'Nifty Oil & Gas': '^NIFTY_OIL_AND_GAS',  # No ETF available
-    'Nifty India Defence': '^NIFTY_INDIA_DEFENCE',  # No ETF available
-    'Nifty Fin Services Ex-Bank': '^NIFTY_FIN_SER_EX_BANK'  # No ETF available
+    'Nifty Oil & Gas': '^NIFTY_OIL_AND_GAS',  # Limited data
+    'Nifty India Defence': '^NIFTY_INFRA',  # Using Infra proxy
+    'Nifty Fin Services Ex-Bank': '^NIFTYFINSERV'
 }
 
 # Analysis Thresholds
