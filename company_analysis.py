@@ -70,18 +70,17 @@ def display_company_momentum_tab():
         rsi_series = calculate_rsi(data)
         adx_series, plus_di_series, minus_di_series, di_spread_series = calculate_adx(data)
         cmf_series = calculate_cmf(data)
-        mansfield_rs_series = calculate_mansfield_rs(data, benchmark_data)
+        mansfield_rs = calculate_mansfield_rs(data, benchmark_data)  # Returns scalar
         adx_z_series = calculate_z_score(adx_series.dropna())
         
-        # Get latest values from Series
-        rsi = rsi_series.iloc[-1] if len(rsi_series) > 0 else None
-        adx = adx_series.iloc[-1] if len(adx_series) > 0 else None
-        plus_di = plus_di_series.iloc[-1] if len(plus_di_series) > 0 else None
-        minus_di = minus_di_series.iloc[-1] if len(minus_di_series) > 0 else None
-        di_spread = di_spread_series.iloc[-1] if len(di_spread_series) > 0 else None
-        cmf = cmf_series.iloc[-1] if len(cmf_series) > 0 else None
-        mansfield_rs = mansfield_rs_series.iloc[-1] if len(mansfield_rs_series) > 0 else None
-        adx_z = adx_z_series.iloc[-1] if len(adx_z_series) > 0 else None
+        # Get latest values from Series (or use scalar directly)
+        rsi = rsi_series.iloc[-1] if isinstance(rsi_series, pd.Series) and len(rsi_series) > 0 else None
+        adx = adx_series.iloc[-1] if isinstance(adx_series, pd.Series) and len(adx_series) > 0 else None
+        plus_di = plus_di_series.iloc[-1] if isinstance(plus_di_series, pd.Series) and len(plus_di_series) > 0 else None
+        minus_di = minus_di_series.iloc[-1] if isinstance(minus_di_series, pd.Series) and len(minus_di_series) > 0 else None
+        di_spread = di_spread_series.iloc[-1] if isinstance(di_spread_series, pd.Series) and len(di_spread_series) > 0 else None
+        cmf = cmf_series.iloc[-1] if isinstance(cmf_series, pd.Series) and len(cmf_series) > 0 else None
+        adx_z = adx_z_series.iloc[-1] if isinstance(adx_z_series, pd.Series) and len(adx_z_series) > 0 else None
         
         # RS Rating vs Nifty 50
         sector_returns = data['Close'].pct_change().dropna()
@@ -200,13 +199,12 @@ def display_company_reversal_tab():
         adx_series, plus_di_series, minus_di_series, di_spread_series = calculate_adx(data)
         cmf_series = calculate_cmf(data)
         adx_z_series = calculate_z_score(adx_series.dropna())
-        mansfield_rs_series = calculate_mansfield_rs(data, benchmark_data)
+        mansfield_rs = calculate_mansfield_rs(data, benchmark_data)  # Returns scalar
         
-        # Get latest values from Series
-        rsi = rsi_series.iloc[-1] if len(rsi_series) > 0 else None
-        adx_z = adx_z_series.iloc[-1] if len(adx_z_series) > 0 else None
-        cmf = cmf_series.iloc[-1] if len(cmf_series) > 0 else None
-        mansfield_rs = mansfield_rs_series.iloc[-1] if len(mansfield_rs_series) > 0 else None
+        # Get latest values from Series (or use scalar directly)
+        rsi = rsi_series.iloc[-1] if isinstance(rsi_series, pd.Series) and len(rsi_series) > 0 else None
+        adx_z = adx_z_series.iloc[-1] if isinstance(adx_z_series, pd.Series) and len(adx_z_series) > 0 else None
+        cmf = cmf_series.iloc[-1] if isinstance(cmf_series, pd.Series) and len(cmf_series) > 0 else None
         
         # Determine reversal status
         status = "No"

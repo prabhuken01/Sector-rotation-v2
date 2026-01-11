@@ -1920,15 +1920,15 @@ def main():
         
         st.success("✅ Analysis complete!")
         
-        # Create tabs (6 total: 4 sector-level + 2 company-level)
+        # Create tabs (6 total: 4 sector-level + 2 company-level, Data Sources last)
         try:
             tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
                 "📈 Momentum Ranking",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
-                "🔌 Data Sources",
                 "🏢 Company Momentum",
-                "🏢 Company Reversals"
+                "🏢 Company Reversals",
+                "🔌 Data Sources"
             ])
             
             # Get benchmark data for trend analysis
@@ -1960,25 +1960,25 @@ def main():
             
             with tab4:
                 try:
-                    display_data_sources_tab()
-                except Exception as e:
-                    st.error(f"❌ Error displaying data sources tab: {str(e)}")
-                    st.text(traceback.format_exc())
-            
-            with tab5:
-                try:
                     display_company_momentum_tab()
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying company momentum tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab6:
+            with tab5:
                 try:
                     display_company_reversal_tab()
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying company reversal tab: {str(e)}")
+                    st.text(traceback.format_exc())
+            
+            with tab6:
+                try:
+                    display_data_sources_tab()
+                except Exception as e:
+                    st.error(f"❌ Error displaying data sources tab: {str(e)}")
                     st.text(traceback.format_exc())
                     
         except Exception as e:
