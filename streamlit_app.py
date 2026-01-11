@@ -13,7 +13,7 @@ import traceback
 warnings.filterwarnings('ignore')
 
 try:
-    from config import (SECTORS, SECTOR_ETFS, MOMENTUM_SCORE_PERCENTILE_THRESHOLD, 
+    from config import (SECTORS, SECTOR_ETFS, SECTOR_ETFS_ALTERNATE, MOMENTUM_SCORE_PERCENTILE_THRESHOLD, 
                         DEFAULT_MOMENTUM_WEIGHTS, DEFAULT_REVERSAL_WEIGHTS, DECIMAL_PLACES)
     from data_fetcher import fetch_sector_data
     from analysis import analyze_all_sectors, format_results_dataframe, analyze_sector
@@ -1705,6 +1705,7 @@ def test_symbol_availability():
     all_symbols = {'Nifty 50': '^NSEI'}
     all_symbols.update(SECTORS)
     all_symbols.update({f"{k}_ETF": v for k, v in SECTOR_ETFS.items()})
+    all_symbols.update({f"{k}_ALT_ETF": v for k, v in SECTOR_ETFS_ALTERNATE.items()})
     
     test_date = (datetime.now() - timedelta(days=5)).strftime('%Y-%m-%d')
     
@@ -1738,29 +1739,41 @@ def display_data_sources_tab():
     
     # Add Nifty 50 benchmark first
     nifty_50_status = availability_status.get('Nifty 50', {}).get('status', '❌')
+    nifty_50_alt_status = availability_status.get('Nifty 50_ALT', {}).get('status', '❌')
     display_data.append({
         'Sector': '🔵 Nifty 50 (Benchmark)',
         'Index Symbol': '^NSEI',
         'Index Status': nifty_50_status,
-        'ETF Symbol': 'N/A',
-        'ETF Status': 'N/A'
+        'ETF Symbol': 'NIFTYBEES.NS',
+        'ETF Status': nifty_50_status,
+        'Alternate ETF': '',
+        'Alternate Status': ''
     })
     
     # Add all sectors
     for sector in sorted(SECTORS.keys()):
+        if sector == 'Nifty 50':
+            continue
+        
         index_sym = SECTORS[sector]
         etf_sym = SECTOR_ETFS.get(sector, 'N/A')
+        alt_etf_sym = SECTOR_ETFS_ALTERNATE.get(sector, '')
         
         index_status = availability_status.get(sector, {}).get('status', '❌')
         etf_key = f"{sector}_ETF"
         etf_status = availability_status.get(etf_key, {}).get('status', '❌')
+        
+        alt_key = f"{sector}_ALT_ETF"
+        alt_status = availability_status.get(alt_key, {}).get('status', '') if alt_etf_sym else ''
         
         display_data.append({
             'Sector': sector,
             'Index Symbol': index_sym,
             'Index Status': index_status,
             'ETF Symbol': etf_sym if etf_sym != 'N/A' else 'N/A',
-            'ETF Status': etf_status if etf_sym != 'N/A' else 'N/A'
+            'ETF Status': etf_status if etf_sym != 'N/A' else 'N/A',
+            'Alternate ETF': alt_etf_sym,
+            'Alternate Status': alt_status if alt_etf_sym else ''
         })
     
     # Create and display dataframe
@@ -1776,7 +1789,7 @@ def display_data_sources_tab():
             return 'background-color: #95A5A6; color: #fff'
         return ''
     
-    styled_df = df_sources.style.map(color_status, subset=['Index Status', 'ETF Status'])
+    styled_df = df_sources.style.map(color_status, subset=['Index Status', 'ETF Status', 'Alternate Status'])
     st.dataframe(styled_df, use_container_width=True)
     
     # Summary statistics

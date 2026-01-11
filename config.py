@@ -41,24 +41,32 @@ SECTORS = {
     'Oil & Gas': '^CNXOILGAS'
 }
 
-# ETF Proxy Symbols (alternative to indices)
+# ETF Proxy Symbols (alternative to indices) - Primary choice
 SECTOR_ETFS = {
     'Nifty 50': 'NIFTYBEES.NS',
     'Auto': 'AUTOBEES.NS',
     'Commodities': 'N/A',
     'Defence': 'DEFENCE.NS',
-    'Energy': 'MOENERGY',
+    'Energy': 'MOENERGY.NS',
     'FMCG': 'ICIFMCG.NS',
     'IT': 'ITBEES.NS',
     'Infra': 'INFRABEES.NS',
     'Media': 'N/A',
-    'Metal': 'METALBEES.NS',
+    'Metal': 'METALEFIT.NS',
     'Fin Services': 'FINIETF.NS',
     'Pharma': 'PHARMABEES.NS',
     'PSU Bank': 'PSUBNKBEES.NS',
     'Pvt Bank': 'PVTBANKBEES.NS',
-    'Realty': 'N/A',
+    'Realty': 'MOREALTY.NS',
     'Oil & Gas': 'OILIETF.NS'
+}
+
+# Alternate ETF Symbols (Secondary choice, if primary unavailable)
+SECTOR_ETFS_ALTERNATE = {
+    'Energy': 'CPSEETF.NS',
+    'Infra': 'INFRAIETF.NS',
+    'Metal': 'METALBEES.NS',
+    'Pvt Bank': 'PVTBANIETF.NS'
 }
 
 # Analysis Thresholds
