@@ -15,7 +15,7 @@ warnings.filterwarnings('ignore')
 try:
     from config import (SECTORS, SECTOR_ETFS, SECTOR_ETFS_ALTERNATE, MOMENTUM_SCORE_PERCENTILE_THRESHOLD, 
                         DEFAULT_MOMENTUM_WEIGHTS, DEFAULT_REVERSAL_WEIGHTS, DECIMAL_PLACES)
-    from data_fetcher import fetch_sector_data
+    from data_fetcher import fetch_sector_data, fetch_sector_data_with_alternate
     from analysis import analyze_all_sectors, format_results_dataframe, analyze_sector
     from indicators import calculate_rsi, calculate_adx, calculate_cmf, calculate_z_score, calculate_mansfield_rs
 except ImportError as e:
@@ -265,7 +265,16 @@ def analyze_sectors_with_progress(use_etf, momentum_weights, reversal_weights, a
             try:
                 progress_bar.progress((idx + 1) / total_sectors)
                 
-                data = fetch_sector_data(symbol, end_date=analysis_date, interval=yf_interval)
+                # Get alternate symbol if available
+                alternate_symbol = SECTOR_ETFS_ALTERNATE.get(sector_name) if use_etf else None
+                
+                # Try to fetch with alternate fallback
+                data, used_symbol = fetch_sector_data_with_alternate(
+                    symbol, 
+                    alternate_symbol=alternate_symbol,
+                    end_date=analysis_date, 
+                    interval=yf_interval
+                )
                 
                 if data is None or len(data) == 0:
                     failed_sectors.append(sector_name)

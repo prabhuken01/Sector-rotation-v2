@@ -52,7 +52,7 @@ SECTOR_ETFS = {
     'IT': 'ITBEES.NS',
     'Infra': 'INFRABEES.NS',
     'Media': 'N/A',
-    'Metal': 'METALEFIT.NS',
+    'Metal': 'METALIETF.NS',
     'Fin Services': 'FINIETF.NS',
     'Pharma': 'PHARMABEES.NS',
     'PSU Bank': 'PSUBNKBEES.NS',

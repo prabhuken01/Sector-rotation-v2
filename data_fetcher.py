@@ -72,6 +72,35 @@ def fetch_sector_data(symbol, period='1y', min_data_points=MIN_DATA_POINTS, end_
         return None
 
 
+def fetch_sector_data_with_alternate(symbol, alternate_symbol=None, period='1y', min_data_points=MIN_DATA_POINTS, end_date=None, interval='1d'):
+    """
+    Fetch historical data for a sector, trying primary symbol first, then alternate if available.
+    
+    Args:
+        symbol: Primary Yahoo Finance symbol
+        alternate_symbol: Alternate symbol to try if primary fails (optional)
+        period: Time period for historical data (default '1y')
+        min_data_points: Minimum required data points (default 50)
+        end_date: End date for historical analysis (datetime object)
+        interval: Data interval - '1h' (hourly), '1d' (daily), '1wk' (weekly)
+        
+    Returns:
+        Tuple of (DataFrame with OHLCV data or None, symbol used)
+    """
+    # Try primary symbol
+    data = fetch_sector_data(symbol, period, min_data_points, end_date, interval)
+    if data is not None:
+        return data, symbol
+    
+    # If primary failed and alternate is available, try alternate
+    if alternate_symbol and alternate_symbol != 'N/A':
+        data = fetch_sector_data(alternate_symbol, period, min_data_points, end_date, interval)
+        if data is not None:
+            return data, alternate_symbol
+    
+    return None, None
+
+
 def fetch_all_sectors(sectors_dict, period='1y'):
     """
     Fetch data for all sectors.
