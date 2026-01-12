@@ -189,11 +189,17 @@ def determine_reversal_status(rsi, adx_z, cmf, reversal_thresholds=None):
         if not (rsi < rsi_threshold and adx_z < adx_z_threshold):
             return "No"  # Doesn't meet basic filter criteria
     
-    # Then apply standard reversal logic for those that pass filters
+    # Sector passes user-defined filters - now determine status level
+    # Check for BUY_DIV (strongest signal)
     if (rsi < REVERSAL_BUY_DIV['RSI'] and 
         adx_z < REVERSAL_BUY_DIV['ADX_Z'] and 
         cmf > REVERSAL_BUY_DIV['CMF']):
         return "BUY_DIV"
+    # If sector passed user thresholds but doesn't meet BUY_DIV, it's at least Watch
+    elif reversal_thresholds:
+        # Sector passed user filters, so at minimum it's a Watch candidate
+        return "Watch"
+    # No user thresholds set - use standard Watch criteria
     elif (rsi < REVERSAL_WATCH['RSI'] and 
           adx_z < REVERSAL_WATCH['ADX_Z'] and 
           cmf > REVERSAL_WATCH['CMF']):

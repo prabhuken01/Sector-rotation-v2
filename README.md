@@ -16,6 +16,14 @@ Perfect for traders, analysts, and investment professionals seeking data-driven 
 
 | Date | Update | Impact |
 |------|--------|--------|
+| Jan 12 | Fixed Market Data Date logic by interval (Hourly/Daily/Weekly) | Correct date display based on analysis interval |
+| Jan 12 | Added IST (Indian Standard Time) display for Analysis Date | Time shown as 9:15 AM IST, 10:15 AM IST, etc. |
+| Jan 12 | Added actual dates in brackets for T-7 to T trend analysis | Shows T-6 (05-Jan), T-5 (06-Jan), etc. |
+| Jan 12 | Added CMF Sum Total metric for sector rotation detection | Value near 1 indicates clear sector rotation |
+| Jan 12 | Fixed Reversal Candidates filter logic | Sectors meeting user criteria now properly shown |
+| Jan 12 | Added Price & Change% to Company analysis tabs | Same format as sector analysis |
+| Jan 12 | Fixed company symbol mappings (e.g., Sun Pharma not in Auto) | Correct sector-company associations |
+| Jan 12 | Improved Company Momentum/Reversal tab format | Ranking, consistent layout with sector tabs |
 | Jan 11 | Added Data Sources tab with real-time connectivity status | Full transparency on data availability |
 | Jan 11 | Corrected all sector symbols (16 sectors) and ETF tickers | Accurate data fetching for all sectors |
 | Jan 11 | Added alternate ETF fallback logic | Automatic retry if primary ETF fails |
@@ -211,7 +219,8 @@ Shows sectors sorted by momentum score (highest first) with:
 - **Momentum Score**: Rank-based composite score of all indicators
 - **Mansfield RS**: Relative strength vs Nifty 50 (green = outperforming, orange = underperforming)
 - **Technical Indicators**: RSI, ADX, ADX Z-Score, DI Spread, CMF
-- **Trend Analysis**: Historical momentum evolution for any selected sector (last 8 periods)
+- **CMF Sum Total**: Sum of all sector CMFs indicating overall market rotation (positive = money flowing in)
+- **Trend Analysis**: Historical momentum evolution with actual dates in brackets (e.g., T-6 (05-Jan))
 - **Historical Performance**: Top 2 momentum sectors' 7-day and 14-day forward returns over 6 months
 
 **Momentum Score Interpretation:**
@@ -224,11 +233,16 @@ Shows sectors sorted by momentum score (highest first) with:
 Shows oversold sectors with recovery potential:
 - **Reversal Status**: 
   - 🟢 **BUY_DIV**: Strong buy signal (RSI<40, ADX_Z<-0.5, CMF>0.1)
-  - 🔵 **Watch**: Potential reversal (RSI<50, ADX_Z<0.5, CMF>0)
+  - � **Watch**: Meets user-defined filter thresholds (potential reversal)
 - **Reversal Score**: Rank-based score for reversal potential among eligible sectors
 - **Technical Indicators**: RS Rating, CMF, RSI, ADX Z-Score
-- **Trend Analysis**: Historical reversal metrics for any selected sector
+- **Trend Analysis**: Historical reversal metrics with actual dates (e.g., T-6 (05-Jan))
 - **All Sectors View**: Complete reversal scores for comparison
+
+**Reversal Filter Logic:**
+- Sectors must meet BOTH user-defined RSI AND ADX_Z thresholds to be eligible
+- Eligible sectors that pass thresholds are shown as "Watch" or "BUY_DIV"
+- Only eligible sectors receive reversal scores and rankings
 
 **Reversal Score Factors:**
 - **Low RS Rating**: Indicates underperformance (recovery potential)
@@ -408,6 +422,6 @@ If this project helped you, please give it a star! ⭐
 
 ---
 
-**Last Updated**: 2026-01-11  
-**Version**: 2.0.0 (Streamlit Web Interface)  
+**Last Updated**: 2026-01-12  
+**Version**: 2.1.0 (Enhanced Date/Time & Filtering Logic)  
 **Status**: Active & Maintained ✅

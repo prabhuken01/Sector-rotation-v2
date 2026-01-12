@@ -9,12 +9,13 @@ SECTOR_COMPANIES = {
     'Auto': {
         'MARUTI.NS': {'weight': 28.5, 'name': 'Maruti Suzuki'},
         'HEROMOTOCO.NS': {'weight': 12.3, 'name': 'Hero MotoCorp'},
-        'BAJAJMOTO.NS': {'weight': 8.7, 'name': 'Bajaj Auto'},
+        'BAJAJ-AUTO.NS': {'weight': 8.7, 'name': 'Bajaj Auto'},
         'TATAMOTORS.NS': {'weight': 8.2, 'name': 'Tata Motors'},
-        'SUNPHARMA.NS': {'weight': 6.1, 'name': 'Sundram Fasteners'},
-        'BOSCHIND.NS': {'weight': 5.8, 'name': 'Bosch India'},
+        'SUNDRMFAST.NS': {'weight': 6.1, 'name': 'Sundram Fasteners'},
+        'BOSCHLTD.NS': {'weight': 5.8, 'name': 'Bosch India'},
         'ASHOKLEY.NS': {'weight': 4.5, 'name': 'Ashok Leyland'},
-        'FORCEMOTORS.NS': {'weight': 3.2, 'name': 'Force Motors'},
+        'FORCEMOT.NS': {'weight': 3.2, 'name': 'Force Motors'},
+        'ELOETMENT.NS': {'weight': 2.8, 'name': 'Eicher Motors'},
     },
     'Commodities': {
         'HINDALCO.NS': {'weight': 25.3, 'name': 'Hindalco Industries'},

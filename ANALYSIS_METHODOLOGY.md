@@ -75,17 +75,25 @@ Identify oversold sectors with potential for mean reversion or trend reversal.
 
 ### Pre-Filtering (Eligibility Criteria)
 
-Sectors must meet **BOTH** conditions to be considered reversal candidates:
+Sectors must meet **BOTH** user-defined conditions to be considered reversal candidates:
 
-1. **RSI < 40** (default)
+1. **RSI < threshold** (default: 40)
    - Indicates oversold condition
-   - Configurable threshold (20-60 range)
+   - Configurable threshold (20-60 range in sidebar)
 
-2. **ADX Z-Score < -0.5** (default)
+2. **ADX Z-Score < threshold** (default: -0.5)
    - Indicates weak trend relative to other sectors
-   - Configurable threshold (-2.0 to 2.0 range)
+   - Configurable threshold (-2.0 to 2.0 range in sidebar)
 
-**Important:** Only sectors passing both filters receive reversal scores. Others show "No" in Reversal_Status column.
+### Reversal Status Determination
+
+| Status | Condition |
+|--------|-----------|
+| **BUY_DIV** | Meets strict BUY_DIV thresholds: RSI < 40, ADX_Z < -0.5, CMF > 0.1 |
+| **Watch** | Passes user-defined filters but doesn't meet strict BUY_DIV criteria |
+| **No** | Does not meet user-defined filter thresholds |
+
+**Important:** Sectors that pass the user's RSI and ADX_Z filter thresholds are automatically at least "Watch" status. This ensures all qualifying sectors appear in the Reversal Candidates list.
 
 ### Key Indicators for Reversal Scoring
 
@@ -214,6 +222,49 @@ Reversal_Score = (RS_Rating_Rank × 0.40) +
 
 ---
 
+## Market Data Date Logic
+
+The "Market Data Date" shown in the header depends on the selected interval:
+
+| Interval | Market Data Date Display |
+|----------|--------------------------|
+| **Hourly** | Same as Analysis Date with latest hourly timestamp |
+| **Daily** | The actual date of the last trading session data |
+| **Weekly** | Shows "Week of YYYY-MM-DD" with Monday's date |
+
+**Note:** Analysis Date is shown in IST (Indian Standard Time) for Indian market alignment.
+
+---
+
+## CMF Sum Total (Sector Rotation Indicator)
+
+The **CMF Sum** metric aggregates all sector CMF values to indicate overall market rotation:
+
+| CMF Sum Value | Interpretation |
+|---------------|----------------|
+| **> 0.5** | Strong net inflow - bullish sector rotation |
+| **0 to 0.5** | Mild inflow - neutral to slightly bullish |
+| **-0.5 to 0** | Mild outflow - neutral to slightly bearish |
+| **< -0.5** | Strong net outflow - bearish sector rotation |
+
+A value approaching 1.0 indicates clear sector rotation with money flowing into sectors.
+
+---
+
+## Trend Analysis Period Labels
+
+Historical trend analysis now shows actual dates alongside period labels:
+
+- **T (12-Jan)**: Current period (latest data)
+- **T-1 (11-Jan)**: One period prior
+- **T-2 (10-Jan)**: Two periods prior
+- ... continuing to **T-7**
+
+For **Weekly** interval, dates show the week's Monday.
+For **Hourly** interval, dates show the trading session date.
+
+---
+
 ## Technical Notes
 
 - **Rank-based scoring** provides relative comparison, not absolute values
@@ -221,3 +272,4 @@ Reversal_Score = (RS_Rating_Rank × 0.40) +
 - Historical trend analysis uses point-in-time calculations
 - All indicators use standard technical analysis formulas
 - Data fetched from Yahoo Finance API
+- All times displayed in IST (Indian Standard Time, UTC+5:30)

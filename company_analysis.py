@@ -82,6 +82,11 @@ def display_company_momentum_tab():
         cmf = cmf_series.iloc[-1] if isinstance(cmf_series, pd.Series) and len(cmf_series) > 0 else None
         adx_z = adx_z_series.iloc[-1] if isinstance(adx_z_series, pd.Series) and len(adx_z_series) > 0 else None
         
+        # Get current price and change %
+        current_price = data['Close'].iloc[-1] if len(data) > 0 else 0.0
+        prev_close = data['Close'].iloc[-2] if len(data) > 1 else current_price
+        pct_change = ((current_price - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
+        
         # RS Rating vs Nifty 50
         sector_returns = data['Close'].pct_change().dropna()
         benchmark_returns = benchmark_data['Close'].pct_change().dropna()
@@ -106,27 +111,38 @@ def display_company_momentum_tab():
         company_results.append({
             'Company': company_name,
             'Symbol': company_symbol,
-            'Weight (%)': f"{weight:.1f}" if weight > 0 else "N/A",
-            'RSI ℹ️': f"{float(rsi):.1f}" if rsi is not None and pd.notna(rsi) else "N/A",
-            'ADX ℹ️': f"{float(adx):.1f}" if adx is not None and pd.notna(adx) else "N/A",
-            'ADX_Z ℹ️': f"{float(adx_z):.1f}" if adx_z is not None and pd.notna(adx_z) else "N/A",
-            '+DI ℹ️': f"{float(plus_di):.1f}" if plus_di is not None and pd.notna(plus_di) else "N/A",
-            '-DI ℹ️': f"{float(minus_di):.1f}" if minus_di is not None and pd.notna(minus_di) else "N/A",
-            'DI_Spread ℹ️': f"{float(di_spread):.1f}" if di_spread is not None and pd.notna(di_spread) else "N/A",
-            'CMF ℹ️': f"{float(cmf):.2f}" if cmf is not None and pd.notna(cmf) else "N/A",
-            'RS_Rating ℹ️': f"{rs_rating:.1f}",
-            'Mansfield_RS ℹ️': f"{float(mansfield_rs):.1f}" if mansfield_rs is not None and pd.notna(mansfield_rs) else "N/A",
-            'Momentum_Score ℹ️': f"{momentum_score:.1f}",
+            'Price': f"{current_price:.2f}",
+            'Change %': f"{pct_change:+.2f}%",
+            'Momentum_Score': f"{momentum_score:.1f}",
+            'Mansfield_RS': f"{float(mansfield_rs):.1f}" if mansfield_rs is not None and pd.notna(mansfield_rs) else "N/A",
+            'RS_Rating': f"{rs_rating:.1f}",
+            'RSI': f"{float(rsi):.1f}" if rsi is not None and pd.notna(rsi) else "N/A",
+            'ADX': f"{float(adx):.1f}" if adx is not None and pd.notna(adx) else "N/A",
+            'ADX_Z': f"{float(adx_z):.1f}" if adx_z is not None and pd.notna(adx_z) else "N/A",
+            'DI_Spread': f"{float(di_spread):.1f}" if di_spread is not None and pd.notna(di_spread) else "N/A",
+            'CMF': f"{float(cmf):.2f}" if cmf is not None and pd.notna(cmf) else "N/A",
         })
     
-    # Display results
+    # Display results - sort by Momentum Score and add ranking
     df_companies = pd.DataFrame(company_results)
+    
+    # Convert Momentum_Score to float for sorting and ranking
+    df_companies['_score_float'] = df_companies['Momentum_Score'].astype(float)
+    df_companies = df_companies.sort_values('_score_float', ascending=False)
+    df_companies['Rank'] = range(1, len(df_companies) + 1)
+    df_companies = df_companies.drop('_score_float', axis=1)
+    
+    # Reorder columns to put Rank near the front
+    cols = ['Rank', 'Company', 'Symbol', 'Price', 'Change %', 'Momentum_Score', 'Mansfield_RS', 
+            'RS_Rating', 'RSI', 'ADX', 'ADX_Z', 'DI_Spread', 'CMF']
+    df_companies = df_companies[[c for c in cols if c in df_companies.columns]]
+    
     st.dataframe(df_companies, use_container_width=True, height=400)
     
     st.success(f"✅ Analysis complete for {len(companies_data)} companies in {selected_sector}")
     
-    # Summary stats
-    col1, col2, col3 = st.columns(3)
+    # Summary stats with CMF sum
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.metric("Companies Analyzed", len(companies_data))
     with col2:
@@ -135,6 +151,13 @@ def display_company_momentum_tab():
     with col3:
         top_momentum = max(company_scores) if company_scores else 0
         st.metric("Highest Momentum", f"{top_momentum:.1f}")
+    with col4:
+        # Calculate CMF sum for the sector
+        cmf_values = [float(r['CMF']) for r in company_results if r['CMF'] != 'N/A']
+        cmf_sum = sum(cmf_values) if cmf_values else 0
+        cmf_delta = "↑ Inflow" if cmf_sum > 0 else "↓ Outflow"
+        st.metric("CMF Sum (Sector)", f"{cmf_sum:.2f}", delta=cmf_delta,
+                  help="Sum of all company CMF values in this sector")
 
 
 def display_company_reversal_tab():
@@ -206,6 +229,11 @@ def display_company_reversal_tab():
         adx_z = adx_z_series.iloc[-1] if isinstance(adx_z_series, pd.Series) and len(adx_z_series) > 0 else None
         cmf = cmf_series.iloc[-1] if isinstance(cmf_series, pd.Series) and len(cmf_series) > 0 else None
         
+        # Get current price and change %
+        current_price = data['Close'].iloc[-1] if len(data) > 0 else 0.0
+        prev_close = data['Close'].iloc[-2] if len(data) > 1 else current_price
+        pct_change = ((current_price - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
+        
         # Determine reversal status
         status = "No"
         if rsi is not None and adx_z is not None and cmf is not None:
@@ -219,6 +247,8 @@ def display_company_reversal_tab():
             company_results.append({
                 'Company': company_name,
                 'Symbol': company_symbol,
+                'Price': f"{current_price:.2f}",
+                'Change %': f"{pct_change:+.2f}%",
                 'Weight (%)': f"{weight:.1f}" if weight > 0 else "N/A",
                 'Status ℹ️': status,
                 'RSI ℹ️': f"{float(rsi):.1f}" if rsi is not None and pd.notna(rsi) else "N/A",

@@ -333,8 +333,24 @@ def analyze_sectors_with_progress(use_etf, momentum_weights, reversal_weights, a
             st.error("❌ No sector data available for analysis. Please check your internet connection.")
             return None, None, None
         
-        # Store the last market date from the data
-        market_date = benchmark_data.index[-1].strftime('%Y-%m-%d') if benchmark_data is not None and len(benchmark_data) > 0 else "N/A"
+        # Store the last market date from the data with proper interval logic
+        # Hourly: same as analysis date with latest hour
+        # Daily: one day prior to analysis date (unless after 4:30 PM IST, then same day)
+        # Weekly: starting date of the week captured
+        if benchmark_data is not None and len(benchmark_data) > 0:
+            last_data_timestamp = benchmark_data.index[-1]
+            if yf_interval == '1h':
+                # Hourly: show the exact timestamp
+                market_date = last_data_timestamp.strftime('%Y-%m-%d %H:%M')
+            elif yf_interval == '1wk':
+                # Weekly: show week start date (Monday)
+                week_start = last_data_timestamp - pd.Timedelta(days=last_data_timestamp.weekday())
+                market_date = f"Week of {week_start.strftime('%Y-%m-%d')}"
+            else:
+                # Daily: show the date
+                market_date = last_data_timestamp.strftime('%Y-%m-%d')
+        else:
+            market_date = "N/A"
         
         # Analyze all sectors (excludes Nifty 50 from rankings)
         try:
@@ -449,7 +465,15 @@ def calculate_sector_trend(sector_name, data, benchmark_data, all_sector_data, p
         
         for i in range(periods, 0, -1):
             try:
-                period_label = f'T-{i-1}' if i > 1 else 'T'
+                # Get the actual date for this period from the data index
+                period_index = -i if i > 0 else -1
+                if abs(period_index) <= len(data):
+                    period_date = data.index[period_index]
+                    date_str = period_date.strftime('%d-%b')
+                else:
+                    date_str = ""
+                
+                period_label = f'T-{i-1} ({date_str})' if i > 1 else f'T ({date_str})'
                 
                 # For each period, analyze ALL sectors to get rankings
                 period_results = []
@@ -584,7 +608,15 @@ def calculate_reversal_trend(sector_name, data, benchmark_data, all_sector_data,
         
         for i in range(periods, 0, -1):
             try:
-                period_label = f'T-{i-1}' if i > 1 else 'T'
+                # Get the actual date for this period from the data index
+                period_index = -i if i > 0 else -1
+                if abs(period_index) <= len(data):
+                    period_date = data.index[period_index]
+                    date_str = period_date.strftime('%d-%b')
+                else:
+                    date_str = ""
+                
+                period_label = f'T-{i-1} ({date_str})' if i > 1 else f'T ({date_str})'
                 
                 # For each period, analyze ALL sectors to get rankings
                 period_results = []
@@ -1209,9 +1241,9 @@ def display_momentum_tab(df, sector_data_dict, benchmark_data, enable_color_codi
         }
     )
     
-    # Key metrics summary
-    col1, col2, col3 = st.columns(3)
-    momentum_df_numeric = df[['Sector', 'Momentum_Score', 'Mansfield_RS']].copy()
+    # Key metrics summary with CMF sum total
+    col1, col2, col3, col4 = st.columns(4)
+    momentum_df_numeric = df[['Sector', 'Momentum_Score', 'Mansfield_RS', 'CMF']].copy()
     
     # Calculate super bullish threshold (top 30% of sectors)
     momentum_threshold = momentum_df_numeric['Momentum_Score'].quantile(MOMENTUM_SCORE_PERCENTILE_THRESHOLD / 100.0)
@@ -1227,6 +1259,12 @@ def display_momentum_tab(df, sector_data_dict, benchmark_data, enable_color_codi
     with col3:
         avg_momentum = momentum_df_numeric['Momentum_Score'].mean()
         st.metric("Average Momentum", f"{avg_momentum:.1f}")
+    with col4:
+        # CMF Sum Total - indicates overall sector rotation direction
+        cmf_sum = momentum_df_numeric['CMF'].sum()
+        cmf_delta = "↑ Net Inflow" if cmf_sum > 0 else "↓ Net Outflow"
+        st.metric("CMF Sum (Sector Rotation)", f"{cmf_sum:.2f}", delta=cmf_delta,
+                  help="Sum of all sector CMF values. Positive = net money flowing into sectors (bullish rotation), Negative = net money flowing out (bearish rotation). Value near 1 indicates clear sector rotation.")
     
     # Sector Trend Analysis
     st.markdown("---")
@@ -1243,7 +1281,8 @@ def display_momentum_tab(df, sector_data_dict, benchmark_data, enable_color_codi
             st.markdown(f"#### Trend for **{selected_sector}**")
             
             # Display current rank and momentum score
-            current_row = trend_df[trend_df['Period'] == 'T']
+            # Find the row that starts with 'T (' (the current period)
+            current_row = trend_df[trend_df['Period'].str.startswith('T (')]
             if len(current_row) > 0:
                 col_a, col_b = st.columns(2)
                 with col_a:
@@ -1906,13 +1945,17 @@ def main():
             st.info("💡 Tip: Ensure yfinance can reach Yahoo Finance servers. If the issue persists, try again in a few moments.")
             return
         
-        # Display combined data source and date information
+        # Display combined data source and date information with IST timezone
         data_source_type = "ETF Proxy" if use_etf else "NSE Indices"
-        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # Convert to IST (UTC+5:30)
+        from datetime import timezone
+        ist_offset = timedelta(hours=5, minutes=30)
+        ist_time = datetime.now(timezone.utc) + ist_offset
+        current_time_ist = ist_time.strftime('%Y-%m-%d %H:%M:%S IST')
         st.markdown(f'''
             <div class="date-info">
                 <b>📊 Data Source:</b> {data_source_type} | 
-                <b>📅 Analysis Date:</b> {current_time} | 
+                <b>📅 Analysis Date:</b> {current_time_ist} | 
                 <b>📈 Market Data Date:</b> {market_date} | 
                 <b>⏱️ Interval:</b> {time_interval}
             </div>
