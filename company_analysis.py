@@ -11,6 +11,111 @@ from data_fetcher import fetch_sector_data
 from indicators import calculate_rsi, calculate_adx, calculate_cmf, calculate_z_score, calculate_mansfield_rs
 
 
+def format_value(val, decimals=1):
+    """Format numerical value with specified decimal places."""
+    try:
+        return f"{float(val):.{decimals}f}"
+    except:
+        return val
+
+
+def calculate_company_trend(company_symbol, company_data, benchmark_data, all_companies_data_dict, selected_sector, periods=7):
+    """
+    Calculate trend for a company over the last N periods.
+    Similar to sector trend analysis but for individual companies.
+    
+    Args:
+        company_symbol: Symbol of the company to analyze
+        company_data: Price data for the selected company
+        benchmark_data: Benchmark (Nifty 50) data
+        all_companies_data_dict: Dictionary of all company data for the sector
+        selected_sector: Name of the sector
+        periods: Number of periods to look back
+    
+    Returns:
+        DataFrame with historical indicators
+    """
+    try:
+        if company_data is None or len(company_data) < periods:
+            return None
+        
+        trend_data = []
+        
+        for i in range(periods, 0, -1):
+            try:
+                # Get the actual date for this period from the data index
+                period_index = -i if i > 0 else -1
+                if abs(period_index) <= len(company_data):
+                    period_date = company_data.index[period_index]
+                    date_str = period_date.strftime('%d-%b')
+                else:
+                    date_str = ""
+                
+                period_label = f'T-{i-1} ({date_str})' if i > 1 else f'T ({date_str})'
+                
+                # Get data up to that historical point
+                subset_data = company_data.iloc[:-i+1] if i > 1 else company_data
+                bench_subset = benchmark_data.iloc[:-i+1] if i > 1 else benchmark_data
+                
+                if len(subset_data) < 14:  # Minimum for most indicators
+                    continue
+                
+                # Calculate all indicators for this company at this point in time
+                rsi = calculate_rsi(subset_data)
+                adx, plus_di, minus_di, di_spread = calculate_adx(subset_data)
+                cmf = calculate_cmf(subset_data)
+                mansfield_rs = calculate_mansfield_rs(subset_data, bench_subset)
+                adx_z = calculate_z_score(adx.dropna())
+                
+                # Calculate RS Rating
+                if bench_subset is not None and len(bench_subset) > 0:
+                    company_returns = subset_data['Close'].pct_change().dropna()
+                    benchmark_returns = bench_subset['Close'].pct_change().dropna()
+                    
+                    common_index = company_returns.index.intersection(benchmark_returns.index)
+                    if len(common_index) > 1:
+                        company_returns_aligned = company_returns.loc[common_index]
+                        benchmark_returns_aligned = benchmark_returns.loc[common_index]
+                        
+                        company_cumret = (1 + company_returns_aligned).prod() - 1
+                        benchmark_cumret = (1 + benchmark_returns_aligned).prod() - 1
+                        
+                        if not pd.isna(company_cumret) and not pd.isna(benchmark_cumret):
+                            relative_perf = company_cumret - benchmark_cumret
+                            rs_rating = 5 + (relative_perf * 25)
+                            rs_rating = max(0, min(10, rs_rating))
+                        else:
+                            rs_rating = 5.0
+                    else:
+                        rs_rating = 5.0
+                else:
+                    rs_rating = 5.0
+                
+                trend_data.append({
+                    'Period': period_label,
+                    'Mansfield_RS': format_value(mansfield_rs, 1),
+                    'RS_Rating': format_value(rs_rating, 1),
+                    'ADX': format_value(adx.iloc[-1] if not adx.isna().all() else 0, 1),
+                    'ADX_Z': format_value(adx_z if not pd.isna(adx_z) else 0, 1),
+                    'DI_Spread': format_value(di_spread.iloc[-1] if not di_spread.isna().all() else 0, 1),
+                    'RSI': format_value(rsi.iloc[-1] if not rsi.isna().all() else 50, 1),
+                    'CMF': format_value(cmf.iloc[-1] if not cmf.isna().all() else 0, 2),
+                })
+            except Exception as e:
+                continue
+        
+        if not trend_data:
+            return None
+        
+        df = pd.DataFrame(trend_data)
+        return df
+        
+    except Exception as e:
+        st.warning(f"⚠️ Error calculating company trend: {str(e)}")
+        return None
+
+
+
 def display_company_momentum_tab():
     """Display company-level momentum analysis within selected sector."""
     st.markdown("### 📈 Company Momentum Analysis")
@@ -71,7 +176,7 @@ def display_company_momentum_tab():
         adx_series, plus_di_series, minus_di_series, di_spread_series = calculate_adx(data)
         cmf_series = calculate_cmf(data)
         mansfield_rs = calculate_mansfield_rs(data, benchmark_data)  # Returns scalar
-        adx_z_series = calculate_z_score(adx_series.dropna())
+        adx_z = calculate_z_score(adx_series.dropna())  # Returns scalar
         
         # Get latest values from Series (or use scalar directly)
         rsi = rsi_series.iloc[-1] if isinstance(rsi_series, pd.Series) and len(rsi_series) > 0 else None
@@ -80,7 +185,6 @@ def display_company_momentum_tab():
         minus_di = minus_di_series.iloc[-1] if isinstance(minus_di_series, pd.Series) and len(minus_di_series) > 0 else None
         di_spread = di_spread_series.iloc[-1] if isinstance(di_spread_series, pd.Series) and len(di_spread_series) > 0 else None
         cmf = cmf_series.iloc[-1] if isinstance(cmf_series, pd.Series) and len(cmf_series) > 0 else None
-        adx_z = adx_z_series.iloc[-1] if isinstance(adx_z_series, pd.Series) and len(adx_z_series) > 0 else None
         
         # Get current price and change %
         current_price = data['Close'].iloc[-1] if len(data) > 0 else 0.0
@@ -158,6 +262,25 @@ def display_company_momentum_tab():
         cmf_delta = "↑ Inflow" if cmf_sum > 0 else "↓ Outflow"
         st.metric("CMF Sum (Sector)", f"{cmf_sum:.2f}", delta=cmf_delta,
                   help="Sum of all company CMF values in this sector")
+    
+    # Company Trend Analysis
+    st.markdown("---")
+    st.markdown("### 📊 Company Trend Analysis (T-7 to T)")
+    
+    company_symbols_list = list(companies_data.keys())
+    selected_company_symbol = st.selectbox("Select a company for trend view:", company_symbols_list, key="momentum_company_trend")
+    
+    if selected_company_symbol and selected_company_symbol in companies_data:
+        with st.spinner(f"Calculating trend for {selected_company_symbol}..."):
+            trend_df = calculate_company_trend(selected_company_symbol, companies_data[selected_company_symbol], 
+                                             benchmark_data, companies_data, selected_sector, periods=8)
+        
+        if trend_df is not None:
+            company_name = SECTOR_COMPANIES[selected_sector].get(selected_company_symbol, {}).get('name', selected_company_symbol)
+            st.markdown(f"#### Trend for **{company_name}** ({selected_company_symbol})")
+            
+            st.dataframe(trend_df, use_container_width=True, hide_index=True)
+            st.caption("📈 **Note:** Shows historical technical indicator values over the last 8 days (T-7 to T).")
 
 
 def display_company_reversal_tab():
@@ -221,12 +344,11 @@ def display_company_reversal_tab():
         rsi_series = calculate_rsi(data)
         adx_series, plus_di_series, minus_di_series, di_spread_series = calculate_adx(data)
         cmf_series = calculate_cmf(data)
-        adx_z_series = calculate_z_score(adx_series.dropna())
+        adx_z = calculate_z_score(adx_series.dropna())  # Returns scalar
         mansfield_rs = calculate_mansfield_rs(data, benchmark_data)  # Returns scalar
         
         # Get latest values from Series (or use scalar directly)
         rsi = rsi_series.iloc[-1] if isinstance(rsi_series, pd.Series) and len(rsi_series) > 0 else None
-        adx_z = adx_z_series.iloc[-1] if isinstance(adx_z_series, pd.Series) and len(adx_z_series) > 0 else None
         cmf = cmf_series.iloc[-1] if isinstance(cmf_series, pd.Series) and len(cmf_series) > 0 else None
         
         # Get current price and change %
@@ -274,5 +396,26 @@ def display_company_reversal_tab():
             st.metric("🟡 Watch", watch_count)
         
         st.success(f"✅ Found {len(company_results)} reversal candidates in {selected_sector}")
+        
+        # Company Trend Analysis for Reversals
+        st.markdown("---")
+        st.markdown("### 📊 Company Trend Analysis (T-7 to T)")
+        
+        reversal_symbols = [r['Symbol'] for r in company_results]
+        selected_reversal_symbol = st.selectbox("Select a reversal candidate for trend view:", reversal_symbols, key="reversal_company_trend")
+        
+        if selected_reversal_symbol and selected_reversal_symbol in companies_data:
+            with st.spinner(f"Calculating trend for {selected_reversal_symbol}..."):
+                trend_df = calculate_company_trend(selected_reversal_symbol, companies_data[selected_reversal_symbol], 
+                                                 benchmark_data, companies_data, selected_sector, periods=8)
+            
+            if trend_df is not None:
+                company_name = SECTOR_COMPANIES[selected_sector].get(selected_reversal_symbol, {}).get('name', selected_reversal_symbol)
+                st.markdown(f"#### Trend for **{company_name}** ({selected_reversal_symbol})")
+                
+                st.dataframe(trend_df, use_container_width=True, hide_index=True)
+                st.caption("📈 **Note:** Shows historical technical indicator values over the last 8 days (T-7 to T). Watch for improving signals.")
     else:
         st.info(f"ℹ️ No reversal candidates found in {selected_sector} at this time")
+
+```

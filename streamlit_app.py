@@ -1246,25 +1246,27 @@ def display_momentum_tab(df, sector_data_dict, benchmark_data, enable_color_codi
         }
     )
     
-    # Key metrics summary with CMF sum total
-    col1, col2, col3, col4 = st.columns(4)
+    # Key metrics summary with CMF sum total (2x2 matrix for better space usage)
+    metric_col1, metric_col2 = st.columns(2)
     momentum_df_numeric = df[['Sector', 'Momentum_Score', 'Mansfield_RS', 'CMF']].copy()
     
     # Calculate super bullish threshold (top 30% of sectors)
     momentum_threshold = momentum_df_numeric['Momentum_Score'].quantile(MOMENTUM_SCORE_PERCENTILE_THRESHOLD / 100.0)
     
-    with col1:
+    with metric_col1:
         super_bullish = len(momentum_df_numeric[momentum_df_numeric['Momentum_Score'] >= momentum_threshold])
         st.metric("Top Momentum Sectors", super_bullish, 
                   help=f"Top {100-MOMENTUM_SCORE_PERCENTILE_THRESHOLD}% by Momentum Score (>= {momentum_threshold:.1f})")
-    with col2:
+    with metric_col2:
         positive_mansfield = len(momentum_df_numeric[momentum_df_numeric['Mansfield_RS'] > 0])
         st.metric("Positive Mansfield RS", positive_mansfield,
                   help="Outperforming vs Nifty 50")
-    with col3:
+    
+    metric_col3, metric_col4 = st.columns(2)
+    with metric_col3:
         avg_momentum = momentum_df_numeric['Momentum_Score'].mean()
         st.metric("Average Momentum", f"{avg_momentum:.1f}")
-    with col4:
+    with metric_col4:
         # CMF Sum Total - indicates overall sector rotation direction
         cmf_sum = momentum_df_numeric['CMF'].sum()
         cmf_delta = "↑ Net Inflow" if cmf_sum > 0 else "↓ Net Outflow"
