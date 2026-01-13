@@ -41,24 +41,59 @@ Identify sectors with strong relative momentum for potential investment opportun
 
 ### Scoring Methodology
 
-**Rank-Based System:**
-- Each sector is ranked on each indicator (1 = worst, N = best)
-- Ranks are combined using configurable percentage weights
-- Default weights:
-  - RS Rating: 40%
-  - ADX Z-Score: 20%
-  - RSI: 30%
-  - DI Spread: 10%
+**Rank-Based System with 1-10 Scaling:**
+- Each sector is ranked on each indicator independently
+- **Higher indicator values = better for momentum = Rank 1** (ascending=False)
+- Ranks are weighted and averaged, then scaled to a **1-10 score**
+- **Score 10 = Best momentum, Score 1 = Worst momentum**
 
-**Momentum Score Formula:**
+**Default Weights:**
+- RS Rating: 40%
+- RSI: 30%
+- ADX Z-Score: 20%
+- DI Spread: 10%
+
+**Step-by-Step Calculation:**
+
+**Step 1: Rank Each Indicator (Higher Raw Value = Rank 1)**
 ```
-Momentum_Score = (RS_Rating_Rank × 0.40) + 
-                 (ADX_Z_Rank × 0.20) + 
-                 (RSI_Rank × 0.30) + 
-                 (DI_Spread_Rank × 0.10)
+Sector       RS_Rating  RSI   ADX_Z  DI_Spread
+IT           8.2        68    1.5    15
+Pharma       6.5        55    0.8    8
+Metal        4.1        42   -0.5    -2
+```
+→ Ranks (1=best, 3=worst):
+```
+Sector       RS_Rank  RSI_Rank  ADX_Z_Rank  DI_Rank
+IT           1        1         1           1
+Pharma       2        2         2           2
+Metal        3        3         3           3
 ```
 
-**Result:** Higher momentum scores indicate sectors with stronger relative momentum.
+**Step 2: Calculate Weighted Average Rank**
+```
+IT:     (1×0.40) + (1×0.30) + (1×0.20) + (1×0.10) = 1.0
+Pharma: (2×0.40) + (2×0.30) + (2×0.20) + (2×0.10) = 2.0
+Metal:  (3×0.40) + (3×0.30) + (3×0.20) + (3×0.10) = 3.0
+```
+
+**Step 3: Scale to 1-10 (Lower Weighted Rank = Higher Score)**
+```
+Formula: Score = 10 - ((weighted_rank - min_rank) / (max_rank - min_rank)) × 9
+
+IT:     10 - ((1.0 - 1.0) / (3.0 - 1.0)) × 9 = 10.0
+Pharma: 10 - ((2.0 - 1.0) / (3.0 - 1.0)) × 9 = 5.5
+Metal:  10 - ((3.0 - 1.0) / (3.0 - 1.0)) × 9 = 1.0
+```
+
+**Final Result:**
+| Sector | Momentum Score | Rank |
+|--------|---------------|------|
+| IT     | 10.0          | 1    |
+| Pharma | 5.5           | 2    |
+| Metal  | 1.0           | 3    |
+
+**Interpretation:** IT has the strongest momentum (score 10), Metal has weakest (score 1).
 
 ### Historical Performance Report
 - Tracks top 2 momentum-ranked sectors over past 6 months
@@ -116,23 +151,63 @@ Sectors must meet **BOTH** user-defined conditions to be considered reversal can
 
 ### Scoring Methodology
 
-**Rank-Based System (Eligible Sectors Only):**
-- Only sectors meeting eligibility criteria are ranked
-- Lower RS Rating, RSI, and ADX Z receive higher ranks
-- Higher CMF receives higher rank
-- Default weights:
-  - RS Rating: 40%
-  - CMF: 40%
-  - RSI: 10%
-  - ADX Z-Score: 10%
+**Rank-Based System with 1-10 Scaling (Eligible Sectors Only):**
+- Only sectors meeting BOTH eligibility criteria (RSI < threshold AND ADX_Z < threshold) are ranked
+- For reversals, **lower indicator values are better** (except CMF where higher is better)
+- Ranks are weighted and averaged, then scaled to a **1-10 score**
+- **Score 10 = Best reversal candidate, Score 1 = Worst among eligible**
 
-**Reversal Score Formula:**
+**Default Weights:**
+- RS Rating: 40% (lower = more beaten down = better)
+- CMF: 40% (higher = money inflow = better)
+- RSI: 10% (lower = more oversold = better)
+- ADX Z-Score: 10% (lower = weaker trend = better for reversal)
+
+**Step-by-Step Calculation Example:**
+
+**Step 1: Filter to Eligible Sectors Only**
+Only sectors with RSI < 40 AND ADX_Z < -0.5 qualify:
 ```
-Reversal_Score = (RS_Rating_Rank × 0.40) + 
-                 (CMF_Rank × 0.40) + 
-                 (RSI_Rank × 0.10) + 
-                 (ADX_Z_Rank × 0.10)
+Sector      RSI   ADX_Z  CMF    RS_Rating  Eligible?
+Pharma      35    -0.8   0.15   3.5        ✅ Yes
+Realty      38    -1.2   0.08   2.8        ✅ Yes
+Metal       32    -0.3   0.20   4.2        ❌ No (ADX_Z > -0.5)
+IT          55     1.2   0.05   7.5        ❌ No (RSI > 40)
 ```
+
+**Step 2: Rank Each Indicator Among Eligible Only**
+- RS_Rating: Lower is better → ascending=True (lowest gets Rank 1)
+- CMF: Higher is better → ascending=False (highest gets Rank 1)
+- RSI: Lower is better → ascending=True
+- ADX_Z: Lower is better → ascending=True
+
+```
+Sector      RS_Rank  CMF_Rank  RSI_Rank  ADX_Z_Rank
+Realty      1        2         2         1          (RS=2.8 lowest, ADX_Z=-1.2 lowest)
+Pharma      2        1         1         2          (CMF=0.15 highest, RSI=35 highest)
+```
+
+**Step 3: Calculate Weighted Average Rank**
+```
+Realty: (1×0.40) + (2×0.40) + (2×0.10) + (1×0.10) = 1.5
+Pharma: (2×0.40) + (1×0.40) + (1×0.10) + (2×0.10) = 1.5
+```
+
+**Step 4: Scale to 1-10**
+When weighted ranks are equal, both get score 5.0 (midpoint).
+
+If they differed:
+```
+Formula: Score = 10 - ((weighted_rank - min_rank) / (max_rank - min_rank)) × 9
+```
+
+**Final Result:**
+| Sector | Reversal Score | Rank | Status |
+|--------|---------------|------|--------|
+| Realty | 5.0           | 1    | Watch  |
+| Pharma | 5.0           | 2    | BUY_DIV (if RSI<30, ADX_Z<-1, CMF>0.1) |
+
+**Interpretation:** Both are equally good reversal candidates. Pharma gets BUY_DIV status if it meets the stricter thresholds.
 
 **Result:** Higher reversal scores indicate better reversal candidates among eligible sectors.
 

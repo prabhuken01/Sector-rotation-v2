@@ -246,21 +246,35 @@ def analyze_all_sectors(sector_data_dict, benchmark_data, momentum_weights=None,
     df = pd.DataFrame(results)
     
     # Calculate ranking-based momentum score
-    # Rank each indicator (higher value = better rank, i.e., rank 1 is best)
-    # For sectors where Mansfield_RS < 0, they should have lower composite scores
-    df['ADX_Z_Rank'] = df['ADX_Z'].rank(ascending=True, method='min')
-    df['RS_Rating_Rank'] = df['RS_Rating'].rank(ascending=True, method='min')
-    df['RSI_Rank'] = df['RSI'].rank(ascending=True, method='min')  # Higher RSI = stronger momentum
-    df['DI_Spread_Rank'] = df['DI_Spread'].rank(ascending=True, method='min')
+    # Rank each indicator: Higher raw value = better = gets rank 1 (ascending=False)
+    # This means sectors with stronger indicators get lower rank numbers (1 = best)
+    num_sectors = len(df)
+    df['ADX_Z_Rank'] = df['ADX_Z'].rank(ascending=False, method='min')  # Higher ADX_Z = stronger trend = rank 1
+    df['RS_Rating_Rank'] = df['RS_Rating'].rank(ascending=False, method='min')  # Higher RS = outperforming = rank 1
+    df['RSI_Rank'] = df['RSI'].rank(ascending=False, method='min')  # Higher RSI = stronger momentum = rank 1
+    df['DI_Spread_Rank'] = df['DI_Spread'].rank(ascending=False, method='min')  # Higher DI spread = bullish = rank 1
     
-    # Calculate composite momentum score using percentage weights
-    # Convert percentages to decimals (e.g., 20% = 0.20)
-    df['Momentum_Score'] = (
-        (df['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20.0) / 100.0) +
-        (df['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40.0) / 100.0) +
-        (df['RSI_Rank'] * momentum_weights.get('RSI', 30.0) / 100.0) +
-        (df['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10.0) / 100.0)
+    # Calculate weighted average rank (lower = better)
+    total_weight = sum(momentum_weights.values())
+    df['Weighted_Avg_Rank'] = (
+        (df['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20.0) / total_weight) +
+        (df['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40.0) / total_weight) +
+        (df['RSI_Rank'] * momentum_weights.get('RSI', 30.0) / total_weight) +
+        (df['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10.0) / total_weight)
     )
+    
+    # Scale to 1-10 where 10 = best momentum (lowest weighted rank), 1 = worst momentum (highest weighted rank)
+    # Formula: Score = 10 - ((weighted_rank - 1) / (num_sectors - 1)) * 9
+    # This maps rank 1 -> score 10, rank N -> score 1
+    if num_sectors > 1:
+        min_rank = df['Weighted_Avg_Rank'].min()
+        max_rank = df['Weighted_Avg_Rank'].max()
+        if max_rank > min_rank:
+            df['Momentum_Score'] = 10 - ((df['Weighted_Avg_Rank'] - min_rank) / (max_rank - min_rank)) * 9
+        else:
+            df['Momentum_Score'] = 5.0  # All same score
+    else:
+        df['Momentum_Score'] = 5.0  # Single sector
     
     # Calculate rank-based reversal score ONLY for sectors with Reversal_Status != 'No'
     # This ensures reversal scores are relative only among eligible reversal candidates
@@ -268,29 +282,38 @@ def analyze_all_sectors(sector_data_dict, benchmark_data, momentum_weights=None,
     
     if len(eligible_reversals) > 0:
         # Rank within eligible sectors only
-        # Lower RS_Rating, RSI, ADX_Z are better → rank ascending=True (lowest gets highest rank)
-        # Higher CMF is better → rank ascending=False (highest gets highest rank)
-        eligible_reversals['RS_Rating_Reversal_Rank'] = eligible_reversals['RS_Rating'].rank(ascending=True, method='min')
-        eligible_reversals['CMF_Reversal_Rank'] = eligible_reversals['CMF'].rank(ascending=False, method='min')
-        eligible_reversals['RSI_Reversal_Rank'] = eligible_reversals['RSI'].rank(ascending=True, method='min')
-        eligible_reversals['ADX_Z_Reversal_Rank'] = eligible_reversals['ADX_Z'].rank(ascending=True, method='min')
+        # For reversals: Lower RSI/RS_Rating/ADX_Z = better = rank 1 (ascending=True for lower-is-better)
+        # Higher CMF = better = rank 1 (ascending=False for higher-is-better)
+        num_eligible = len(eligible_reversals)
+        eligible_reversals['RS_Rating_Reversal_Rank'] = eligible_reversals['RS_Rating'].rank(ascending=True, method='min')  # Lower RS = more beaten down = rank 1
+        eligible_reversals['CMF_Reversal_Rank'] = eligible_reversals['CMF'].rank(ascending=False, method='min')  # Higher CMF = money inflow = rank 1
+        eligible_reversals['RSI_Reversal_Rank'] = eligible_reversals['RSI'].rank(ascending=True, method='min')  # Lower RSI = more oversold = rank 1
+        eligible_reversals['ADX_Z_Reversal_Rank'] = eligible_reversals['ADX_Z'].rank(ascending=True, method='min')  # Lower ADX_Z = weaker trend = rank 1
         
-        # Calculate rank-based reversal score using percentage weights (same approach as momentum)
+        # Calculate weighted average rank (lower = better reversal candidate)
         if reversal_weights:
             total_weight = sum(reversal_weights.values())
-            eligible_reversals['Reversal_Score_Ranked'] = (
-                (eligible_reversals['RS_Rating_Reversal_Rank'] * reversal_weights.get('RS_Rating', 40.0) / total_weight * 100) +
-                (eligible_reversals['CMF_Reversal_Rank'] * reversal_weights.get('CMF', 40.0) / total_weight * 100) +
-                (eligible_reversals['RSI_Reversal_Rank'] * reversal_weights.get('RSI', 10.0) / total_weight * 100) +
-                (eligible_reversals['ADX_Z_Reversal_Rank'] * reversal_weights.get('ADX_Z', 10.0) / total_weight * 100)
-            )
         else:
-            eligible_reversals['Reversal_Score_Ranked'] = (
-                (eligible_reversals['RS_Rating_Reversal_Rank'] * 0.40 * 100) +
-                (eligible_reversals['CMF_Reversal_Rank'] * 0.40 * 100) +
-                (eligible_reversals['RSI_Reversal_Rank'] * 0.10 * 100) +
-                (eligible_reversals['ADX_Z_Reversal_Rank'] * 0.10 * 100)
-            )
+            total_weight = 100.0
+            reversal_weights = {'RS_Rating': 40.0, 'CMF': 40.0, 'RSI': 10.0, 'ADX_Z': 10.0}
+        
+        eligible_reversals['Weighted_Avg_Rank'] = (
+            (eligible_reversals['RS_Rating_Reversal_Rank'] * reversal_weights.get('RS_Rating', 40.0) / total_weight) +
+            (eligible_reversals['CMF_Reversal_Rank'] * reversal_weights.get('CMF', 40.0) / total_weight) +
+            (eligible_reversals['RSI_Reversal_Rank'] * reversal_weights.get('RSI', 10.0) / total_weight) +
+            (eligible_reversals['ADX_Z_Reversal_Rank'] * reversal_weights.get('ADX_Z', 10.0) / total_weight)
+        )
+        
+        # Scale to 1-10 where 10 = best reversal candidate (lowest weighted rank), 1 = worst
+        if num_eligible > 1:
+            min_rank = eligible_reversals['Weighted_Avg_Rank'].min()
+            max_rank = eligible_reversals['Weighted_Avg_Rank'].max()
+            if max_rank > min_rank:
+                eligible_reversals['Reversal_Score_Ranked'] = 10 - ((eligible_reversals['Weighted_Avg_Rank'] - min_rank) / (max_rank - min_rank)) * 9
+            else:
+                eligible_reversals['Reversal_Score_Ranked'] = 5.0  # All same score
+        else:
+            eligible_reversals['Reversal_Score_Ranked'] = 10.0  # Single eligible sector gets max score
         
         # Update the main dataframe with rank-based reversal scores for eligible sectors
         df.loc[eligible_reversals.index, 'Reversal_Score'] = eligible_reversals['Reversal_Score_Ranked']

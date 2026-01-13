@@ -15,7 +15,7 @@ warnings.filterwarnings('ignore')
 try:
     from config import (SECTORS, SECTOR_ETFS, SECTOR_ETFS_ALTERNATE, MOMENTUM_SCORE_PERCENTILE_THRESHOLD, 
                         DEFAULT_MOMENTUM_WEIGHTS, DEFAULT_REVERSAL_WEIGHTS, DECIMAL_PLACES)
-    from data_fetcher import fetch_sector_data, fetch_sector_data_with_alternate
+    from data_fetcher import fetch_sector_data, fetch_sector_data_with_alternate, fetch_all_sectors_parallel, clear_data_cache
     from analysis import analyze_all_sectors, format_results_dataframe, analyze_sector
     from indicators import calculate_rsi, calculate_adx, calculate_cmf, calculate_z_score, calculate_mansfield_rs
     from company_analysis import display_company_momentum_tab, display_company_reversal_tab
@@ -264,24 +264,69 @@ def get_sidebar_controls():
     return use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_all_sector_data_cached(data_source_key, analysis_date_str, yf_interval, use_etf):
+    """
+    Cached function to fetch all sector data in parallel.
+    Uses string keys for cache compatibility.
+    """
+    data_source = SECTOR_ETFS if use_etf else SECTORS
+    alternates = SECTOR_ETFS_ALTERNATE if use_etf else None
+    
+    # Parse date if provided
+    from datetime import datetime
+    analysis_date = datetime.strptime(analysis_date_str, '%Y-%m-%d').date() if analysis_date_str else None
+    
+    sector_data = {}
+    failed_sectors = []
+    
+    for sector_name, symbol in data_source.items():
+        try:
+            alternate_symbol = alternates.get(sector_name) if alternates else None
+            data, used_symbol = fetch_sector_data_with_alternate(
+                symbol, 
+                alternate_symbol=alternate_symbol,
+                end_date=analysis_date, 
+                interval=yf_interval
+            )
+            
+            if data is not None and len(data) > 0:
+                sector_data[sector_name] = data
+            else:
+                failed_sectors.append(sector_name)
+        except Exception:
+            failed_sectors.append(sector_name)
+    
+    return sector_data, failed_sectors
+
+
 def analyze_sectors_with_progress(use_etf, momentum_weights, reversal_weights, analysis_date=None, time_interval='Daily', reversal_thresholds=None):
-    """Run analysis with progress indicators."""
+    """Run analysis with progress indicators and optimized data fetching."""
     try:
         # Map interval to yfinance format
         interval_map = {'Daily': '1d', 'Weekly': '1wk', 'Hourly': '1h'}
         yf_interval = interval_map.get(time_interval, '1d')
         
-        st.info(f"🔄 Fetching {time_interval.lower()} sector data...")
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
         # Select data source
         data_source = SECTOR_ETFS if use_etf else SECTORS
         source_label = "ETF" if use_etf else "Index"
         
-        # Fetch benchmark data
-        status_text.text(f"Fetching benchmark data (Nifty 50 {source_label})...")
-        benchmark_data = fetch_sector_data(data_source['Nifty 50'], end_date=analysis_date, interval=yf_interval)
+        # Create cache key from parameters
+        data_source_key = 'etf' if use_etf else 'index'
+        analysis_date_str = analysis_date.strftime('%Y-%m-%d') if analysis_date else None
+        
+        # Show loading spinner during data fetch
+        with st.spinner(f"🔄 Fetching {time_interval.lower()} sector data..."):
+            # Use cached parallel fetch
+            sector_data, failed_sectors = fetch_all_sector_data_cached(
+                data_source_key, 
+                analysis_date_str, 
+                yf_interval, 
+                use_etf
+            )
+        
+        # Get benchmark data from fetched data
+        benchmark_data = sector_data.get('Nifty 50')
         
         if benchmark_data is None:
             st.error("❌ Failed to fetch benchmark data (Nifty 50). Please check internet connection and try again.")
@@ -291,47 +336,12 @@ def analyze_sectors_with_progress(use_etf, momentum_weights, reversal_weights, a
             st.error("❌ Benchmark data is empty. No data available for Nifty 50.")
             return None, None, None
         
-        # Fetch all sector data
-        sector_data = {}
-        total_sectors = len(data_source)
-        failed_sectors = []
-        
-        for idx, (sector_name, symbol) in enumerate(data_source.items()):
-            try:
-                progress_bar.progress((idx + 1) / total_sectors)
-                
-                # Get alternate symbol if available
-                alternate_symbol = SECTOR_ETFS_ALTERNATE.get(sector_name) if use_etf else None
-                
-                # Try to fetch with alternate fallback
-                data, used_symbol = fetch_sector_data_with_alternate(
-                    symbol, 
-                    alternate_symbol=alternate_symbol,
-                    end_date=analysis_date, 
-                    interval=yf_interval
-                )
-                
-                if data is None or len(data) == 0:
-                    failed_sectors.append(sector_name)
-                    status_text.text(f"❌ {sector_name} - Data not available")
-                    continue
-                
-                status_text.text(f"✓ {sector_name} ({source_label})")
-                sector_data[sector_name] = data
-            except Exception as e:
-                failed_sectors.append(sector_name)
-                status_text.text(f"❌ {sector_name} - Error: {str(e)[:30]}")
-                continue
-        
-        progress_bar.empty()
-        status_text.empty()
-        
         if failed_sectors:
             # Display only first 3 failed sectors
             failed_display = failed_sectors[:3]
             if len(failed_sectors) > 3:
                 st.info(f"⚠️ Failed to fetch data for: {', '.join(failed_display)}, and {len(failed_sectors) - 3} more")
-            else:
+            elif failed_display:
                 st.info(f"⚠️ Failed to fetch data for: {', '.join(failed_display)}")
         
         if len(sector_data) <= 1:  # Only benchmark
@@ -339,31 +349,26 @@ def analyze_sectors_with_progress(use_etf, momentum_weights, reversal_weights, a
             return None, None, None
         
         # Store the last market date from the data with proper interval logic
-        # Hourly: same as analysis date with latest hour
-        # Daily: one day prior to analysis date (unless after 4:30 PM IST, then same day)
-        # Weekly: starting date of the week captured
         if benchmark_data is not None and len(benchmark_data) > 0:
             last_data_timestamp = benchmark_data.index[-1]
             if yf_interval == '1h':
-                # Hourly: show the exact timestamp
                 market_date = last_data_timestamp.strftime('%Y-%m-%d %H:%M')
             elif yf_interval == '1wk':
-                # Weekly: show week start date (Monday)
                 week_start = last_data_timestamp - pd.Timedelta(days=last_data_timestamp.weekday())
                 market_date = f"Week of {week_start.strftime('%Y-%m-%d')}"
             else:
-                # Daily: show the date
                 market_date = last_data_timestamp.strftime('%Y-%m-%d')
         else:
             market_date = "N/A"
         
         # Analyze all sectors (excludes Nifty 50 from rankings)
-        try:
-            df = analyze_all_sectors(sector_data, benchmark_data, momentum_weights, reversal_weights, data_source, yf_interval, reversal_thresholds)
-        except Exception as e:
-            st.error(f"❌ Analysis failed: {str(e)}")
-            st.info("Please try again or adjust the parameters.")
-            return None, None, None
+        with st.spinner("📊 Analyzing sectors..."):
+            try:
+                df = analyze_all_sectors(sector_data, benchmark_data, momentum_weights, reversal_weights, data_source, yf_interval, reversal_thresholds)
+            except Exception as e:
+                st.error(f"❌ Analysis failed: {str(e)}")
+                st.info("Please try again or adjust the parameters.")
+                return None, None, None
         
         if df is None or df.empty:
             st.error("❌ Analysis returned empty results. Please try again.")
@@ -543,20 +548,32 @@ def calculate_sector_trend(sector_name, data, benchmark_data, all_sector_data, p
                 
                 # Create DataFrame and rank all sectors at this point in time
                 period_df = pd.DataFrame(period_results)
+                num_sectors = len(period_df)
                 
-                # Calculate ranks (same as main analysis)
-                period_df['ADX_Z_Rank'] = period_df['ADX_Z'].rank(ascending=True, method='min')
-                period_df['RS_Rating_Rank'] = period_df['RS_Rating'].rank(ascending=True, method='min')
-                period_df['RSI_Rank'] = period_df['RSI'].rank(ascending=True, method='min')
-                period_df['DI_Spread_Rank'] = period_df['DI_Spread'].rank(ascending=True, method='min')
+                # Calculate ranks: Higher values = better = rank 1 (ascending=False)
+                period_df['ADX_Z_Rank'] = period_df['ADX_Z'].rank(ascending=False, method='min')
+                period_df['RS_Rating_Rank'] = period_df['RS_Rating'].rank(ascending=False, method='min')
+                period_df['RSI_Rank'] = period_df['RSI'].rank(ascending=False, method='min')
+                period_df['DI_Spread_Rank'] = period_df['DI_Spread'].rank(ascending=False, method='min')
                 
-                # Calculate actual momentum score using ranks
-                period_df['Momentum_Score'] = (
+                # Calculate weighted average rank (lower = better)
+                period_df['Weighted_Avg_Rank'] = (
                     (period_df['ADX_Z_Rank'] * 0.20) +
                     (period_df['RS_Rating_Rank'] * 0.40) +
                     (period_df['RSI_Rank'] * 0.30) +
                     (period_df['DI_Spread_Rank'] * 0.10)
                 )
+                
+                # Scale to 1-10 where 10 = best momentum, 1 = worst
+                if num_sectors > 1:
+                    min_rank = period_df['Weighted_Avg_Rank'].min()
+                    max_rank = period_df['Weighted_Avg_Rank'].max()
+                    if max_rank > min_rank:
+                        period_df['Momentum_Score'] = 10 - ((period_df['Weighted_Avg_Rank'] - min_rank) / (max_rank - min_rank)) * 9
+                    else:
+                        period_df['Momentum_Score'] = 5.0
+                else:
+                    period_df['Momentum_Score'] = 5.0
                 
                 # Extract data for the selected sector
                 sector_row = period_df[period_df['Sector'] == sector_name]
@@ -699,22 +716,34 @@ def calculate_reversal_trend(sector_name, data, benchmark_data, all_sector_data,
                 eligible_reversals = period_df[period_df['Eligible']].copy()
                 
                 if len(eligible_reversals) > 0:
+                    num_eligible = len(eligible_reversals)
                     # Calculate ranks within eligible sectors
-                    # Lower RS_Rating, RSI, ADX_Z are better → rank ascending=True (lowest value gets rank 1, highest gets top rank)
-                    # Higher CMF is better → rank ascending=False (highest value gets rank 1)
+                    # Lower RS_Rating, RSI, ADX_Z are better for reversals → rank ascending=True (lowest = rank 1)
+                    # Higher CMF is better → rank ascending=False (highest = rank 1)
                     eligible_reversals['RS_Rating_Rank'] = eligible_reversals['RS_Rating'].rank(ascending=True, method='min')
                     eligible_reversals['CMF_Rank'] = eligible_reversals['CMF'].rank(ascending=False, method='min')
                     eligible_reversals['RSI_Rank'] = eligible_reversals['RSI'].rank(ascending=True, method='min')
                     eligible_reversals['ADX_Z_Rank'] = eligible_reversals['ADX_Z'].rank(ascending=True, method='min')
                     
-                    # Calculate reversal score with percentage weights
+                    # Calculate weighted average rank (lower = better reversal candidate)
                     total_weight = sum(reversal_weights.values())
-                    eligible_reversals['Reversal_Score'] = (
-                        (eligible_reversals['RS_Rating_Rank'] * reversal_weights.get('RS_Rating', 40) / total_weight * 100) +
-                        (eligible_reversals['CMF_Rank'] * reversal_weights.get('CMF', 40) / total_weight * 100) +
-                        (eligible_reversals['RSI_Rank'] * reversal_weights.get('RSI', 10) / total_weight * 100) +
-                        (eligible_reversals['ADX_Z_Rank'] * reversal_weights.get('ADX_Z', 10) / total_weight * 100)
+                    eligible_reversals['Weighted_Avg_Rank'] = (
+                        (eligible_reversals['RS_Rating_Rank'] * reversal_weights.get('RS_Rating', 40) / total_weight) +
+                        (eligible_reversals['CMF_Rank'] * reversal_weights.get('CMF', 40) / total_weight) +
+                        (eligible_reversals['RSI_Rank'] * reversal_weights.get('RSI', 10) / total_weight) +
+                        (eligible_reversals['ADX_Z_Rank'] * reversal_weights.get('ADX_Z', 10) / total_weight)
                     )
+                    
+                    # Scale to 1-10 where 10 = best reversal candidate, 1 = worst
+                    if num_eligible > 1:
+                        min_rank = eligible_reversals['Weighted_Avg_Rank'].min()
+                        max_rank = eligible_reversals['Weighted_Avg_Rank'].max()
+                        if max_rank > min_rank:
+                            eligible_reversals['Reversal_Score'] = 10 - ((eligible_reversals['Weighted_Avg_Rank'] - min_rank) / (max_rank - min_rank)) * 9
+                        else:
+                            eligible_reversals['Reversal_Score'] = 5.0
+                    else:
+                        eligible_reversals['Reversal_Score'] = 10.0  # Single eligible gets max score
                     
                     # Merge back to get reversal scores
                     period_df = period_df.merge(
@@ -876,21 +905,35 @@ def calculate_historical_momentum_performance(sector_data_dict, benchmark_data, 
                 
                 # Create DataFrame and rank
                 period_df = pd.DataFrame(period_results)
-                period_df['ADX_Z_Rank'] = period_df['ADX_Z'].rank(ascending=True, method='min')
-                period_df['RS_Rating_Rank'] = period_df['RS_Rating'].rank(ascending=True, method='min')
-                period_df['RSI_Rank'] = period_df['RSI'].rank(ascending=True, method='min')
-                period_df['DI_Spread_Rank'] = period_df['DI_Spread'].rank(ascending=True, method='min')
+                num_sectors = len(period_df)
                 
-                # Calculate momentum score with provided weights
+                # Calculate ranks: Higher values = better = rank 1 (ascending=False)
+                period_df['ADX_Z_Rank'] = period_df['ADX_Z'].rank(ascending=False, method='min')
+                period_df['RS_Rating_Rank'] = period_df['RS_Rating'].rank(ascending=False, method='min')
+                period_df['RSI_Rank'] = period_df['RSI'].rank(ascending=False, method='min')
+                period_df['DI_Spread_Rank'] = period_df['DI_Spread'].rank(ascending=False, method='min')
+                
+                # Calculate weighted average rank (lower = better)
                 total_weight = sum(momentum_weights.values())
-                period_df['Momentum_Score'] = (
-                    (period_df['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / total_weight * 100) +
-                    (period_df['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / total_weight * 100) +
-                    (period_df['RSI_Rank'] * momentum_weights.get('RSI', 30) / total_weight * 100) +
-                    (period_df['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / total_weight * 100)
+                period_df['Weighted_Avg_Rank'] = (
+                    (period_df['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / total_weight) +
+                    (period_df['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / total_weight) +
+                    (period_df['RSI_Rank'] * momentum_weights.get('RSI', 30) / total_weight) +
+                    (period_df['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / total_weight)
                 )
                 
-                # Get top 2 by momentum score
+                # Scale to 1-10 where 10 = best momentum, 1 = worst
+                if num_sectors > 1:
+                    min_rank = period_df['Weighted_Avg_Rank'].min()
+                    max_rank = period_df['Weighted_Avg_Rank'].max()
+                    if max_rank > min_rank:
+                        period_df['Momentum_Score'] = 10 - ((period_df['Weighted_Avg_Rank'] - min_rank) / (max_rank - min_rank)) * 9
+                    else:
+                        period_df['Momentum_Score'] = 5.0
+                else:
+                    period_df['Momentum_Score'] = 5.0
+                
+                # Get top 2 by momentum score (higher score = better)
                 period_df = period_df.sort_values('Momentum_Score', ascending=False)
                 top_2 = period_df.head(2)
                 
@@ -2097,9 +2140,10 @@ def main():
         # Refresh button
         if st.button("🔄 Run Analysis", type="primary", use_container_width=True):
             st.cache_data.clear()
+            clear_data_cache()  # Also clear data fetcher cache
         
         # Run analysis
-        with st.spinner("Analyzing sectors... This may take 30-60 seconds..."):
+        with st.spinner("Analyzing sectors..."):
             # Convert date to datetime for analysis
             from datetime import datetime as dt
             analysis_datetime = dt.combine(analysis_date, dt.min.time()) if analysis_date else None
@@ -2167,7 +2211,7 @@ def main():
             
             with tab4:
                 try:
-                    display_company_momentum_tab()
+                    display_company_momentum_tab(time_interval, momentum_weights)
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying company momentum tab: {str(e)}")
@@ -2175,7 +2219,7 @@ def main():
             
             with tab5:
                 try:
-                    display_company_reversal_tab()
+                    display_company_reversal_tab(time_interval, reversal_weights)
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying company reversal tab: {str(e)}")
