@@ -417,5 +417,3 @@ def display_company_reversal_tab():
                 st.caption("📈 **Note:** Shows historical technical indicator values over the last 8 days (T-7 to T). Watch for improving signals.")
     else:
         st.info(f"ℹ️ No reversal candidates found in {selected_sector} at this time")
-
-```
