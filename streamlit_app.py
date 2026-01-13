@@ -1300,9 +1300,56 @@ def display_momentum_tab(df, sector_data_dict, benchmark_data, enable_color_codi
             # Add note about momentum score calculation
             st.caption("✅ **Note:** All Momentum Scores are actual rank-based values calculated by comparing all sectors at each historical period. This shows the true momentum evolution over time.")
             
-            # Transpose for better view
+            # Transpose for better view with color coding
             trend_display = trend_df.set_index('Period').T
-            st.dataframe(trend_display, use_container_width=True, height=400)
+            
+            # Apply color styling to trend data
+            def style_trend(val):
+                """Apply mild green/red colors based on indicator values."""
+                try:
+                    num_val = float(val)
+                    # Mansfield_RS: positive = green, negative = red
+                    if 'Mansfield' in str(val):
+                        if num_val > 0:
+                            return 'background-color: #d4edda; color: #000'
+                        elif num_val < 0:
+                            return 'background-color: #f8d7da; color: #000'
+                    # RSI: >65 = green, <35 = red (mild shades)
+                    elif 'RSI' in str(val):
+                        if num_val > 65:
+                            return 'background-color: #d4edda; color: #000'
+                        elif num_val < 35:
+                            return 'background-color: #f8d7da; color: #000'
+                    # ADX: >25 = green, <20 = red (mild shades)
+                    elif 'ADX' in str(val) and 'ADX_Z' not in str(val):
+                        if num_val > 25:
+                            return 'background-color: #d4edda; color: #000'
+                        elif num_val < 20:
+                            return 'background-color: #f8d7da; color: #000'
+                    # ADX_Z: >0 = green, <0 = red (mild shades)
+                    elif 'ADX_Z' in str(val):
+                        if num_val > 0:
+                            return 'background-color: #d4edda; color: #000'
+                        elif num_val < 0:
+                            return 'background-color: #f8d7da; color: #000'
+                    # DI_Spread: >0 = green, <0 = red (mild shades)
+                    elif 'DI_Spread' in str(val):
+                        if num_val > 0:
+                            return 'background-color: #d4edda; color: #000'
+                        elif num_val < 0:
+                            return 'background-color: #f8d7da; color: #000'
+                    # CMF: >0 = green, <0 = red (mild shades)
+                    elif 'CMF' in str(val):
+                        if num_val > 0:
+                            return 'background-color: #d4edda; color: #000'
+                        elif num_val < 0:
+                            return 'background-color: #f8d7da; color: #000'
+                except:
+                    pass
+                return ''
+            
+            trend_styled = trend_display.style.applymap(style_trend)
+            st.dataframe(trend_styled, use_container_width=True, height=400)
             
             # Show momentum trend visualization
             if len(trend_df) > 1:
@@ -1631,8 +1678,48 @@ def display_reversal_tab(df, sector_data_dict, benchmark_data, reversal_weights,
                 reversal_trend_transposed.index.name = 'Metric'
                 reversal_trend_transposed = reversal_trend_transposed.reset_index()
                 
+                # Apply color styling to reversal trend
+                def style_reversal_trend(val):
+                    """Apply mild green/red colors based on indicator values."""
+                    try:
+                        num_val = float(val)
+                        # Mansfield_RS: positive = green, negative = red
+                        if 'Mansfield' in str(val):
+                            if num_val > 0:
+                                return 'background-color: #d4edda; color: #000'
+                            elif num_val < 0:
+                                return 'background-color: #f8d7da; color: #000'
+                        # RSI: <40 is good for reversal (green), else neutral
+                        elif 'RSI' in str(val):
+                            if num_val < 40:
+                                return 'background-color: #d4edda; color: #000'
+                            elif num_val > 50:
+                                return 'background-color: #f8d7da; color: #000'
+                        # ADX: >20 = green (strong trend), <15 = red
+                        elif 'ADX' in str(val) and 'ADX_Z' not in str(val):
+                            if num_val > 20:
+                                return 'background-color: #d4edda; color: #000'
+                            elif num_val < 15:
+                                return 'background-color: #f8d7da; color: #000'
+                        # ADX_Z: >-0.5 = better for reversal (green)
+                        elif 'ADX_Z' in str(val):
+                            if num_val > -0.5:
+                                return 'background-color: #d4edda; color: #000'
+                            elif num_val < -1.0:
+                                return 'background-color: #f8d7da; color: #000'
+                        # CMF: >0.1 = green (strong buying)
+                        elif 'CMF' in str(val):
+                            if num_val > 0.1:
+                                return 'background-color: #d4edda; color: #000'
+                            elif num_val < 0:
+                                return 'background-color: #f8d7da; color: #000'
+                    except:
+                        pass
+                    return ''
+                
+                reversal_styled = reversal_trend_transposed.style.applymap(style_reversal_trend)
                 st.dataframe(
-                    reversal_trend_transposed,
+                    reversal_styled,
                     use_container_width=True,
                     hide_index=True
                 )

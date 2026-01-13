@@ -279,8 +279,57 @@ def display_company_momentum_tab():
             company_name = SECTOR_COMPANIES[selected_sector].get(selected_company_symbol, {}).get('name', selected_company_symbol)
             st.markdown(f"#### Trend for **{company_name}** ({selected_company_symbol})")
             
-            st.dataframe(trend_df, use_container_width=True, hide_index=True)
-            st.caption("📈 **Note:** Shows historical technical indicator values over the last 8 days (T-7 to T).")
+            # Transpose trend data: periods as columns, indicators as rows
+            trend_display = trend_df.set_index('Period').T
+            
+            # Apply color styling
+            def style_company_trend(val):
+                """Apply mild green/red colors based on indicator values."""
+                try:
+                    num_val = float(val)
+                    # Mansfield_RS: positive = green, negative = red
+                    if 'Mansfield' in str(val):
+                        if num_val > 0:
+                            return 'background-color: #d4edda; color: #000'
+                        elif num_val < 0:
+                            return 'background-color: #f8d7da; color: #000'
+                    # RSI: >65 = green, <35 = red
+                    elif 'RSI' in str(val):
+                        if num_val > 65:
+                            return 'background-color: #d4edda; color: #000'
+                        elif num_val < 35:
+                            return 'background-color: #f8d7da; color: #000'
+                    # ADX: >25 = green, <20 = red
+                    elif 'ADX' in str(val) and 'ADX_Z' not in str(val):
+                        if num_val > 25:
+                            return 'background-color: #d4edda; color: #000'
+                        elif num_val < 20:
+                            return 'background-color: #f8d7da; color: #000'
+                    # ADX_Z: >0 = green, <0 = red
+                    elif 'ADX_Z' in str(val):
+                        if num_val > 0:
+                            return 'background-color: #d4edda; color: #000'
+                        elif num_val < 0:
+                            return 'background-color: #f8d7da; color: #000'
+                    # DI_Spread: >0 = green, <0 = red
+                    elif 'DI_Spread' in str(val):
+                        if num_val > 0:
+                            return 'background-color: #d4edda; color: #000'
+                        elif num_val < 0:
+                            return 'background-color: #f8d7da; color: #000'
+                    # CMF: >0 = green, <0 = red
+                    elif 'CMF' in str(val):
+                        if num_val > 0:
+                            return 'background-color: #d4edda; color: #000'
+                        elif num_val < 0:
+                            return 'background-color: #f8d7da; color: #000'
+                except:
+                    pass
+                return ''
+            
+            trend_styled = trend_display.style.applymap(style_company_trend)
+            st.dataframe(trend_styled, use_container_width=True, hide_index=True)
+            st.caption("📈 **Note:** Dates as columns (T-7 to T), Indicators as rows. Green/Red shows bullish/bearish signals.")
 
 
 def display_company_reversal_tab():
@@ -413,7 +462,50 @@ def display_company_reversal_tab():
                 company_name = SECTOR_COMPANIES[selected_sector].get(selected_reversal_symbol, {}).get('name', selected_reversal_symbol)
                 st.markdown(f"#### Trend for **{company_name}** ({selected_reversal_symbol})")
                 
-                st.dataframe(trend_df, use_container_width=True, hide_index=True)
-                st.caption("📈 **Note:** Shows historical technical indicator values over the last 8 days (T-7 to T). Watch for improving signals.")
+                # Transpose trend data: periods as columns, indicators as rows
+                trend_display = trend_df.set_index('Period').T
+                
+                # Apply color styling for reversal
+                def style_reversal_company_trend(val):
+                    """Apply mild green/red colors based on indicator values."""
+                    try:
+                        num_val = float(val)
+                        # Mansfield_RS: positive = green, negative = red
+                        if 'Mansfield' in str(val):
+                            if num_val > 0:
+                                return 'background-color: #d4edda; color: #000'
+                            elif num_val < 0:
+                                return 'background-color: #f8d7da; color: #000'
+                        # RSI: <40 is good for reversal (green)
+                        elif 'RSI' in str(val):
+                            if num_val < 40:
+                                return 'background-color: #d4edda; color: #000'
+                            elif num_val > 50:
+                                return 'background-color: #f8d7da; color: #000'
+                        # ADX: >20 = green
+                        elif 'ADX' in str(val) and 'ADX_Z' not in str(val):
+                            if num_val > 20:
+                                return 'background-color: #d4edda; color: #000'
+                            elif num_val < 15:
+                                return 'background-color: #f8d7da; color: #000'
+                        # ADX_Z: >-0.5 = better for reversal
+                        elif 'ADX_Z' in str(val):
+                            if num_val > -0.5:
+                                return 'background-color: #d4edda; color: #000'
+                            elif num_val < -1.0:
+                                return 'background-color: #f8d7da; color: #000'
+                        # CMF: >0.1 = green
+                        elif 'CMF' in str(val):
+                            if num_val > 0.1:
+                                return 'background-color: #d4edda; color: #000'
+                            elif num_val < 0:
+                                return 'background-color: #f8d7da; color: #000'
+                    except:
+                        pass
+                    return ''
+                
+                trend_styled = trend_display.style.applymap(style_reversal_company_trend)
+                st.dataframe(trend_styled, use_container_width=True, hide_index=True)
+                st.caption("📈 **Note:** Dates as columns (T-7 to T), Indicators as rows. Green/Red shows improving/deteriorating signals.")
     else:
         st.info(f"ℹ️ No reversal candidates found in {selected_sector} at this time")
