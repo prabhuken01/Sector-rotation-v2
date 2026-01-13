@@ -2023,23 +2023,22 @@ def main():
             st.info("💡 Tip: Ensure yfinance can reach Yahoo Finance servers. If the issue persists, try again in a few moments.")
             return
         
-        # Display combined data source and date information with IST timezone
+        # Display combined data source and date information with IST timezone (compact)
         data_source_type = "ETF Proxy" if use_etf else "NSE Indices"
         # Convert to IST (UTC+5:30)
         from datetime import timezone
         ist_offset = timedelta(hours=5, minutes=30)
         ist_time = datetime.now(timezone.utc) + ist_offset
         current_time_ist = ist_time.strftime('%Y-%m-%d %H:%M:%S IST')
-        st.markdown(f'''
-            <div class="date-info">
-                <b>📊 Data Source:</b> {data_source_type} | 
-                <b>📅 Analysis Date:</b> {current_time_ist} | 
-                <b>📈 Market Data Date:</b> {market_date} | 
-                <b>⏱️ Interval:</b> {time_interval}
-            </div>
-        ''', unsafe_allow_html=True)
         
-        st.success("✅ Analysis complete!")
+        # Create compact info header in columns
+        col_info1, col_info2, col_info3 = st.columns(3)
+        with col_info1:
+            st.metric("📊 Data Source", data_source_type, label_visibility="collapsed")
+        with col_info2:
+            st.metric("📈 Market Data", market_date, label_visibility="collapsed")
+        with col_info3:
+            st.metric("⏱️ Interval", time_interval, label_visibility="collapsed")
         
         # Create tabs (7 total: 4 sector-level + 2 company-level + 1 sector companies + 1 data sources)
         try:
