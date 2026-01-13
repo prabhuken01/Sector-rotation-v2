@@ -31,6 +31,10 @@ def fetch_sector_data(symbol, period='1y', min_data_points=MIN_DATA_POINTS, end_
             # Calculate start date based on period, interval, and end date
             from datetime import timedelta
             
+            # Yahoo Finance's history() returns data up to but NOT including end_date
+            # So we add 1 day to ensure we get data for the requested date
+            actual_end_date = end_date + timedelta(days=1)
+            
             # Adjust period based on interval
             if interval == '1h':
                 # Hourly data: max 730 days (2 years) on Yahoo Finance
@@ -49,7 +53,7 @@ def fetch_sector_data(symbol, period='1y', min_data_points=MIN_DATA_POINTS, end_
                 else:
                     start_date = end_date - timedelta(days=400)
             
-            data = ticker.history(start=start_date, end=end_date, interval=interval)
+            data = ticker.history(start=start_date, end=actual_end_date, interval=interval)
         else:
             # Adjust period for hourly data
             if interval == '1h':

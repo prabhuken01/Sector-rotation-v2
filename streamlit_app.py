@@ -327,7 +327,12 @@ def analyze_sectors_with_progress(use_etf, momentum_weights, reversal_weights, a
         status_text.empty()
         
         if failed_sectors:
-            st.info(f"⚠️ Failed to fetch data for: {', '.join(failed_sectors)}")
+            # Display only first 3 failed sectors
+            failed_display = failed_sectors[:3]
+            if len(failed_sectors) > 3:
+                st.info(f"⚠️ Failed to fetch data for: {', '.join(failed_display)}, and {len(failed_sectors) - 3} more")
+            else:
+                st.info(f"⚠️ Failed to fetch data for: {', '.join(failed_display)}")
         
         if len(sector_data) <= 1:  # Only benchmark
             st.error("❌ No sector data available for analysis. Please check your internet connection.")
@@ -1807,6 +1812,77 @@ def test_symbol_availability():
     return results
 
 
+def display_sector_companies_tab():
+    """Display sector-wise company mappings with symbols."""
+    st.markdown("### 🏢 Sector-wise Company Mappings")
+    st.markdown("---")
+    
+    st.info("📋 **Top companies by weight in each sector/ETF** - These are the companies tracked for company-level analysis.")
+    
+    from company_symbols import SECTOR_COMPANIES
+    
+    # Create columns for better layout
+    col1, col2 = st.columns(2)
+    
+    sectors = sorted(SECTOR_COMPANIES.keys())
+    half = len(sectors) // 2
+    
+    # Left column
+    with col1:
+        for sector in sectors[:half]:
+            with st.expander(f"📊 **{sector}**", expanded=False):
+                companies = SECTOR_COMPANIES[sector]
+                
+                # Create dataframe for this sector
+                company_data = []
+                for symbol, info in companies.items():
+                    company_data.append({
+                        'Symbol': symbol,
+                        'Company Name': info['name'],
+                        'Weight (%)': f"{info['weight']:.1f}"
+                    })
+                
+                df = pd.DataFrame(company_data)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.caption(f"Total companies: {len(companies)}")
+    
+    # Right column
+    with col2:
+        for sector in sectors[half:]:
+            with st.expander(f"📊 **{sector}**", expanded=False):
+                companies = SECTOR_COMPANIES[sector]
+                
+                # Create dataframe for this sector
+                company_data = []
+                for symbol, info in companies.items():
+                    company_data.append({
+                        'Symbol': symbol,
+                        'Company Name': info['name'],
+                        'Weight (%)': f"{info['weight']:.1f}"
+                    })
+                
+                df = pd.DataFrame(company_data)
+                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.caption(f"Total companies: {len(companies)}")
+    
+    # Summary statistics
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
+    
+    total_sectors = len(SECTOR_COMPANIES)
+    total_companies = sum(len(companies) for companies in SECTOR_COMPANIES.values())
+    avg_companies = total_companies / total_sectors if total_sectors > 0 else 0
+    
+    with col1:
+        st.metric("Total Sectors", total_sectors)
+    
+    with col2:
+        st.metric("Total Companies", total_companies)
+    
+    with col3:
+        st.metric("Avg Companies/Sector", f"{avg_companies:.1f}")
+
+
 def display_data_sources_tab():
     """Display data sources connectivity status."""
     st.markdown("### 📊 Data Sources & Connectivity")
@@ -1963,15 +2039,16 @@ def main():
         
         st.success("✅ Analysis complete!")
         
-        # Create tabs (6 total: 4 sector-level + 2 company-level, Data Sources last)
+        # Create tabs (7 total: 4 sector-level + 2 company-level + 1 sector companies + 1 data sources)
         try:
-            tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
                 "📈 Momentum Ranking",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
                 "🏢 Company Momentum",
                 "🏢 Company Reversals",
-                "🔌 Data Sources"
+                "🔌 Data Sources",
+                "🏢 Sector Companies"
             ])
             
             # Get benchmark data for trend analysis
@@ -2022,6 +2099,13 @@ def main():
                     display_data_sources_tab()
                 except Exception as e:
                     st.error(f"❌ Error displaying data sources tab: {str(e)}")
+                    st.text(traceback.format_exc())
+            
+            with tab7:
+                try:
+                    display_sector_companies_tab()
+                except Exception as e:
+                    st.error(f"❌ Error displaying sector companies tab: {str(e)}")
                     st.text(traceback.format_exc())
                     
         except Exception as e:
