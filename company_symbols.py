@@ -96,13 +96,18 @@ SECTOR_COMPANIES = {
         'MOIL.NS': {'weight': 2.1, 'name': 'Manganese Ore India'},
     },
     'Fin Services': {
-        'HDFCBANK.NS': {'weight': 32.5, 'name': 'HDFC Bank'},
-        'HDFC.NS': {'weight': 28.1, 'name': 'Housing Development'},
-        'SBIN.NS': {'weight': 15.3, 'name': 'State Bank of India'},
-        'ICICIBANK.NS': {'weight': 12.8, 'name': 'ICICI Bank'},
-        'AXISBANK.NS': {'weight': 6.2, 'name': 'Axis Bank'},
-        'KOTAKBANK.NS': {'weight': 3.1, 'name': 'Kotak Mahindra Bank'},
-        'LT.NS': {'weight': 1.5, 'name': 'Larsen & Toubro'},
+        # FINIETF = Financial Services Ex-Bank ETF - NBFC, Insurance, Capital Markets
+        # Excludes banks, which are tracked separately in 'PSU Bank' and 'Pvt Bank' sectors
+        'BAJFINANCE.NS': {'weight': 15.40, 'name': 'Bajaj Finance Ltd.'},
+        'SHRIRAMFIN.NS': {'weight': 8.20, 'name': 'Shriram Finance Ltd.'},
+        'BAJAJFINSV.NS': {'weight': 6.85, 'name': 'Bajaj Finserv Ltd.'},
+        'BSE.NS': {'weight': 6.32, 'name': 'BSE Ltd.'},
+        'JIOFIN.NS': {'weight': 5.68, 'name': 'Jio Financial Services Ltd.'},
+        'SBILIFE.NS': {'weight': 5.37, 'name': 'SBI Life Insurance Company'},
+        'HDFCLIFE.NS': {'weight': 4.74, 'name': 'HDFC Life Insurance Company'},
+        'CHOLAFIN.NS': {'weight': 4.23, 'name': 'Cholamandalam Inv. & Fin.'},
+        'POLICYBZR.NS': {'weight': 3.66, 'name': 'PB Fintech (Policybazaar)'},
+        'MCX.NS': {'weight': 3.34, 'name': 'MCX India Ltd.'},
     },
     'Pharma': {
         'SUNPHARMA.NS': {'weight': 18.5, 'name': 'Sun Pharmaceutical'},
@@ -173,3 +178,46 @@ def get_company_symbol_list(sector_name):
     """Get list of company symbols for a sector."""
     companies = SECTOR_COMPANIES.get(sector_name, {})
     return list(companies.keys())
+
+
+def load_sector_companies_from_excel(excel_file='Sector-Company.xlsx'):
+    """
+    Load sector-company mappings from Excel file.
+    Excel format: Sector | Company Name | Symbol | Weight(%)
+    
+    Returns:
+        Dictionary matching SECTOR_COMPANIES format, or None if file doesn't exist
+    """
+    try:
+        import pandas as pd
+        import os
+        
+        if not os.path.exists(excel_file):
+            return None
+        
+        df = pd.read_excel(excel_file)
+        
+        # Group by Sector and build the dictionary
+        result = {}
+        for sector in df['Sector'].unique():
+            sector_data = df[df['Sector'] == sector]
+            result[sector] = {}
+            
+            for _, row in sector_data.iterrows():
+                symbol = row['Symbol']
+                result[sector][symbol] = {
+                    'name': row['Company Name'],
+                    'weight': float(row['Weight (%)'])
+                }
+        
+        return result
+    except Exception as e:
+        print(f"Could not load Excel file: {e}")
+        return None
+
+
+# Try to load updated weights from Excel file on module import
+_excel_data = load_sector_companies_from_excel('Sector-Company.xlsx')
+if _excel_data is not None:
+    SECTOR_COMPANIES = _excel_data
+    print("✅ Loaded sector-company weights from Sector-Company.xlsx")

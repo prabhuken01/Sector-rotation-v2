@@ -48,7 +48,7 @@ SECTOR_ETFS = {
     'Commodities': 'N/A',
     'Defence': 'DEFENCE.NS',
     'Energy': 'MOENERGY.NS',
-    'FMCG': 'ICIFMCG.NS',
+    'FMCG': 'ICICIFMCG.NS',
     'IT': 'ITBEES.NS',
     'Infra': 'INFRABEES.NS',
     'Media': 'N/A',

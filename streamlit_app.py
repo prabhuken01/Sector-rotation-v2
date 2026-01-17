@@ -192,8 +192,17 @@ def get_sidebar_controls():
     
     # Data source selection
     st.sidebar.subheader("Data Source")
-    use_etf = st.sidebar.checkbox("Use ETF Proxy", value=False, 
+    
+    # Initialize session state for ETF selection
+    if 'use_etf_state' not in st.session_state:
+        st.session_state.use_etf_state = False
+    
+    use_etf = st.sidebar.checkbox("Use ETF Proxy", value=st.session_state.use_etf_state, 
                                    help="Toggle between Index and ETF data")
+    
+    # Update session state when checkbox changes
+    if use_etf != st.session_state.use_etf_state:
+        st.session_state.use_etf_state = use_etf
     
     # Momentum weights (percentages that sum to 100%)
     st.sidebar.subheader("Momentum Score Weights (%)")
@@ -227,8 +236,8 @@ def get_sidebar_controls():
     st.sidebar.caption("Only show sectors meeting BOTH conditions")
     rsi_threshold = st.sidebar.slider("RSI must be below", 20.0, 60.0, 40.0, 1.0,
                                       help="Only show reversal candidates with RSI below this value")
-    adx_z_threshold = st.sidebar.slider("ADX Z-Score must be below", -2.0, 2.0, -0.5, 0.1,
-                                        help="Only show reversal candidates with ADX Z below this value")
+    adx_z_threshold = st.sidebar.slider("ADX Z-Score must be below", -2.0, 2.0, 2.0, 0.1,
+                                        help="RSI alone can indicate trend reversal. Use ADX_Z threshold only if you want to filter by trend strength. Default 2 = no filter")
     
     # Reversal weights
     st.sidebar.subheader("Reversal Score Weights (%)")
@@ -258,7 +267,8 @@ def get_sidebar_controls():
     
     reversal_thresholds = {
         'RSI': rsi_threshold,
-        'ADX_Z': adx_z_threshold
+        'ADX_Z': adx_z_threshold,
+        'CMF': 0.0  # CMF must be positive for reversal candidates
     }
     
     return use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding
@@ -1171,18 +1181,19 @@ def display_momentum_tab(df, sector_data_dict, benchmark_data, enable_color_codi
     # Store original df for reference in trend analysis
     original_df = df.copy()
     
-    # Select columns for display and format with proper decimals
+    # Select columns for display
     momentum_df = df[['Sector', 'Symbol', 'Price', 'Change_%', 'Momentum_Score', 'Mansfield_RS', 'RS_Rating', 
                       'ADX', 'ADX_Z', 'RSI', 'DI_Spread', 'CMF']].copy()
     
-    # Format decimal places
+    # SORT FIRST by Momentum_Score (before formatting to strings)
+    momentum_df = momentum_df.sort_values('Momentum_Score', ascending=False)
+    
+    # Format decimal places AFTER sorting
     for col in ['Momentum_Score', 'Mansfield_RS', 'RS_Rating', 'ADX', 'ADX_Z', 'RSI', 'DI_Spread']:
         momentum_df[col] = momentum_df[col].apply(lambda x: format_value(x, 1))
     momentum_df['CMF'] = momentum_df['CMF'].apply(lambda x: format_value(x, 2))
     momentum_df['Price'] = momentum_df['Price'].apply(lambda x: format_value(x, 2))
     momentum_df['Change_%'] = momentum_df['Change_%'].apply(lambda x: f"{format_value(x, 2)}%")
-    
-    momentum_df = momentum_df.sort_values('Momentum_Score', ascending=False)
     
     # Apply color styling if enabled
     if enable_color_coding:
@@ -1196,6 +1207,29 @@ def display_momentum_tab(df, sector_data_dict, benchmark_data, enable_color_codi
                     if float(row['Mansfield_RS']) > 0:
                         result[idx] = 'background-color: #27AE60; color: #fff; font-weight: bold'
                     else:
+                        result[idx] = 'background-color: #E74C3C; color: #fff; font-weight: bold'
+                except:
+                    pass
+            
+            # Color CMF (green for positive, red for negative)
+            if 'CMF' in row.index:
+                idx = list(row.index).index('CMF')
+                try:
+                    if float(row['CMF']) > 0:
+                        result[idx] = 'background-color: #27AE60; color: #fff; font-weight: bold'
+                    else:
+                        result[idx] = 'background-color: #E74C3C; color: #fff; font-weight: bold'
+                except:
+                    pass
+            
+            # Color RSI (green for >65, red for <35, gray for neutral)
+            if 'RSI' in row.index:
+                idx = list(row.index).index('RSI')
+                try:
+                    rsi_val = float(row['RSI'])
+                    if rsi_val > 65:
+                        result[idx] = 'background-color: #27AE60; color: #fff; font-weight: bold'
+                    elif rsi_val < 35:
                         result[idx] = 'background-color: #E74C3C; color: #fff; font-weight: bold'
                 except:
                     pass
@@ -1320,8 +1354,22 @@ def display_momentum_tab(df, sector_data_dict, benchmark_data, enable_color_codi
     st.markdown("---")
     st.markdown("### 📊 Sector Trend Analysis (T-7 to T)")
     
+    # Find #1 ranked sector and set as default
+    # The #1 sector is the one with the highest Momentum_Score
     sectors_list = sorted(df['Sector'].tolist())
-    selected_sector = st.selectbox("Select a sector for trend view:", sectors_list)
+    rank_1_sector = None
+    rank_1_idx = 0
+    
+    # Get the sector with highest momentum score
+    if not df.empty:
+        # Create a copy and sort by Momentum_Score to find rank 1
+        df_sorted = df.sort_values('Momentum_Score', ascending=False)
+        rank_1_sector = df_sorted.iloc[0]['Sector']
+        # Find the index in sectors_list for default selection
+        if rank_1_sector in sectors_list:
+            rank_1_idx = sectors_list.index(rank_1_sector)
+    
+    selected_sector = st.selectbox("Select a sector for trend view:", sectors_list, index=rank_1_idx)
     
     if selected_sector and selected_sector in sector_data_dict:
         with st.spinner(f"Calculating historical momentum rankings for {selected_sector}..."):
@@ -1391,6 +1439,28 @@ def display_momentum_tab(df, sector_data_dict, benchmark_data, enable_color_codi
                     pass
                 return ''
             
+            # Add color code legend for sector trend analysis
+            with st.expander("🎨 **Color Code Legend** - Bullish/Bearish Signals", expanded=True):
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("**Green (Bullish Signals)**")
+                    st.markdown("- **Mansfield_RS:** > 0 (sector outperforming benchmark)")
+                    st.markdown("- **RS_Rating:** > 5 (strong relative strength)")
+                    st.markdown("- **ADX:** > 25 (strong trend)")
+                    st.markdown("- **ADX_Z:** > 0 (above average trend strength)")
+                    st.markdown("- **DI_Spread:** > 0 (uptrend momentum)")
+                    st.markdown("- **CMF:** > 0 (money inflow)")
+                with col2:
+                    st.markdown("**Red (Bearish Signals)**")
+                    st.markdown("- **Mansfield_RS:** < 0 (sector underperforming)")
+                    st.markdown("- **RS_Rating:** < 5 (weak relative strength)")
+                    st.markdown("- **ADX:** < 20 (weak trend)")
+                    st.markdown("- **ADX_Z:** < 0 (below average trend strength)")
+                    st.markdown("- **DI_Spread:** < 0 (downtrend momentum)")
+                    st.markdown("- **CMF:** < 0 (money outflow)")
+                st.markdown("**Blue (Rank Row)**")
+                st.markdown("- Shows sector's rank among all sectors at each historical period")
+            
             trend_styled = trend_display.style.applymap(style_trend)
             st.dataframe(trend_styled, use_container_width=True, height=400)
             
@@ -1428,6 +1498,9 @@ def display_momentum_tab(df, sector_data_dict, benchmark_data, enable_color_codi
     st.markdown("---")
     st.markdown("### 📊 Historical Top 2 Momentum Performance (6 Months)")
     st.markdown("See how the top 2 momentum-ranked sectors performed over the past 6 months with forward returns.")
+    
+    st.info("💡 **Note:** Historical rankings are recalculated point-in-time using data available on each date. "
+            "Live analysis may differ slightly due to data updates. Use the '📅 Historical Rankings' tab for recent T-7 to T comparison.")
     
     if st.button("🔍 Generate Historical Performance Report"):
         with st.spinner("Analyzing 6 months of historical data..."):
@@ -1504,20 +1577,23 @@ def display_reversal_tab(df, sector_data_dict, benchmark_data, reversal_weights,
     st.markdown("### 🔄 Reversal Candidates (Bottom Fishing Opportunities)")
     st.markdown("---")
     
-    # Select columns in required order: Reversal Score, RS Rating, CMF, RSI, ADX Z, Mansfield RS, Momentum Score
-    reversal_df = df[['Sector', 'Reversal_Status', 'Reversal_Score', 'RS_Rating',
+    # Select columns: include Price and Change % now
+    reversal_df = df[['Sector', 'Price', 'Change_%', 'Reversal_Status', 'Reversal_Score', 'RS_Rating',
                       'CMF', 'RSI', 'ADX_Z', 'Mansfield_RS', 'Momentum_Score']].copy()
     
-    # Format decimal places
-    for col in ['Reversal_Score', 'RS_Rating', 'RSI', 'ADX_Z', 'Mansfield_RS', 'Momentum_Score']:
-        reversal_df[col] = reversal_df[col].apply(lambda x: format_value(x, 1))
-    reversal_df['CMF'] = reversal_df['CMF'].apply(lambda x: format_value(x, 2))
-    
-    # Filter and sort
-    reversal_candidates = reversal_df[reversal_df['Reversal_Status'] != 'No']
+    # Filter FIRST (before formatting)
+    reversal_candidates = reversal_df[reversal_df['Reversal_Status'] != 'No'].copy()
     
     if not reversal_candidates.empty:
+        # SORT FIRST by Reversal_Score (before formatting to strings)
         reversal_candidates = reversal_candidates.sort_values('Reversal_Score', ascending=False)
+        
+        # Format decimal places AFTER sorting
+        for col in ['Reversal_Score', 'RS_Rating', 'RSI', 'ADX_Z', 'Mansfield_RS', 'Momentum_Score']:
+            reversal_candidates[col] = reversal_candidates[col].apply(lambda x: format_value(x, 1))
+        reversal_candidates['CMF'] = reversal_candidates['CMF'].apply(lambda x: format_value(x, 2))
+        reversal_candidates['Price'] = reversal_candidates['Price'].apply(lambda x: format_value(x, 2))
+        reversal_candidates['Change_%'] = reversal_candidates['Change_%'].apply(lambda x: f"{format_value(x, 2)}%")
         
         # Apply color styling if enabled
         if enable_color_coding:
@@ -1539,6 +1615,29 @@ def display_reversal_tab(df, sector_data_dict, benchmark_data, reversal_weights,
                         if float(row['Mansfield_RS']) > 0:
                             result[idx] = 'background-color: #27AE60; color: #fff; font-weight: bold'
                         else:
+                            result[idx] = 'background-color: #E74C3C; color: #fff; font-weight: bold'
+                    except:
+                        pass
+                
+                # Color CMF (green for positive, red for negative)
+                if 'CMF' in row.index:
+                    idx = list(row.index).index('CMF')
+                    try:
+                        if float(row['CMF']) > 0:
+                            result[idx] = 'background-color: #27AE60; color: #fff; font-weight: bold'
+                        else:
+                            result[idx] = 'background-color: #E74C3C; color: #fff; font-weight: bold'
+                    except:
+                        pass
+                
+                # Color RSI (green for <35, yellow for neutral, red for >65)
+                if 'RSI' in row.index:
+                    idx = list(row.index).index('RSI')
+                    try:
+                        rsi_val = float(row['RSI'])
+                        if rsi_val < 35:
+                            result[idx] = 'background-color: #27AE60; color: #fff; font-weight: bold'
+                        elif rsi_val > 65:
                             result[idx] = 'background-color: #E74C3C; color: #fff; font-weight: bold'
                     except:
                         pass
@@ -1760,6 +1859,24 @@ def display_reversal_tab(df, sector_data_dict, benchmark_data, reversal_weights,
                         pass
                     return ''
                 
+                # Add color code legend for reversal trend analysis
+                with st.expander("🎨 **Color Code Legend** - Reversal Signals", expanded=True):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown("**Green (Good for Reversal)**")
+                        st.markdown("- **RS_Rating:** < 5 (weak relative strength)")
+                        st.markdown("- **CMF:** > 0.1 (money inflow)")
+                        st.markdown("- **ADX_Z:** > -0.5 (weak trend)")
+                        st.markdown("- **ADX:** < 20 (no strong trend)")
+                    with col2:
+                        st.markdown("**Red (Bad for Reversal)**")
+                        st.markdown("- **RS_Rating:** > 5 (strong momentum)")
+                        st.markdown("- **CMF:** < 0 (money outflow)")
+                        st.markdown("- **ADX_Z:** < -1.0 (strong downtrend)")
+                        st.markdown("- **ADX:** > 20 (strong trend momentum)")
+                    st.markdown("**Blue (Rank Row)**")
+                    st.markdown("- Shows sector's reversal rank at each historical period")
+                
                 reversal_styled = reversal_trend_transposed.style.applymap(style_reversal_trend)
                 st.dataframe(
                     reversal_styled,
@@ -1944,6 +2061,243 @@ def test_symbol_availability():
     return results
 
 
+def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf):
+    """
+    Display historical rankings showing how top 2 sectors evolved over past 7 trading days.
+    Shows current top sectors with their historical indicator trends.
+    
+    Args:
+        sector_data_dict: Dictionary of sector name to data DataFrame
+        benchmark_data: Benchmark data DataFrame  
+        momentum_weights: Dict with momentum score weights
+        reversal_weights: Dict with reversal score weights
+        reversal_thresholds: Dict with reversal thresholds
+        use_etf: Whether using ETF or Index data
+    """
+    st.markdown("### 📅 Historical Rankings (T-7 to T)")
+    st.markdown("---")
+    
+    st.info("📊 **Track how current top-ranked sectors evolved over the past 7 trading days.**")
+    
+    if sector_data_dict is None or benchmark_data is None:
+        st.error("❌ No data available for historical analysis")
+        return
+    
+    from indicators import calculate_rsi, calculate_adx, calculate_z_score, calculate_cmf, calculate_mansfield_rs
+    
+    # Get current top 2 momentum sectors
+    current_results = []
+    for sect_name, sect_data in sector_data_dict.items():
+        if sect_name == 'Nifty 50':
+            continue
+        
+        if len(sect_data) < 50:
+            continue
+        
+        # Calculate current indicators
+        rsi = calculate_rsi(sect_data)
+        adx, _, _, di_spread = calculate_adx(sect_data)
+        adx_z = calculate_z_score(adx.dropna())
+        
+        # RS Rating
+        sector_returns = sect_data['Close'].pct_change().dropna()
+        benchmark_returns = benchmark_data['Close'].pct_change().dropna()
+        common_index = sector_returns.index.intersection(benchmark_returns.index)
+        
+        rs_rating = 5.0
+        if len(common_index) > 1:
+            sector_ret = sector_returns.loc[common_index]
+            bench_ret = benchmark_returns.loc[common_index]
+            sector_cumret = (1 + sector_ret).prod() - 1
+            bench_cumret = (1 + bench_ret).prod() - 1
+            if not pd.isna(sector_cumret) and not pd.isna(bench_cumret):
+                relative_perf = sector_cumret - bench_cumret
+                rs_rating = 5 + (relative_perf * 25)
+                rs_rating = max(0, min(10, rs_rating))
+        
+        current_results.append({
+            'Sector': sect_name,
+            'RSI': rsi.iloc[-1] if not rsi.isna().all() else 50,
+            'ADX_Z': adx_z if not pd.isna(adx_z) else 0,
+            'RS_Rating': rs_rating,
+            'DI_Spread': di_spread.iloc[-1] if not di_spread.isna().all() else 0,
+        })
+    
+    if not current_results:
+        st.error("❌ Unable to calculate rankings")
+        return
+    
+    # Rank and get top 2
+    df_current = pd.DataFrame(current_results)
+    df_current['ADX_Z_Rank'] = df_current['ADX_Z'].rank(ascending=False)
+    df_current['RS_Rating_Rank'] = df_current['RS_Rating'].rank(ascending=False)
+    df_current['RSI_Rank'] = df_current['RSI'].rank(ascending=False)
+    df_current['DI_Spread_Rank'] = df_current['DI_Spread'].rank(ascending=False)
+    
+    total_weight = sum(momentum_weights.values())
+    df_current['Momentum_Score'] = (
+        (df_current['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / total_weight) +
+        (df_current['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / total_weight) +
+        (df_current['RSI_Rank'] * momentum_weights.get('RSI', 30) / total_weight) +
+        (df_current['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / total_weight)
+    )
+    
+    # Scale 1-10
+    num_sectors = len(df_current)
+    if num_sectors > 1:
+        min_rank = df_current['Momentum_Score'].min()
+        max_rank = df_current['Momentum_Score'].max()
+        if max_rank > min_rank:
+            df_current['Momentum_Score'] = 10 - ((df_current['Momentum_Score'] - min_rank) / (max_rank - min_rank)) * 9
+        else:
+            df_current['Momentum_Score'] = 5.0
+    
+    df_current = df_current.sort_values('Momentum_Score', ascending=False)
+    top_2_sectors = df_current.head(2)['Sector'].tolist()
+    
+    # Create tabs for Momentum and Reversal
+    hist_tab1, hist_tab2 = st.tabs(["📈 Momentum Rankings (T-7 to T)", "🔄 Reversal Rankings (T-7 to T)"])
+    
+    with hist_tab1:
+        st.markdown("#### Momentum Strategy - Top 2 Sectors Evolution")
+        
+        if len(top_2_sectors) >= 2:
+            col1, col2 = st.columns(2)
+            
+            for col_idx, sector_name in enumerate(top_2_sectors):
+                with [col1, col2][col_idx]:
+                    st.markdown(f"**#{col_idx + 1}: {sector_name}**")
+                    
+                    if sector_name in sector_data_dict:
+                        sect_data = sector_data_dict[sector_name]
+                        
+                        # Show last 7 periods (or available)
+                        periods = min(7, len(sect_data) - 1)
+                        hist_data = []
+                        
+                        for i in range(periods, 0, -1):
+                            date = sect_data.index[-i].strftime('%d-%b')
+                            subset = sect_data.iloc[:-i] if i > 0 else sect_data
+                            
+                            if len(subset) < 14:
+                                continue
+                            
+                            rsi = calculate_rsi(subset)
+                            adx, _, _, di_spread = calculate_adx(subset)
+                            adx_z = calculate_z_score(adx.dropna())
+                            
+                            hist_data.append({
+                                'Date': date,
+                                'RSI': f"{rsi.iloc[-1]:.1f}" if not rsi.isna().all() else "N/A",
+                                'ADX_Z': f"{adx_z:.2f}" if not pd.isna(adx_z) else "N/A",
+                                'DI_Spread': f"{di_spread.iloc[-1]:.2f}" if not di_spread.isna().all() else "N/A",
+                            })
+                        
+                        if hist_data:
+                            df_hist = pd.DataFrame(hist_data)
+                            st.dataframe(df_hist, use_container_width=True, hide_index=True)
+                        else:
+                            st.warning("⚠️ Insufficient historical data")
+        else:
+            st.info("ℹ️ Need at least 2 sectors to compare")
+    
+    with hist_tab2:
+        st.markdown("#### Reversal Strategy - Top 2 Reversal Candidates Evolution")
+        
+        # Similar logic for reversal (show top reversal candidates)
+        reversal_results = []
+        for sect_name, sect_data in sector_data_dict.items():
+            if sect_name == 'Nifty 50':
+                continue
+            
+            if len(sect_data) < 50:
+                continue
+            
+            rsi = calculate_rsi(sect_data)
+            adx, _, _, _ = calculate_adx(sect_data)
+            cmf = calculate_cmf(sect_data)
+            adx_z = calculate_z_score(adx.dropna())
+            
+            rsi_val = rsi.iloc[-1] if not rsi.isna().all() else 50
+            cmf_val = cmf.iloc[-1] if not cmf.isna().all() else 0
+            adx_z_val = adx_z if not pd.isna(adx_z) else 0
+            
+            reversal_results.append({
+                'Sector': sect_name,
+                'RSI': rsi_val,
+                'CMF': cmf_val,
+                'ADX_Z': adx_z_val,
+            })
+        
+        if reversal_results:
+            df_reversal = pd.DataFrame(reversal_results)
+            
+            # Rank for reversal (lower RSI/ADX_Z better, higher CMF better)
+            df_reversal['RSI_Rank'] = df_reversal['RSI'].rank(ascending=True)
+            df_reversal['CMF_Rank'] = df_reversal['CMF'].rank(ascending=False)
+            df_reversal['ADX_Z_Rank'] = df_reversal['ADX_Z'].rank(ascending=True)
+            
+            total_weight = sum(reversal_weights.values())
+            df_reversal['Reversal_Score'] = (
+                (df_reversal['RSI_Rank'] * reversal_weights.get('RSI', 10) / total_weight) +
+                (df_reversal['CMF_Rank'] * reversal_weights.get('CMF', 40) / total_weight) +
+                (df_reversal['ADX_Z_Rank'] * reversal_weights.get('ADX_Z', 10) / total_weight)
+            )
+            
+            # Scale 1-10
+            num_reversals = len(df_reversal)
+            if num_reversals > 1:
+                min_rank = df_reversal['Reversal_Score'].min()
+                max_rank = df_reversal['Reversal_Score'].max()
+                if max_rank > min_rank:
+                    df_reversal['Reversal_Score'] = 10 - ((df_reversal['Reversal_Score'] - min_rank) / (max_rank - min_rank)) * 9
+            
+            df_reversal = df_reversal.sort_values('Reversal_Score', ascending=False)
+            top_2_reversal = df_reversal.head(2)['Sector'].tolist()
+            
+            if len(top_2_reversal) >= 1:
+                col1, col2 = st.columns(2) if len(top_2_reversal) >= 2 else (st.columns(1)[0], None)
+                
+                for col_idx, sector_name in enumerate(top_2_reversal):
+                    with [col1, col2][col_idx] if col2 else col1:
+                        st.markdown(f"**#{col_idx + 1}: {sector_name}**")
+                        
+                        if sector_name in sector_data_dict:
+                            sect_data = sector_data_dict[sector_name]
+                            
+                            # Show last 7 periods
+                            periods = min(7, len(sect_data) - 1)
+                            hist_data = []
+                            
+                            for i in range(periods, 0, -1):
+                                date = sect_data.index[-i].strftime('%d-%b')
+                                subset = sect_data.iloc[:-i] if i > 0 else sect_data
+                                
+                                if len(subset) < 14:
+                                    continue
+                                
+                                rsi = calculate_rsi(subset)
+                                cmf = calculate_cmf(subset)
+                                adx, _, _, _ = calculate_adx(subset)
+                                adx_z = calculate_z_score(adx.dropna())
+                                
+                                hist_data.append({
+                                    'Date': date,
+                                    'RSI': f"{rsi.iloc[-1]:.1f}" if not rsi.isna().all() else "N/A",
+                                    'CMF': f"{cmf.iloc[-1]:.2f}" if not cmf.isna().all() else "N/A",
+                                    'ADX_Z': f"{adx_z:.2f}" if not pd.isna(adx_z) else "N/A",
+                                })
+                            
+                            if hist_data:
+                                df_hist = pd.DataFrame(hist_data)
+                                st.dataframe(df_hist, use_container_width=True, hide_index=True)
+                            else:
+                                st.warning("⚠️ Insufficient historical data")
+        else:
+            st.info("ℹ️ Unable to analyze reversal candidates")
+
+
+
 def display_sector_companies_tab():
     """Display sector-wise company mappings with symbols."""
     st.markdown("### 🏢 Sector-wise Company Mappings")
@@ -1951,19 +2305,63 @@ def display_sector_companies_tab():
     
     st.info("📋 **Top companies by weight in each sector/ETF** - These are the companies tracked for company-level analysis.")
     
-    from company_symbols import SECTOR_COMPANIES
+    from company_symbols import SECTOR_COMPANIES, load_sector_companies_from_excel
+    
+    # Try to load from Excel if available
+    excel_data = load_sector_companies_from_excel('Sector-Company.xlsx')
+    
+    # Use Excel data if available, otherwise use default
+    display_data = excel_data if excel_data is not None else SECTOR_COMPANIES
+    
+    if excel_data is not None:
+        st.success("✅ **Data loaded from Sector-Company.xlsx**")
+    
+    # Download/Upload section
+    st.markdown("#### 📥 Export / 📤 Import Company Mappings")
+    dl_col, reload_col = st.columns(2)
+    
+    with dl_col:
+        # Create consolidated dataframe for download
+        all_company_data = []
+        for sector, companies in display_data.items():
+            for symbol, info in companies.items():
+                all_company_data.append({
+                    'Sector': sector,
+                    'Company Name': info['name'],
+                    'Symbol': symbol,
+                    'Weight (%)': info['weight']
+                })
+        
+        download_df = pd.DataFrame(all_company_data)
+        csv_data = download_df.to_csv(index=False)
+        
+        st.download_button(
+            label="📥 Download All Companies (CSV)",
+            data=csv_data,
+            file_name=f"sector_companies_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+            help="Download current sector-company mappings"
+        )
+    
+    with reload_col:
+        if excel_data is not None:
+            st.caption("✅ Using Sector-Company.xlsx")
+        else:
+            st.caption("📁 Place Sector-Company.xlsx in project folder to load custom weights")
+    
+    st.markdown("---")
     
     # Create columns for better layout
     col1, col2 = st.columns(2)
     
-    sectors = sorted(SECTOR_COMPANIES.keys())
+    sectors = sorted(display_data.keys())
     half = len(sectors) // 2
     
     # Left column
     with col1:
         for sector in sectors[:half]:
             with st.expander(f"📊 **{sector}**", expanded=False):
-                companies = SECTOR_COMPANIES[sector]
+                companies = display_data[sector]
                 
                 # Create dataframe for this sector
                 company_data = []
@@ -1982,7 +2380,7 @@ def display_sector_companies_tab():
     with col2:
         for sector in sectors[half:]:
             with st.expander(f"📊 **{sector}**", expanded=False):
-                companies = SECTOR_COMPANIES[sector]
+                companies = display_data[sector]
                 
                 # Create dataframe for this sector
                 company_data = []
@@ -1998,11 +2396,12 @@ def display_sector_companies_tab():
                 st.caption(f"Total companies: {len(companies)}")
     
     # Summary statistics
+    # Summary statistics
     st.markdown("---")
     col1, col2, col3 = st.columns(3)
     
-    total_sectors = len(SECTOR_COMPANIES)
-    total_companies = sum(len(companies) for companies in SECTOR_COMPANIES.values())
+    total_sectors = len(display_data)
+    total_companies = sum(len(companies) for companies in display_data.values())
     avg_companies = total_companies / total_sectors if total_sectors > 0 else 0
     
     with col1:
@@ -2170,14 +2569,15 @@ def main():
             </div>
         ''', unsafe_allow_html=True)
         
-        # Create tabs (7 total: 4 sector-level + 2 company-level + 1 sector companies + 1 data sources)
+        # Create tabs (8 total: 4 sector-level + 2 company-level + 1 historical + 1 sector companies + 1 data sources)
         try:
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
                 "📈 Momentum Ranking",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
                 "🏢 Company Momentum",
                 "🏢 Company Reversals",
+                "📅 Historical Rankings",
                 "🔌 Data Sources",
                 "🏢 Sector Companies"
             ])
@@ -2211,7 +2611,11 @@ def main():
             
             with tab4:
                 try:
-                    display_company_momentum_tab(time_interval, momentum_weights)
+                    # Pass top sector as default for company momentum analysis
+                    # Sort by Momentum_Score first to get rank #1
+                    df_sorted_momentum = df.sort_values('Momentum_Score', ascending=False)
+                    top_sector = df_sorted_momentum.iloc[0]['Sector'] if not df_sorted_momentum.empty else None
+                    display_company_momentum_tab(time_interval, momentum_weights, analysis_date, top_sector)
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying company momentum tab: {str(e)}")
@@ -2219,7 +2623,13 @@ def main():
             
             with tab5:
                 try:
-                    display_company_reversal_tab(time_interval, reversal_weights)
+                    # Get top reversal candidate (if any)
+                    top_reversal_sector = None
+                    if not df.empty:
+                        reversal_candidates = df[df['Reversal_Status'] != 'No']
+                        if not reversal_candidates.empty:
+                            top_reversal_sector = reversal_candidates.iloc[0]['Sector']
+                    display_company_reversal_tab(time_interval, reversal_weights, reversal_thresholds, analysis_date, top_reversal_sector)
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying company reversal tab: {str(e)}")
@@ -2227,12 +2637,20 @@ def main():
             
             with tab6:
                 try:
+                    display_historical_rankings_tab(sector_data, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf)
+                    display_tooltip_legend()
+                except Exception as e:
+                    st.error(f"❌ Error displaying historical rankings tab: {str(e)}")
+                    st.text(traceback.format_exc())
+            
+            with tab7:
+                try:
                     display_data_sources_tab()
                 except Exception as e:
                     st.error(f"❌ Error displaying data sources tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab7:
+            with tab8:
                 try:
                     display_sector_companies_tab()
                 except Exception as e:
