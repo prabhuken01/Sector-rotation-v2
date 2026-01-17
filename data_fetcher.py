@@ -1,6 +1,7 @@
 """
 Data fetching module for NSE Market Sector Analysis Tool
 Handles data retrieval from Yahoo Finance with caching and parallel fetching
+Now integrated with local SQLite cache for 6M data + dynamic yfinance fallback
 """
 
 import yfinance as yf
@@ -13,9 +14,19 @@ warnings.filterwarnings('ignore')
 
 from config import MIN_DATA_POINTS
 
+# Try to import local cache (optional)
+try:
+    from local_cache import get_cached_data, cache_data, should_update_cache, initialize_cache
+    LOCAL_CACHE_AVAILABLE = True
+except ImportError:
+    LOCAL_CACHE_AVAILABLE = False
+
 # Simple in-memory cache for data fetching
 _data_cache = {}
 _cache_ttl = 300  # 5 minutes TTL for cache
+
+# Configuration for local cache
+LOCAL_CACHE_DAYS = 180  # Keep 6 months locally
 
 
 def _get_cache_key(symbol, period, end_date, interval):
@@ -41,7 +52,10 @@ def clear_data_cache():
 
 def fetch_sector_data(symbol, period='1y', min_data_points=MIN_DATA_POINTS, end_date=None, interval='1d', use_cache=True):
     """
-    Fetch historical data for a sector using yfinance with caching.
+    Fetch historical data for a sector with hybrid caching strategy:
+    1. Try local SQLite cache first (6M data)
+    2. Fall back to yfinance if not in cache or data beyond 6M
+    3. Update cache if fetched from yfinance
     
     Args:
         symbol: Yahoo Finance symbol
@@ -56,48 +70,60 @@ def fetch_sector_data(symbol, period='1y', min_data_points=MIN_DATA_POINTS, end_
     """
     global _data_cache
     
-    # Check cache first
+    # Check in-memory cache first (5 minute TTL)
     cache_key = _get_cache_key(symbol, period, end_date, interval)
     if use_cache and _is_cache_valid(cache_key):
         return _data_cache[cache_key].get('data')
     
     try:
+        # Determine date range
+        if end_date:
+            actual_end_date = end_date + timedelta(days=1)
+            
+            if interval == '1h':
+                start_date = end_date - timedelta(days=60)
+            elif interval == '1wk':
+                start_date = end_date - timedelta(days=400 if period == '1y' else 800)
+            else:  # Daily
+                start_date = end_date - timedelta(days=400 if period == '1y' else 800)
+        else:
+            actual_end_date = datetime.now() + timedelta(days=1)
+            if interval == '1h':
+                start_date = datetime.now() - timedelta(days=60)
+                period = '60d'
+            else:
+                start_date = datetime.now() - timedelta(days=400)
+        
+        # For daily data within 6M, try local cache first
+        data = None
+        if LOCAL_CACHE_AVAILABLE and interval == '1d' and use_cache:
+            cache_start = max(start_date, datetime.now() - timedelta(days=LOCAL_CACHE_DAYS))
+            data = get_cached_data(symbol, cache_start, actual_end_date)
+            
+            if data is not None and len(data) >= min_data_points:
+                # Cache hit - return immediately
+                _data_cache[cache_key] = {'data': data, 'timestamp': datetime.now().timestamp()}
+                return data
+        
+        # Cache miss or non-daily: fetch from yfinance
         ticker = yf.Ticker(symbol)
         
         if end_date:
-            # Yahoo Finance's history() returns data up to but NOT including end_date
-            # So we add 1 day to ensure we get data for the requested date
-            actual_end_date = end_date + timedelta(days=1)
-            
-            # Adjust period based on interval
-            if interval == '1h':
-                # Hourly data: max 730 days (2 years) on Yahoo Finance
-                start_date = end_date - timedelta(days=60)  # 60 days for hourly
-            elif interval == '1wk':
-                # Weekly data: longer history
-                if period == '1y':
-                    start_date = end_date - timedelta(days=400)
-                else:
-                    start_date = end_date - timedelta(days=800)
-            else:  # Daily
-                if period == '1y':
-                    start_date = end_date - timedelta(days=400)
-                elif period == '2y':
-                    start_date = end_date - timedelta(days=800)
-                else:
-                    start_date = end_date - timedelta(days=400)
-            
             data = ticker.history(start=start_date, end=actual_end_date, interval=interval)
         else:
-            # Adjust period for hourly data
-            if interval == '1h':
-                period = '60d'  # Max ~60 days for hourly data
             data = ticker.history(period=period, interval=interval)
         
         if data.empty:
             return None
-            
-        # Clean data
+        
+        # Store in local cache if daily data
+        if LOCAL_CACHE_AVAILABLE and interval == '1d':
+            cache_data(symbol, data, source='yfinance')
+        
+        # Store in memory cache
+        _data_cache[cache_key] = {'data': data, 'timestamp': datetime.now().timestamp()}
+        
+        return data
         data = data.dropna()
         
         if len(data) < min_data_points:
