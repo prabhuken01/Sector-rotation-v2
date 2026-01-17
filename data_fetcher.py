@@ -18,8 +18,13 @@ from config import MIN_DATA_POINTS
 try:
     from local_cache import get_cached_data, cache_data, should_update_cache, initialize_cache
     LOCAL_CACHE_AVAILABLE = True
-except ImportError:
+    print("✅ Local cache module loaded successfully")
+except ImportError as e:
     LOCAL_CACHE_AVAILABLE = False
+    print(f"⚠️ Local cache not available: {e}")
+except Exception as e:
+    LOCAL_CACHE_AVAILABLE = False
+    print(f"⚠️ Error loading local cache: {e}")
 
 # Simple in-memory cache for data fetching
 _data_cache = {}
@@ -97,13 +102,18 @@ def fetch_sector_data(symbol, period='1y', min_data_points=MIN_DATA_POINTS, end_
         # For daily data within 6M, try local cache first
         data = None
         if LOCAL_CACHE_AVAILABLE and interval == '1d' and use_cache:
-            cache_start = max(start_date, datetime.now() - timedelta(days=LOCAL_CACHE_DAYS))
-            data = get_cached_data(symbol, cache_start, actual_end_date)
-            
-            if data is not None and len(data) >= min_data_points:
-                # Cache hit - return immediately
-                _data_cache[cache_key] = {'data': data, 'timestamp': datetime.now().timestamp()}
-                return data
+            try:
+                cache_start = max(start_date, datetime.now() - timedelta(days=LOCAL_CACHE_DAYS))
+                data = get_cached_data(symbol, cache_start, actual_end_date)
+                
+                if data is not None and len(data) >= min_data_points:
+                    # Cache hit - return immediately
+                    _data_cache[cache_key] = {'data': data, 'timestamp': datetime.now().timestamp()}
+                    return data
+            except Exception as cache_err:
+                # Cache read failed, fall back to yfinance
+                print(f"⚠️ Cache read failed for {symbol}: {cache_err}")
+                data = None
         
         # Cache miss or non-daily: fetch from yfinance
         ticker = yf.Ticker(symbol)
@@ -113,28 +123,19 @@ def fetch_sector_data(symbol, period='1y', min_data_points=MIN_DATA_POINTS, end_
         else:
             data = ticker.history(period=period, interval=interval)
         
-        if data.empty:
+        if data is None or data.empty:
             return None
         
-        # Store in local cache if daily data
+        # Store in local cache if daily data (but don't fail if cache write fails)
         if LOCAL_CACHE_AVAILABLE and interval == '1d':
-            cache_data(symbol, data, source='yfinance')
+            try:
+                cache_data(symbol, data, source='yfinance')
+            except Exception as cache_err:
+                print(f"⚠️ Cache write failed for {symbol}: {cache_err}")
         
         # Store in memory cache
         _data_cache[cache_key] = {'data': data, 'timestamp': datetime.now().timestamp()}
         
-        return data
-        data = data.dropna()
-        
-        if len(data) < min_data_points:
-            return None
-        
-        # Cache the result
-        _data_cache[cache_key] = {
-            'data': data,
-            'timestamp': datetime.now().timestamp()
-        }
-            
         return data
         
     except Exception as e:
