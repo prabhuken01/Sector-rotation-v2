@@ -2615,7 +2615,7 @@ def main():
                     # Sort by Momentum_Score first to get rank #1
                     df_sorted_momentum = df.sort_values('Momentum_Score', ascending=False)
                     top_sector = df_sorted_momentum.iloc[0]['Sector'] if not df_sorted_momentum.empty else None
-                    display_company_momentum_tab(time_interval, momentum_weights, analysis_date, top_sector)
+                    display_company_momentum_tab(time_interval=time_interval, momentum_weights=momentum_weights, analysis_date=analysis_date, default_sector=top_sector)
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying company momentum tab: {str(e)}")
@@ -2629,7 +2629,7 @@ def main():
                         reversal_candidates = df[df['Reversal_Status'] != 'No']
                         if not reversal_candidates.empty:
                             top_reversal_sector = reversal_candidates.iloc[0]['Sector']
-                    display_company_reversal_tab(time_interval, reversal_weights, reversal_thresholds, analysis_date, top_reversal_sector)
+                    display_company_reversal_tab(time_interval=time_interval, reversal_weights=reversal_weights, reversal_thresholds=reversal_thresholds, analysis_date=analysis_date, default_sector=top_reversal_sector)
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying company reversal tab: {str(e)}")

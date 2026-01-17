@@ -4,6 +4,8 @@ Static mapping of top 8-10 companies by weight in each sector/ETF
 Weights are approximate based on latest index compositions
 """
 
+__all__ = ['SECTOR_COMPANIES', 'get_company_symbol_list', 'load_sector_companies_from_excel']
+
 # Top companies by weight in each sector/ETF
 SECTOR_COMPANIES = {
     'Auto': {
