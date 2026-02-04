@@ -2502,73 +2502,173 @@ def display_data_sources_tab():
     st.caption(f"⏰ Test completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 
-def display_top_2_stocks_tab(momentum_weights=None, analysis_date=None):
+def display_stock_analysis_tab(analysis_date=None):
     """
-    Display top 2 best stocks across all sectors analyzed in 1H and 4H timeframes.
+    Display comprehensive stock analysis with Market Overview and Individual Stock Ranking.
+    
+    PART 1: Market Overview (NSE/NIFTY)
+    - Sentiment: India VIX and Advance/Decline ratio
+    - Breadth: % of Nifty 50 stocks above 20 DMA and 50 DMA
+    
+    PART 2: Individual Stock Ranking
+    - Trend: HH/HL (Uptrend) or LL/LH (Downtrend) on 4H
+    - Direction: Price vs 20 DMA vs 50 DMA
+    - Momentum: RSI (14) with trend and zone analysis
+    - Chart Setup: DMA crossover detection
+    - RSI Divergence: Bullish/Bearish at 50% formation mark
     
     Args:
-        momentum_weights: Dict with weights for momentum scoring
         analysis_date: Date for analysis
     """
-    from company_symbols import SECTOR_COMPANIES
+    import os
+    import numpy as np
     from data_fetcher import fetch_sector_data
     
-    if momentum_weights is None:
-        momentum_weights = DEFAULT_MOMENTUM_WEIGHTS
-    
-    st.markdown("### 🏆 Top 2 Best Stocks Analysis")
+    st.markdown("### 📊 Stock Analysis Dashboard")
     st.markdown("---")
-    st.info("🔍 **Analyzing all stocks across all sectors** in 1H and 4H timeframes to identify the top 2 best performers based on technical parameters.")
     
-    # Convert date to string for cache key
-    analysis_date_str = analysis_date.strftime('%Y-%m-%d') if analysis_date else None
-    
-    # Collect all companies from all sectors
-    all_companies = []
-    for sector_name, companies_dict in SECTOR_COMPANIES.items():
-        for symbol, company_info in companies_dict.items():
-            all_companies.append({
-                'symbol': symbol,
-                'name': company_info.get('name', symbol),
-                'sector': sector_name,
-                'weight': company_info.get('weight', 0)
-            })
-    
-    st.markdown(f"**Total stocks to analyze:** {len(all_companies)}")
-    
-    # Fetch benchmark data
-    benchmark_data_1h = fetch_sector_data('^NSEI', end_date=analysis_date, interval='1h')
-    
-    if benchmark_data_1h is None or len(benchmark_data_1h) == 0:
-        st.error("❌ Unable to fetch Nifty 50 benchmark data")
+    # Load stock list from CSV
+    csv_path = 'sector_companies_20260204.csv'
+    if not os.path.exists(csv_path):
+        st.error(f"❌ CSV file not found: {csv_path}")
+        st.info("Please ensure sector_companies_20260204.csv is in the project directory")
         return
     
-    # Resample benchmark data to 4H for 4H analysis
-    benchmark_data_4h = benchmark_data_1h.resample('4H').agg({
-        'Open': 'first',
-        'High': 'max',
-        'Low': 'min',
-        'Close': 'last',
-        'Volume': 'sum'
-    }).dropna()
+    try:
+        df_stocks = pd.read_csv(csv_path)
+        # Remove duplicates if any
+        df_stocks = df_stocks.drop_duplicates(subset=['Symbol'], keep='first')
+        st.success(f"✅ Loaded {len(df_stocks)} unique stocks from CSV")
+    except Exception as e:
+        st.error(f"❌ Error loading CSV: {str(e)}")
+        return
     
-    # Analyze all stocks
+    # ============================================================
+    # PART 1: MARKET OVERVIEW
+    # ============================================================
+    st.markdown("## 📈 PART 1: Market Overview (NSE/NIFTY)")
+    st.markdown("---")
+    
+    with st.spinner("Fetching market data..."):
+        # Fetch Nifty 50 data
+        nifty_data = fetch_sector_data('^NSEI', end_date=analysis_date, interval='1d')
+        
+        # Fetch India VIX (try multiple symbols)
+        vix_symbols = ['^INDIAVIX', 'INDIAVIX.NS', 'INDIAVIX']
+        vix_value = None
+        for vix_sym in vix_symbols:
+            try:
+                vix_data = fetch_sector_data(vix_sym, end_date=analysis_date, interval='1d')
+                if vix_data is not None and len(vix_data) > 0:
+                    vix_value = vix_data['Close'].iloc[-1]
+                    break
+            except:
+                continue
+        
+        if nifty_data is None or len(nifty_data) == 0:
+            st.error("❌ Unable to fetch Nifty 50 data")
+            return
+        
+        # Calculate Advance/Decline ratio for Nifty 50 stocks
+        # Get list of Nifty 50 stocks (top 50 by market cap)
+        nifty_stocks = [
+            'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
+            'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
+            'LT.NS', 'AXISBANK.NS', 'ASIANPAINT.NS', 'MARUTI.NS', 'TITAN.NS',
+            'NESTLEIND.NS', 'ULTRACEMCO.NS', 'WIPRO.NS', 'SUNPHARMA.NS', 'TATAMOTORS.NS',
+            'TECHM.NS', 'HCLTECH.NS', 'BAJFINANCE.NS', 'JSWSTEEL.NS', 'TATASTEEL.NS',
+            'POWERGRID.NS', 'NTPC.NS', 'ONGC.NS', 'COALINDIA.NS', 'ADANIENT.NS',
+            'ADANIPORTS.NS', 'GRASIM.NS', 'DIVISLAB.NS', 'CIPLA.NS', 'DRREDDY.NS',
+            'BAJAJFINSV.NS', 'M&M.NS', 'HEROMOTOCO.NS', 'EICHERMOT.NS', 'MARICO.NS',
+            'GODREJCP.NS', 'DABUR.NS', 'BRITANNIA.NS', 'HDFCLIFE.NS', 'SBILIFE.NS',
+            'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
+        ]
+        
+        advances = 0
+        declines = 0
+        total_nifty = 0
+        
+        for symbol in nifty_stocks[:50]:  # Limit to 50 for performance
+            try:
+                stock_data = fetch_sector_data(symbol, end_date=analysis_date, interval='1d')
+                if stock_data is not None and len(stock_data) > 1:
+                    current_price = stock_data['Close'].iloc[-1]
+                    prev_price = stock_data['Close'].iloc[-2]
+                    if current_price > prev_price:
+                        advances += 1
+                    elif current_price < prev_price:
+                        declines += 1
+                    total_nifty += 1
+            except:
+                continue
+        
+        ad_ratio = advances / declines if declines > 0 else (advances / 1 if advances > 0 else 1.0)
+        
+        # Calculate Breadth (% above 20 DMA and 50 DMA)
+        above_20dma = 0
+        above_50dma = 0
+        
+        for symbol in nifty_stocks[:50]:
+            try:
+                stock_data = fetch_sector_data(symbol, end_date=analysis_date, interval='1d')
+                if stock_data is not None and len(stock_data) >= 50:
+                    current_price = stock_data['Close'].iloc[-1]
+                    dma_20 = stock_data['Close'].rolling(20).mean().iloc[-1]
+                    dma_50 = stock_data['Close'].rolling(50).mean().iloc[-1]
+                    
+                    if current_price > dma_20:
+                        above_20dma += 1
+                    if current_price > dma_50:
+                        above_50dma += 1
+            except:
+                continue
+        
+        breadth_20dma = (above_20dma / total_nifty * 100) if total_nifty > 0 else 0
+        breadth_50dma = (above_50dma / total_nifty * 100) if total_nifty > 0 else 0
+        
+        # Display Market Overview
+        nifty_price = nifty_data['Close'].iloc[-1]
+        
+        overview_data = {
+            'Metric': ['Nifty 50 Price', 'India VIX', 'A/D Ratio', '% Above 20 DMA', '% Above 50 DMA'],
+            'Value': [
+                f"₹{nifty_price:,.2f}",
+                f"{vix_value:.2f}" if vix_value else "N/A",
+                f"{ad_ratio:.2f}",
+                f"{breadth_20dma:.1f}%",
+                f"{breadth_50dma:.1f}%"
+            ]
+        }
+        
+        df_overview = pd.DataFrame(overview_data)
+        st.dataframe(df_overview, use_container_width=True, hide_index=True)
+    
+    # ============================================================
+    # PART 2: INDIVIDUAL STOCK RANKING
+    # ============================================================
+    st.markdown("## 🏆 PART 2: Individual Stock Ranking")
+    st.markdown("---")
+    st.info("Analyzing stocks from CSV file. This may take a few minutes...")
+    
     stock_results = []
     progress_bar = st.progress(0)
     status_text = st.empty()
     
-    for idx, company in enumerate(all_companies):
-        status_text.text(f"Analyzing {company['name']} ({idx+1}/{len(all_companies)})...")
-        progress_bar.progress((idx + 1) / len(all_companies))
+    for idx, row in df_stocks.iterrows():
+        symbol = row['Symbol']
+        sector = row['Sector']
+        company_name = row['Company Name']
+        
+        status_text.text(f"Analyzing {company_name} ({idx+1}/{len(df_stocks)})...")
+        progress_bar.progress((idx + 1) / len(df_stocks))
         
         try:
-            # Fetch 1H data
-            data_1h = fetch_sector_data(company['symbol'], end_date=analysis_date, interval='1h')
-            if data_1h is None or len(data_1h) < 14:
+            # Fetch 1H data and resample to 4H
+            data_1h = fetch_sector_data(symbol, end_date=analysis_date, interval='1h')
+            if data_1h is None or len(data_1h) < 50:
                 continue
             
-            # For 4H, we'll resample 1H data (or fetch separately if available)
-            # Since yfinance doesn't support 4h directly, we'll use 1h data and resample
+            # Resample to 4H
             data_4h = data_1h.resample('4H').agg({
                 'Open': 'first',
                 'High': 'max',
@@ -2577,87 +2677,154 @@ def display_top_2_stocks_tab(momentum_weights=None, analysis_date=None):
                 'Volume': 'sum'
             }).dropna()
             
-            if len(data_4h) < 14:
+            if len(data_4h) < 20:
                 continue
             
-            # Calculate indicators for 1H timeframe
-            rsi_1h = calculate_rsi(data_1h)
-            adx_1h, _, _, di_spread_1h = calculate_adx(data_1h)
-            cmf_1h = calculate_cmf(data_1h)
-            adx_z_1h = calculate_z_score(adx_1h.dropna())
-            mansfield_rs_1h = calculate_mansfield_rs(data_1h, benchmark_data_1h, interval='1h')
-            
-            # Calculate RS Rating for 1H
-            returns_1h = data_1h['Close'].pct_change().dropna()
-            bench_returns_1h = benchmark_data_1h['Close'].pct_change().dropna()
-            common_1h = returns_1h.index.intersection(bench_returns_1h.index)
-            if len(common_1h) > 1:
-                ret_1h = returns_1h.loc[common_1h]
-                bench_ret_1h = bench_returns_1h.loc[common_1h]
-                cumret_1h = (1 + ret_1h).prod() - 1
-                bench_cumret_1h = (1 + bench_ret_1h).prod() - 1
-                relative_perf_1h = cumret_1h - bench_cumret_1h
-                rs_rating_1h = max(0, min(10, 5 + (relative_perf_1h * 25)))
-            else:
-                rs_rating_1h = 5.0
-            
-            # Calculate indicators for 4H timeframe
-            rsi_4h = calculate_rsi(data_4h)
-            adx_4h, _, _, di_spread_4h = calculate_adx(data_4h)
-            cmf_4h = calculate_cmf(data_4h)
-            adx_z_4h = calculate_z_score(adx_4h.dropna())
-            mansfield_rs_4h = calculate_mansfield_rs(data_4h, benchmark_data_4h, interval='1h')  # Using same benchmark
-            
-            # Calculate RS Rating for 4H
-            returns_4h = data_4h['Close'].pct_change().dropna()
-            bench_returns_4h = benchmark_data_4h['Close'].pct_change().dropna()
-            common_4h = returns_4h.index.intersection(bench_returns_4h.index)
-            if len(common_4h) > 1:
-                ret_4h = returns_4h.loc[common_4h]
-                bench_ret_4h = bench_returns_4h.loc[common_4h]
-                cumret_4h = (1 + ret_4h).prod() - 1
-                bench_cumret_4h = (1 + bench_ret_4h).prod() - 1
-                relative_perf_4h = cumret_4h - bench_cumret_4h
-                rs_rating_4h = max(0, min(10, 5 + (relative_perf_4h * 25)))
-            else:
-                rs_rating_4h = 5.0
+            # Calculate DMAs
+            data_4h['DMA_20'] = data_4h['Close'].rolling(20).mean()
+            data_4h['DMA_50'] = data_4h['Close'].rolling(50).mean()
             
             # Get latest values
-            rsi_1h_val = rsi_1h.iloc[-1] if not rsi_1h.isna().all() else 50.0
-            rsi_4h_val = rsi_4h.iloc[-1] if not rsi_4h.isna().all() else 50.0
-            adx_z_1h_val = adx_z_1h if not pd.isna(adx_z_1h) else 0.0
-            adx_z_4h_val = adx_z_4h if not pd.isna(adx_z_4h) else 0.0
-            di_spread_1h_val = di_spread_1h.iloc[-1] if not di_spread_1h.isna().all() else 0.0
-            di_spread_4h_val = di_spread_4h.iloc[-1] if not di_spread_4h.isna().all() else 0.0
-            cmf_1h_val = cmf_1h.iloc[-1] if not cmf_1h.isna().all() else 0.0
-            cmf_4h_val = cmf_4h.iloc[-1] if not cmf_4h.isna().all() else 0.0
+            current_price = data_4h['Close'].iloc[-1]
+            dma_20 = data_4h['DMA_20'].iloc[-1]
+            dma_50 = data_4h['DMA_50'].iloc[-1]
             
-            # Get current price
-            current_price = data_1h['Close'].iloc[-1] if len(data_1h) > 0 else 0.0
-            prev_close = data_1h['Close'].iloc[-2] if len(data_1h) > 1 else current_price
-            pct_change = ((current_price - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
+            # 1. TREND: Detect HH/HL (Uptrend) or LL/LH (Downtrend)
+            recent_highs = data_4h['High'].tail(10).values
+            recent_lows = data_4h['Low'].tail(10).values
+            
+            # Check for Higher Highs and Higher Lows (Uptrend)
+            if len(recent_highs) >= 4:
+                hh_pattern = recent_highs[-1] > recent_highs[-3] > recent_highs[-5] if len(recent_highs) >= 5 else False
+                hl_pattern = recent_lows[-1] > recent_lows[-3] > recent_lows[-5] if len(recent_lows) >= 5 else False
+                uptrend = hh_pattern and hl_pattern
+            else:
+                uptrend = False
+            
+            # Check for Lower Lows and Lower Highs (Downtrend)
+            if len(recent_lows) >= 4:
+                ll_pattern = recent_lows[-1] < recent_lows[-3] < recent_lows[-5] if len(recent_lows) >= 5 else False
+                lh_pattern = recent_highs[-1] < recent_highs[-3] < recent_highs[-5] if len(recent_highs) >= 5 else False
+                downtrend = ll_pattern and lh_pattern
+            else:
+                downtrend = False
+            
+            if uptrend:
+                trend = "HH/HL (Uptrend)"
+            elif downtrend:
+                trend = "LL/LH (Downtrend)"
+            else:
+                trend = "Sideways"
+            
+            # 2. DIRECTION: Price > 20 DMA > 50 DMA (Bullish) or Price < 20 DMA < 50 DMA (Bearish)
+            if pd.notna(dma_20) and pd.notna(dma_50):
+                if current_price > dma_20 > dma_50:
+                    direction = "Bullish"
+                elif current_price < dma_20 < dma_50:
+                    direction = "Bearish"
+                else:
+                    direction = "Mixed"
+            else:
+                direction = "N/A"
+            
+            # 3. MOMENTUM: RSI (14)
+            rsi_series = calculate_rsi(data_4h)
+            rsi_current = rsi_series.iloc[-1] if not rsi_series.isna().all() else 50.0
+            rsi_prev = rsi_series.iloc[-2] if len(rsi_series) > 1 and not pd.isna(rsi_series.iloc[-2]) else rsi_current
+            
+            rsi_rising = rsi_current > rsi_prev
+            rsi_falling = rsi_current < rsi_prev
+            rsi_in_zone = 40 <= rsi_current <= 60
+            
+            rsi_status = []
+            if rsi_rising:
+                rsi_status.append("Rising")
+            if rsi_falling:
+                rsi_status.append("Falling")
+            if rsi_in_zone:
+                rsi_status.append("40-60 Zone")
+            
+            rsi_display = f"{rsi_current:.1f} ({', '.join(rsi_status)})" if rsi_status else f"{rsi_current:.1f}"
+            
+            # 4. CHART SETUP: DMA crossover detection
+            if pd.notna(dma_20) and pd.notna(dma_50):
+                dma_diff_pct = abs((dma_20 - dma_50) / dma_50 * 100)
+                if dma_diff_pct < 2.0:  # Within 2% = approaching crossover
+                    setup = "Crossover Setup"
+                elif dma_20 > dma_50:
+                    setup = "20 DMA > 50 DMA"
+                else:
+                    setup = "20 DMA < 50 DMA"
+            else:
+                setup = "N/A"
+            
+            # 5. RSI DIVERGENCE: At 50% formation mark (2-hour mark of 4H candle)
+            # Get 1H data for the current 4H candle period
+            current_4h_start = data_4h.index[-1] - pd.Timedelta(hours=4)
+            current_1h_data = data_1h[data_1h.index >= current_4h_start]
+            
+            divergence = "None"
+            if len(current_1h_data) >= 2:
+                # Get RSI at 2-hour mark (50% of 4H candle)
+                mid_point_idx = len(current_1h_data) // 2
+                if mid_point_idx > 0 and mid_point_idx < len(current_1h_data):
+                    rsi_1h_series = calculate_rsi(current_1h_data)
+                    if len(rsi_1h_series) > mid_point_idx:
+                        rsi_at_50pct = rsi_1h_series.iloc[mid_point_idx] if not pd.isna(rsi_1h_series.iloc[mid_point_idx]) else rsi_current
+                        
+                        # Compare with price action
+                        price_at_start = current_1h_data['Close'].iloc[0]
+                        price_at_50pct = current_1h_data['Close'].iloc[mid_point_idx]
+                        price_at_end = current_1h_data['Close'].iloc[-1]
+                        
+                        # Bullish divergence: Price makes lower low, RSI makes higher low
+                        if price_at_50pct < price_at_start and rsi_at_50pct > rsi_current:
+                            divergence = "Bullish"
+                        # Bearish divergence: Price makes higher high, RSI makes lower high
+                        elif price_at_50pct > price_at_start and rsi_at_50pct < rsi_current:
+                            divergence = "Bearish"
+            
+            # Calculate Confluence Score
+            score = 0
+            if trend == "HH/HL (Uptrend)":
+                score += 3
+            elif trend == "LL/LH (Downtrend)":
+                score += 0
+            else:
+                score += 1
+            
+            if direction == "Bullish":
+                score += 3
+            elif direction == "Bearish":
+                score += 0
+            else:
+                score += 1
+            
+            if rsi_rising and rsi_in_zone:
+                score += 2
+            elif rsi_rising:
+                score += 1
+            
+            if setup == "Crossover Setup" and direction == "Bullish":
+                score += 2
+            
+            if divergence == "Bullish":
+                score += 2
+            elif divergence == "Bearish":
+                score -= 1
             
             stock_results.append({
-                'Company': company['name'],
-                'Symbol': company['symbol'],
-                'Sector': company['sector'],
-                'Price': current_price,
-                'Change_pct': pct_change,
-                # 1H indicators
-                'RSI_1H': rsi_1h_val,
-                'ADX_Z_1H': adx_z_1h_val,
-                'RS_Rating_1H': rs_rating_1h,
-                'DI_Spread_1H': di_spread_1h_val,
-                'CMF_1H': cmf_1h_val,
-                'Mansfield_RS_1H': mansfield_rs_1h if not pd.isna(mansfield_rs_1h) else 0.0,
-                # 4H indicators
-                'RSI_4H': rsi_4h_val,
-                'ADX_Z_4H': adx_z_4h_val,
-                'RS_Rating_4H': rs_rating_4h,
-                'DI_Spread_4H': di_spread_4h_val,
-                'CMF_4H': cmf_4h_val,
-                'Mansfield_RS_4H': mansfield_rs_4h if not pd.isna(mansfield_rs_4h) else 0.0,
+                'Sector': sector,
+                'Symbol': symbol,
+                'Company': company_name,
+                'Trend': trend,
+                'Direction': direction,
+                'RSI': rsi_display,
+                'Setup': setup,
+                'Divergence': divergence,
+                'Score': score
             })
+            
         except Exception as e:
             continue
     
@@ -2668,113 +2835,37 @@ def display_top_2_stocks_tab(momentum_weights=None, analysis_date=None):
         st.warning("⚠️ No stock data available for analysis")
         return
     
-    # Create DataFrame and calculate momentum scores
-    df_stocks = pd.DataFrame(stock_results)
+    # Create DataFrame and rank
+    df_results = pd.DataFrame(stock_results)
+    df_results = df_results.sort_values('Score', ascending=False)
+    df_results['Rank'] = range(1, len(df_results) + 1)
     
-    # Calculate momentum scores for both timeframes using same logic as company analysis
-    # Rank-based scoring
-    for timeframe in ['1H', '4H']:
-        # Calculate ranks
-        df_stocks[f'ADX_Z_{timeframe}_Rank'] = df_stocks[f'ADX_Z_{timeframe}'].rank(ascending=False, method='average')
-        df_stocks[f'RS_Rating_{timeframe}_Rank'] = df_stocks[f'RS_Rating_{timeframe}'].rank(ascending=False, method='average')
-        df_stocks[f'RSI_{timeframe}_Rank'] = df_stocks[f'RSI_{timeframe}'].rank(ascending=False, method='average')
-        df_stocks[f'DI_Spread_{timeframe}_Rank'] = df_stocks[f'DI_Spread_{timeframe}'].rank(ascending=False, method='average')
-        
-        # Calculate weighted average rank
-        total_weight = sum(momentum_weights.values())
-        df_stocks[f'Weighted_Avg_Rank_{timeframe}'] = (
-            (df_stocks[f'ADX_Z_{timeframe}_Rank'] * momentum_weights.get('ADX_Z', 20.0) / total_weight) +
-            (df_stocks[f'RS_Rating_{timeframe}_Rank'] * momentum_weights.get('RS_Rating', 40.0) / total_weight) +
-            (df_stocks[f'RSI_{timeframe}_Rank'] * momentum_weights.get('RSI', 30.0) / total_weight) +
-            (df_stocks[f'DI_Spread_{timeframe}_Rank'] * momentum_weights.get('DI_Spread', 10.0) / total_weight)
-        )
-        
-        # Scale to 1-10
-        num_stocks = len(df_stocks)
-        if num_stocks > 1:
-            min_rank = df_stocks[f'Weighted_Avg_Rank_{timeframe}'].min()
-            max_rank = df_stocks[f'Weighted_Avg_Rank_{timeframe}'].max()
-            if max_rank > min_rank:
-                df_stocks[f'Momentum_Score_{timeframe}'] = 10 - ((df_stocks[f'Weighted_Avg_Rank_{timeframe}'] - min_rank) / (max_rank - min_rank)) * 9
-            else:
-                df_stocks[f'Momentum_Score_{timeframe}'] = 5.0
-        else:
-            df_stocks[f'Momentum_Score_{timeframe}'] = 5.0
+    # Display top 10
+    st.markdown("### 🥇 Top 10 Stocks by Confluence Score")
+    df_top10 = df_results.head(10)[['Rank', 'Sector', 'Symbol', 'Company', 'Trend', 'Direction', 'RSI', 'Setup', 'Divergence', 'Score']]
+    st.dataframe(df_top10, use_container_width=True, hide_index=True)
     
-    # Calculate combined score (average of 1H and 4H)
-    df_stocks['Combined_Score'] = (df_stocks['Momentum_Score_1H'] + df_stocks['Momentum_Score_4H']) / 2
-    
-    # Sort by combined score and get top 2
-    df_stocks = df_stocks.sort_values('Combined_Score', ascending=False)
-    top_2_stocks = df_stocks.head(2).copy()
-    
-    # Display top 2 stocks
-    st.markdown("### 🥇 Top 2 Best Stocks")
+    # Export to Excel
     st.markdown("---")
+    st.markdown("### 📥 Export Results")
     
-    for rank, (_, stock) in enumerate(top_2_stocks.iterrows(), 1):
-        st.markdown(f"#### 🏆 Rank #{rank}: **{stock['Company']}** ({stock['Symbol']})")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Price", f"₹{stock['Price']:.2f}", f"{stock['Change_pct']:+.2f}%")
-        with col2:
-            st.metric("Sector", stock['Sector'])
-        with col3:
-            st.metric("Combined Score", f"{stock['Combined_Score']:.2f}")
-        
-        # Display technical parameters for both timeframes
-        st.markdown("**Technical Parameters:**")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown(f"##### 📊 1H Timeframe")
-            tech_params_1h = pd.DataFrame({
-                'Indicator': ['RSI', 'ADX_Z', 'RS_Rating', 'DI_Spread', 'CMF', 'Mansfield_RS', 'Momentum_Score'],
-                'Value': [
-                    f"{stock['RSI_1H']:.1f}",
-                    f"{stock['ADX_Z_1H']:.1f}",
-                    f"{stock['RS_Rating_1H']:.1f}",
-                    f"{stock['DI_Spread_1H']:.1f}",
-                    f"{stock['CMF_1H']:.2f}",
-                    f"{stock['Mansfield_RS_1H']:.1f}",
-                    f"{stock['Momentum_Score_1H']:.1f}"
-                ]
-            })
-            st.dataframe(tech_params_1h, use_container_width=True, hide_index=True)
-        
-        with col2:
-            st.markdown(f"##### 📊 4H Timeframe")
-            tech_params_4h = pd.DataFrame({
-                'Indicator': ['RSI', 'ADX_Z', 'RS_Rating', 'DI_Spread', 'CMF', 'Mansfield_RS', 'Momentum_Score'],
-                'Value': [
-                    f"{stock['RSI_4H']:.1f}",
-                    f"{stock['ADX_Z_4H']:.1f}",
-                    f"{stock['RS_Rating_4H']:.1f}",
-                    f"{stock['DI_Spread_4H']:.1f}",
-                    f"{stock['CMF_4H']:.2f}",
-                    f"{stock['Mansfield_RS_4H']:.1f}",
-                    f"{stock['Momentum_Score_4H']:.1f}"
-                ]
-            })
-            st.dataframe(tech_params_4h, use_container_width=True, hide_index=True)
-        
-        st.markdown("---")
+    # Create Excel file in memory
+    from io import BytesIO
+    excel_buffer = BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        df_results.to_excel(writer, sheet_name='All Stocks', index=False)
+        df_top10.to_excel(writer, sheet_name='Top 10', index=False)
     
-    # Summary statistics
-    st.markdown("### 📊 Analysis Summary")
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total Stocks Analyzed", len(stock_results))
-    with col2:
-        avg_score = df_stocks['Combined_Score'].mean()
-        st.metric("Average Combined Score", f"{avg_score:.2f}")
-    with col3:
-        top_score = df_stocks['Combined_Score'].max()
-        st.metric("Highest Score", f"{top_score:.2f}")
+    excel_buffer.seek(0)
     
-    display_tooltip_legend()
+    st.download_button(
+        label="📥 Download Excel File",
+        data=excel_buffer.read(),
+        file_name='stock_analysis_results.xlsx',
+        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    
+    st.success(f"✅ Analysis complete! Analyzed {len(stock_results)} stocks.")
 
 
 def main():
@@ -2844,18 +2935,17 @@ def main():
             </div>
         ''', unsafe_allow_html=True)
         
-        # Create tabs (9 total: 4 sector-level + 2 company-level + 1 historical + 1 sector companies + 1 data sources + 1 top stocks)
+        # Create tabs (8 total: 4 sector-level + 2 company-level + 1 historical + 1 sector companies + 1 data sources + 1 stock analysis)
         try:
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
                 "📈 Momentum Ranking",
+                "📊 Stock Analysis",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
                 "🏢 Company Momentum",
                 "🏢 Company Reversals",
                 "📅 Historical Rankings",
-                "🔌 Data Sources",
-                "🏢 Sector Companies",
-                "🏆 Top 2 Best Stocks"
+                "🔌 Data Sources"
             ])
             
             # Get benchmark data for trend analysis
@@ -2872,20 +2962,27 @@ def main():
             
             with tab2:
                 try:
+                    display_stock_analysis_tab(analysis_date=analysis_date)
+                except Exception as e:
+                    st.error(f"❌ Error displaying stock analysis tab: {str(e)}")
+                    st.text(traceback.format_exc())
+            
+            with tab3:
+                try:
                     display_reversal_tab(df, sector_data, benchmark_data, reversal_weights, reversal_thresholds, enable_color_coding)
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying reversal tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab3:
+            with tab4:
                 try:
                     display_interpretation_tab()
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying interpretation tab: {str(e)}")
             
-            with tab4:
+            with tab5:
                 try:
                     # Pass top sector as default for company momentum analysis
                     # Sort by Momentum_Score first to get rank #1
@@ -2897,7 +2994,7 @@ def main():
                     st.error(f"❌ Error displaying company momentum tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab5:
+            with tab6:
                 try:
                     # Get top reversal candidate (if any)
                     top_reversal_sector = None
@@ -2911,7 +3008,7 @@ def main():
                     st.error(f"❌ Error displaying company reversal tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab6:
+            with tab7:
                 try:
                     display_historical_rankings_tab(sector_data, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf)
                     display_tooltip_legend()
@@ -2919,26 +3016,14 @@ def main():
                     st.error(f"❌ Error displaying historical rankings tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab7:
+            with tab8:
                 try:
                     display_data_sources_tab()
                 except Exception as e:
                     st.error(f"❌ Error displaying data sources tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab8:
-                try:
-                    display_sector_companies_tab()
-                except Exception as e:
-                    st.error(f"❌ Error displaying sector companies tab: {str(e)}")
-                    st.text(traceback.format_exc())
-            
-            with tab9:
-                try:
-                    display_top_2_stocks_tab(momentum_weights=momentum_weights, analysis_date=analysis_date)
-                except Exception as e:
-                    st.error(f"❌ Error displaying top 2 stocks tab: {str(e)}")
-                    st.text(traceback.format_exc())
+            # Note: Sector Companies tab removed to make room for Stock Analysis tab
                     
         except Exception as e:
             st.error(f"❌ Error creating tabs: {str(e)}")
