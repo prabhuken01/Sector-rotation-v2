@@ -195,7 +195,7 @@ def get_sidebar_controls():
     
     # Initialize session state for ETF selection
     if 'use_etf_state' not in st.session_state:
-        st.session_state.use_etf_state = False
+        st.session_state.use_etf_state = True  # Default to True (ETF as Proxy ticked)
     
     use_etf = st.sidebar.checkbox("Use ETF Proxy", value=st.session_state.use_etf_state, 
                                    help="Toggle between Index and ETF data")
@@ -2502,6 +2502,281 @@ def display_data_sources_tab():
     st.caption(f"⏰ Test completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 
+def display_top_2_stocks_tab(momentum_weights=None, analysis_date=None):
+    """
+    Display top 2 best stocks across all sectors analyzed in 1H and 4H timeframes.
+    
+    Args:
+        momentum_weights: Dict with weights for momentum scoring
+        analysis_date: Date for analysis
+    """
+    from company_symbols import SECTOR_COMPANIES
+    from data_fetcher import fetch_sector_data
+    
+    if momentum_weights is None:
+        momentum_weights = DEFAULT_MOMENTUM_WEIGHTS
+    
+    st.markdown("### 🏆 Top 2 Best Stocks Analysis")
+    st.markdown("---")
+    st.info("🔍 **Analyzing all stocks across all sectors** in 1H and 4H timeframes to identify the top 2 best performers based on technical parameters.")
+    
+    # Convert date to string for cache key
+    analysis_date_str = analysis_date.strftime('%Y-%m-%d') if analysis_date else None
+    
+    # Collect all companies from all sectors
+    all_companies = []
+    for sector_name, companies_dict in SECTOR_COMPANIES.items():
+        for symbol, company_info in companies_dict.items():
+            all_companies.append({
+                'symbol': symbol,
+                'name': company_info.get('name', symbol),
+                'sector': sector_name,
+                'weight': company_info.get('weight', 0)
+            })
+    
+    st.markdown(f"**Total stocks to analyze:** {len(all_companies)}")
+    
+    # Fetch benchmark data
+    benchmark_data_1h = fetch_sector_data('^NSEI', end_date=analysis_date, interval='1h')
+    
+    if benchmark_data_1h is None or len(benchmark_data_1h) == 0:
+        st.error("❌ Unable to fetch Nifty 50 benchmark data")
+        return
+    
+    # Resample benchmark data to 4H for 4H analysis
+    benchmark_data_4h = benchmark_data_1h.resample('4H').agg({
+        'Open': 'first',
+        'High': 'max',
+        'Low': 'min',
+        'Close': 'last',
+        'Volume': 'sum'
+    }).dropna()
+    
+    # Analyze all stocks
+    stock_results = []
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for idx, company in enumerate(all_companies):
+        status_text.text(f"Analyzing {company['name']} ({idx+1}/{len(all_companies)})...")
+        progress_bar.progress((idx + 1) / len(all_companies))
+        
+        try:
+            # Fetch 1H data
+            data_1h = fetch_sector_data(company['symbol'], end_date=analysis_date, interval='1h')
+            if data_1h is None or len(data_1h) < 14:
+                continue
+            
+            # For 4H, we'll resample 1H data (or fetch separately if available)
+            # Since yfinance doesn't support 4h directly, we'll use 1h data and resample
+            data_4h = data_1h.resample('4H').agg({
+                'Open': 'first',
+                'High': 'max',
+                'Low': 'min',
+                'Close': 'last',
+                'Volume': 'sum'
+            }).dropna()
+            
+            if len(data_4h) < 14:
+                continue
+            
+            # Calculate indicators for 1H timeframe
+            rsi_1h = calculate_rsi(data_1h)
+            adx_1h, _, _, di_spread_1h = calculate_adx(data_1h)
+            cmf_1h = calculate_cmf(data_1h)
+            adx_z_1h = calculate_z_score(adx_1h.dropna())
+            mansfield_rs_1h = calculate_mansfield_rs(data_1h, benchmark_data_1h, interval='1h')
+            
+            # Calculate RS Rating for 1H
+            returns_1h = data_1h['Close'].pct_change().dropna()
+            bench_returns_1h = benchmark_data_1h['Close'].pct_change().dropna()
+            common_1h = returns_1h.index.intersection(bench_returns_1h.index)
+            if len(common_1h) > 1:
+                ret_1h = returns_1h.loc[common_1h]
+                bench_ret_1h = bench_returns_1h.loc[common_1h]
+                cumret_1h = (1 + ret_1h).prod() - 1
+                bench_cumret_1h = (1 + bench_ret_1h).prod() - 1
+                relative_perf_1h = cumret_1h - bench_cumret_1h
+                rs_rating_1h = max(0, min(10, 5 + (relative_perf_1h * 25)))
+            else:
+                rs_rating_1h = 5.0
+            
+            # Calculate indicators for 4H timeframe
+            rsi_4h = calculate_rsi(data_4h)
+            adx_4h, _, _, di_spread_4h = calculate_adx(data_4h)
+            cmf_4h = calculate_cmf(data_4h)
+            adx_z_4h = calculate_z_score(adx_4h.dropna())
+            mansfield_rs_4h = calculate_mansfield_rs(data_4h, benchmark_data_4h, interval='1h')  # Using same benchmark
+            
+            # Calculate RS Rating for 4H
+            returns_4h = data_4h['Close'].pct_change().dropna()
+            bench_returns_4h = benchmark_data_4h['Close'].pct_change().dropna()
+            common_4h = returns_4h.index.intersection(bench_returns_4h.index)
+            if len(common_4h) > 1:
+                ret_4h = returns_4h.loc[common_4h]
+                bench_ret_4h = bench_returns_4h.loc[common_4h]
+                cumret_4h = (1 + ret_4h).prod() - 1
+                bench_cumret_4h = (1 + bench_ret_4h).prod() - 1
+                relative_perf_4h = cumret_4h - bench_cumret_4h
+                rs_rating_4h = max(0, min(10, 5 + (relative_perf_4h * 25)))
+            else:
+                rs_rating_4h = 5.0
+            
+            # Get latest values
+            rsi_1h_val = rsi_1h.iloc[-1] if not rsi_1h.isna().all() else 50.0
+            rsi_4h_val = rsi_4h.iloc[-1] if not rsi_4h.isna().all() else 50.0
+            adx_z_1h_val = adx_z_1h if not pd.isna(adx_z_1h) else 0.0
+            adx_z_4h_val = adx_z_4h if not pd.isna(adx_z_4h) else 0.0
+            di_spread_1h_val = di_spread_1h.iloc[-1] if not di_spread_1h.isna().all() else 0.0
+            di_spread_4h_val = di_spread_4h.iloc[-1] if not di_spread_4h.isna().all() else 0.0
+            cmf_1h_val = cmf_1h.iloc[-1] if not cmf_1h.isna().all() else 0.0
+            cmf_4h_val = cmf_4h.iloc[-1] if not cmf_4h.isna().all() else 0.0
+            
+            # Get current price
+            current_price = data_1h['Close'].iloc[-1] if len(data_1h) > 0 else 0.0
+            prev_close = data_1h['Close'].iloc[-2] if len(data_1h) > 1 else current_price
+            pct_change = ((current_price - prev_close) / prev_close * 100) if prev_close != 0 else 0.0
+            
+            stock_results.append({
+                'Company': company['name'],
+                'Symbol': company['symbol'],
+                'Sector': company['sector'],
+                'Price': current_price,
+                'Change_pct': pct_change,
+                # 1H indicators
+                'RSI_1H': rsi_1h_val,
+                'ADX_Z_1H': adx_z_1h_val,
+                'RS_Rating_1H': rs_rating_1h,
+                'DI_Spread_1H': di_spread_1h_val,
+                'CMF_1H': cmf_1h_val,
+                'Mansfield_RS_1H': mansfield_rs_1h if not pd.isna(mansfield_rs_1h) else 0.0,
+                # 4H indicators
+                'RSI_4H': rsi_4h_val,
+                'ADX_Z_4H': adx_z_4h_val,
+                'RS_Rating_4H': rs_rating_4h,
+                'DI_Spread_4H': di_spread_4h_val,
+                'CMF_4H': cmf_4h_val,
+                'Mansfield_RS_4H': mansfield_rs_4h if not pd.isna(mansfield_rs_4h) else 0.0,
+            })
+        except Exception as e:
+            continue
+    
+    progress_bar.empty()
+    status_text.empty()
+    
+    if not stock_results:
+        st.warning("⚠️ No stock data available for analysis")
+        return
+    
+    # Create DataFrame and calculate momentum scores
+    df_stocks = pd.DataFrame(stock_results)
+    
+    # Calculate momentum scores for both timeframes using same logic as company analysis
+    # Rank-based scoring
+    for timeframe in ['1H', '4H']:
+        # Calculate ranks
+        df_stocks[f'ADX_Z_{timeframe}_Rank'] = df_stocks[f'ADX_Z_{timeframe}'].rank(ascending=False, method='average')
+        df_stocks[f'RS_Rating_{timeframe}_Rank'] = df_stocks[f'RS_Rating_{timeframe}'].rank(ascending=False, method='average')
+        df_stocks[f'RSI_{timeframe}_Rank'] = df_stocks[f'RSI_{timeframe}'].rank(ascending=False, method='average')
+        df_stocks[f'DI_Spread_{timeframe}_Rank'] = df_stocks[f'DI_Spread_{timeframe}'].rank(ascending=False, method='average')
+        
+        # Calculate weighted average rank
+        total_weight = sum(momentum_weights.values())
+        df_stocks[f'Weighted_Avg_Rank_{timeframe}'] = (
+            (df_stocks[f'ADX_Z_{timeframe}_Rank'] * momentum_weights.get('ADX_Z', 20.0) / total_weight) +
+            (df_stocks[f'RS_Rating_{timeframe}_Rank'] * momentum_weights.get('RS_Rating', 40.0) / total_weight) +
+            (df_stocks[f'RSI_{timeframe}_Rank'] * momentum_weights.get('RSI', 30.0) / total_weight) +
+            (df_stocks[f'DI_Spread_{timeframe}_Rank'] * momentum_weights.get('DI_Spread', 10.0) / total_weight)
+        )
+        
+        # Scale to 1-10
+        num_stocks = len(df_stocks)
+        if num_stocks > 1:
+            min_rank = df_stocks[f'Weighted_Avg_Rank_{timeframe}'].min()
+            max_rank = df_stocks[f'Weighted_Avg_Rank_{timeframe}'].max()
+            if max_rank > min_rank:
+                df_stocks[f'Momentum_Score_{timeframe}'] = 10 - ((df_stocks[f'Weighted_Avg_Rank_{timeframe}'] - min_rank) / (max_rank - min_rank)) * 9
+            else:
+                df_stocks[f'Momentum_Score_{timeframe}'] = 5.0
+        else:
+            df_stocks[f'Momentum_Score_{timeframe}'] = 5.0
+    
+    # Calculate combined score (average of 1H and 4H)
+    df_stocks['Combined_Score'] = (df_stocks['Momentum_Score_1H'] + df_stocks['Momentum_Score_4H']) / 2
+    
+    # Sort by combined score and get top 2
+    df_stocks = df_stocks.sort_values('Combined_Score', ascending=False)
+    top_2_stocks = df_stocks.head(2).copy()
+    
+    # Display top 2 stocks
+    st.markdown("### 🥇 Top 2 Best Stocks")
+    st.markdown("---")
+    
+    for rank, (_, stock) in enumerate(top_2_stocks.iterrows(), 1):
+        st.markdown(f"#### 🏆 Rank #{rank}: **{stock['Company']}** ({stock['Symbol']})")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Price", f"₹{stock['Price']:.2f}", f"{stock['Change_pct']:+.2f}%")
+        with col2:
+            st.metric("Sector", stock['Sector'])
+        with col3:
+            st.metric("Combined Score", f"{stock['Combined_Score']:.2f}")
+        
+        # Display technical parameters for both timeframes
+        st.markdown("**Technical Parameters:**")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown(f"##### 📊 1H Timeframe")
+            tech_params_1h = pd.DataFrame({
+                'Indicator': ['RSI', 'ADX_Z', 'RS_Rating', 'DI_Spread', 'CMF', 'Mansfield_RS', 'Momentum_Score'],
+                'Value': [
+                    f"{stock['RSI_1H']:.1f}",
+                    f"{stock['ADX_Z_1H']:.1f}",
+                    f"{stock['RS_Rating_1H']:.1f}",
+                    f"{stock['DI_Spread_1H']:.1f}",
+                    f"{stock['CMF_1H']:.2f}",
+                    f"{stock['Mansfield_RS_1H']:.1f}",
+                    f"{stock['Momentum_Score_1H']:.1f}"
+                ]
+            })
+            st.dataframe(tech_params_1h, use_container_width=True, hide_index=True)
+        
+        with col2:
+            st.markdown(f"##### 📊 4H Timeframe")
+            tech_params_4h = pd.DataFrame({
+                'Indicator': ['RSI', 'ADX_Z', 'RS_Rating', 'DI_Spread', 'CMF', 'Mansfield_RS', 'Momentum_Score'],
+                'Value': [
+                    f"{stock['RSI_4H']:.1f}",
+                    f"{stock['ADX_Z_4H']:.1f}",
+                    f"{stock['RS_Rating_4H']:.1f}",
+                    f"{stock['DI_Spread_4H']:.1f}",
+                    f"{stock['CMF_4H']:.2f}",
+                    f"{stock['Mansfield_RS_4H']:.1f}",
+                    f"{stock['Momentum_Score_4H']:.1f}"
+                ]
+            })
+            st.dataframe(tech_params_4h, use_container_width=True, hide_index=True)
+        
+        st.markdown("---")
+    
+    # Summary statistics
+    st.markdown("### 📊 Analysis Summary")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Stocks Analyzed", len(stock_results))
+    with col2:
+        avg_score = df_stocks['Combined_Score'].mean()
+        st.metric("Average Combined Score", f"{avg_score:.2f}")
+    with col3:
+        top_score = df_stocks['Combined_Score'].max()
+        st.metric("Highest Score", f"{top_score:.2f}")
+    
+    display_tooltip_legend()
+
+
 def main():
     """Main Streamlit app function."""
     try:
@@ -2569,9 +2844,9 @@ def main():
             </div>
         ''', unsafe_allow_html=True)
         
-        # Create tabs (8 total: 4 sector-level + 2 company-level + 1 historical + 1 sector companies + 1 data sources)
+        # Create tabs (9 total: 4 sector-level + 2 company-level + 1 historical + 1 sector companies + 1 data sources + 1 top stocks)
         try:
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
                 "📈 Momentum Ranking",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
@@ -2579,7 +2854,8 @@ def main():
                 "🏢 Company Reversals",
                 "📅 Historical Rankings",
                 "🔌 Data Sources",
-                "🏢 Sector Companies"
+                "🏢 Sector Companies",
+                "🏆 Top 2 Best Stocks"
             ])
             
             # Get benchmark data for trend analysis
@@ -2655,6 +2931,13 @@ def main():
                     display_sector_companies_tab()
                 except Exception as e:
                     st.error(f"❌ Error displaying sector companies tab: {str(e)}")
+                    st.text(traceback.format_exc())
+            
+            with tab9:
+                try:
+                    display_top_2_stocks_tab(momentum_weights=momentum_weights, analysis_date=analysis_date)
+                except Exception as e:
+                    st.error(f"❌ Error displaying top 2 stocks tab: {str(e)}")
                     st.text(traceback.format_exc())
                     
         except Exception as e:

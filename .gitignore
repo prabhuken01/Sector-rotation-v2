@@ -28,7 +28,8 @@ Thumbs.db
 # Data and logs
 *.log
 *.pyc
-.streamlit/
+.streamlit/secrets.toml
+.streamlit/credentials.json
 
 # Temporary files
 *.tmp
