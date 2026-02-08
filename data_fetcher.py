@@ -257,23 +257,29 @@ def fetch_all_sectors_parallel(sectors_dict, alternates_dict=None, period='1y', 
 
 def fetch_nifty_broad_universe(min_stocks=750, use_cache=True):
     """
-    Fetch a broad NSE universe (Nifty 500 + Midcap 150 + Smallcap 250) from NSE India
-    to get at least min_stocks (default 750) for market breadth.
+    Fetch a broad NSE universe for Part B (market breadth).
     
-    Uses NSE official CSV downloads with session headers. Falls back to empty list
-    if NSE blocks or CSV format changes.
+    Source order:
+    1) NSE India CSV (Nifty 500 + Midcap 150 + Smallcap 250 + Microcap 250).
+       Theoretical max ~900-1150 unique symbols. Often returns 0 if NSE blocks (403).
+    2) Local fallback CSV: data_cache/part_b_fallback.csv or part_b_fallback.csv in project root.
+       Place a file with 'Symbol' column (e.g. from NSE manual download, EODData, or any list).
+    3) Returns empty list so caller can fall back to Nifty 50.
+    
+    Note: yfinance and Google Finance do not provide NSE index constituent lists; they are
+    used only for price data. NSE is the only automatic source for a large symbol list.
     
     Returns:
-        List of Yahoo Finance symbols (e.g. RELIANCE.NS). May be fewer than min_stocks
-        if NSE returns less or only Nifty 500 is available.
+        List of Yahoo Finance symbols (e.g. RELIANCE.NS).
     """
     import io
+    import os
     try:
         import requests
         import pandas as pd
     except ImportError:
-        return []
-    
+        return _load_part_b_fallback_csv()
+
     if use_cache:
         try:
             cached = getattr(fetch_nifty_broad_universe, '_nifty_broad_cache', None)
@@ -281,29 +287,24 @@ def fetch_nifty_broad_universe(min_stocks=750, use_cache=True):
                 return cached
         except Exception:
             pass
-    
+
     base_url = "https://www.nseindia.com"
-    # NSE index constituent CSV URLs (500 + 150 + 250 + microcap 250 for larger universe)
     csv_urls = [
         ("https://www.nseindia.com/content/indices/ind_nifty500list.csv", "Symbol"),
         ("https://www.nseindia.com/content/indices/ind_niftymidcap150list.csv", "Symbol"),
         ("https://www.nseindia.com/content/indices/ind_niftysmallcap250list.csv", "Symbol"),
         ("https://www.nseindia.com/content/indices/ind_niftymicrocap250list.csv", "Symbol"),
     ]
-    
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "text/csv,application/csv,*/*",
         "Accept-Language": "en-US,en;q=0.9",
         "Referer": base_url + "/",
     }
-    
     all_symbols = set()
     session = requests.Session()
     session.headers.update(headers)
-    
     try:
-        # Establish session (NSE often requires a prior visit)
         session.get(base_url, timeout=10)
         for url, symbol_col in csv_urls:
             try:
@@ -314,7 +315,6 @@ def fetch_nifty_broad_universe(min_stocks=750, use_cache=True):
                     df = pd.read_csv(io.StringIO(r.text))
                 except Exception:
                     continue
-                # NSE CSV column: 'Symbol' or 'Company Symbol'
                 col = None
                 for c in ("Symbol", "Company Symbol", symbol_col):
                     if c in df.columns:
@@ -340,14 +340,41 @@ def fetch_nifty_broad_universe(min_stocks=750, use_cache=True):
             session.close()
         except Exception:
             pass
-    
+
     result = sorted(all_symbols)
     if len(result) > 0:
         try:
             fetch_nifty_broad_universe._nifty_broad_cache = result
         except Exception:
             pass
-    return result
+        return result
+
+    # NSE failed: try local fallback CSV (user can drop Nifty 500/1000 list from NSE or elsewhere)
+    return _load_part_b_fallback_csv()
+
+
+def _load_part_b_fallback_csv():
+    """Load Part B symbols from local CSV when NSE is blocked. Looks for Symbol column."""
+    try:
+        import pandas as pd
+        import os
+        base = os.path.dirname(__file__)
+        for path in [
+            os.path.join(base, "data_cache", "part_b_fallback.csv"),
+            os.path.join(base, "part_b_fallback.csv"),
+        ]:
+            if os.path.exists(path):
+                df = pd.read_csv(path)
+                if 'Symbol' not in df.columns and len(df.columns) > 0:
+                    df.columns = [c.strip() for c in df.columns]
+                if 'Symbol' not in df.columns:
+                    continue
+                syms = df['Symbol'].drop_duplicates().dropna().astype(str).str.strip().tolist()
+                syms = [s if s.endswith('.NS') else s + '.NS' for s in syms if s and len(s) > 1]
+                return sorted(syms)
+    except Exception:
+        pass
+    return []
 
 
 # ---------- Market breadth history (persist Advance/Decline etc. to avoid re-fetch and iteration) ----------

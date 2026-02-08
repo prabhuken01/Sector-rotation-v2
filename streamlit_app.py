@@ -1588,29 +1588,31 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
         enable_color_coding: Whether to apply color coding
     """
     from data_fetcher import fetch_sector_data, fetch_nifty_broad_universe, load_breadth_history, save_breadth_rows
+    from company_symbols import load_part_b_from_excel, save_part_b_to_excel
     import time
     import os
     
     st.markdown("### 📊 Market Breadth")
     st.markdown("---")
     
-    # Main list: sector stocks only (used for Advance/Decline and breadth)
-    main_stocks = []
-    main_source = "Nifty 50 (fallback)"
+    # ── Toggle: Sectoral stocks vs Universal stocks ─────────────────
+    excel_file = 'Sector-Company.xlsx'
+    
+    # Load both lists
+    # Sectoral = 97 stocks from first sheet of Sector-Company.xlsx (same as momentum/reversal)
+    sectoral_stocks = []
     for csv_path in ['sector_companies_cleaned.csv', 'sector_companies_20260204.csv']:
         if os.path.exists(csv_path):
             try:
                 df_csv = pd.read_csv(csv_path)
                 if 'Symbol' in df_csv.columns:
-                    main_stocks = df_csv['Symbol'].drop_duplicates().dropna().astype(str).str.strip().tolist()
-                    main_stocks = [s if s.endswith('.NS') else s + '.NS' for s in main_stocks if s and len(s) > 1]
-                    main_source = "Sector list (main)"
+                    sectoral_stocks = df_csv['Symbol'].drop_duplicates().dropna().astype(str).str.strip().tolist()
+                    sectoral_stocks = [s if s.endswith('.NS') else s + '.NS' for s in sectoral_stocks if s and len(s) > 1]
                     break
             except Exception:
                 continue
-    
-    if not main_stocks:
-        main_stocks = [
+    if not sectoral_stocks:
+        sectoral_stocks = [
             'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
             'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
             'LT.NS', 'AXISBANK.NS', 'ASIANPAINT.NS', 'MARUTI.NS', 'TITAN.NS',
@@ -1623,26 +1625,38 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
             'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
         ]
     
-    # Part B: additional symbols (saved separately for future use; not used in breadth)
-    part_b_file = "stocks_part_b.csv"
-    stocks_part_b = []
-    if os.path.exists(part_b_file):
+    # Universal = Part B from Sector-Company.xlsx sheet "Part B" (large/mid/micro Nifty universe)
+    universal_stocks = load_part_b_from_excel(excel_file)
+    if not universal_stocks:
         try:
-            df_b = pd.read_csv(part_b_file)
-            if 'Symbol' in df_b.columns:
-                stocks_part_b = df_b['Symbol'].drop_duplicates().dropna().astype(str).str.strip().tolist()
-                stocks_part_b = [s if s.endswith('.NS') else s + '.NS' for s in stocks_part_b if s and len(s) > 1]
-        except Exception:
-            pass
-    if not stocks_part_b:
-        try:
-            stocks_part_b = fetch_nifty_broad_universe(min_stocks=1000, use_cache=True) or []
-            if stocks_part_b:
-                pd.DataFrame({'Symbol': stocks_part_b}).to_csv(part_b_file, index=False)
+            universal_stocks = fetch_nifty_broad_universe(min_stocks=1000, use_cache=True) or []
+            if universal_stocks:
+                save_part_b_to_excel(excel_file, universal_stocks)
         except Exception:
             pass
     
-    num_stocks_considered = len(main_stocks)
+    # Toggle
+    universe_choice = st.radio(
+        "Select stock universe for breadth analysis:",
+        ["Sectoral stocks", "Universal stocks"],
+        horizontal=True,
+        key="breadth_universe_toggle",
+        help="Sectoral = same stocks used for Momentum/Reversal ranking. "
+             "Universal = broader NSE large/mid/micro universe from 'Part B' sheet."
+    )
+    
+    if universe_choice == "Sectoral stocks":
+        breadth_stocks = sectoral_stocks
+        breadth_source = f"Sectoral ({len(sectoral_stocks)} stocks)"
+    else:
+        if universal_stocks:
+            breadth_stocks = universal_stocks
+            breadth_source = f"Universal / Part B ({len(universal_stocks)} stocks)"
+        else:
+            breadth_stocks = sectoral_stocks
+            breadth_source = f"Sectoral (fallback, Part B empty — {len(sectoral_stocks)} stocks)"
+    
+    num_stocks_considered = len(breadth_stocks)
     
     # Fetch India VIX for display alongside
     vix_value = None
@@ -1656,12 +1670,10 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
         except Exception:
             continue
     
-    # Header: main list count, Part B count (for future use), India VIX
+    # Header
     col_market, col_vix = st.columns([2, 1])
     with col_market:
-        st.markdown(f"**Breadth universe** — *Main: **{num_stocks_considered}** ({main_source})*")
-        if stocks_part_b:
-            st.caption(f"Part B: **{len(stocks_part_b)}** symbols (saved in `stocks_part_b.csv` for future use).")
+        st.markdown(f"**Market Breadth** — *Stocks: **{num_stocks_considered}** ({breadth_source})*")
     with col_vix:
         st.metric("India VIX", f"{vix_value:.2f}" if vix_value is not None else "N/A")
     
@@ -1719,7 +1731,7 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
         if not in_history or (is_current and should_refresh):
             dates_to_compute.append(date)
     
-    cache_key = f"market_breadth_data_{analysis_date}"
+    cache_key = f"market_breadth_data_{analysis_date}_{universe_choice}"
     breadth_data = []
     
     if not dates_to_compute and breadth_history:
@@ -1743,7 +1755,7 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
             latest_date = trading_dates[0]
             latest_date_obj = latest_date.date() if hasattr(latest_date, 'date') else latest_date
             
-            for symbol in main_stocks:
+            for symbol in breadth_stocks:
                 try:
                     stock_data = fetch_sector_data(symbol, end_date=latest_date_obj, interval='1d')
                     if stock_data is not None and len(stock_data) >= 2:
