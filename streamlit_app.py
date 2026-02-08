@@ -195,7 +195,7 @@ def get_sidebar_controls():
     
     # Initialize session state for ETF selection
     if 'use_etf_state' not in st.session_state:
-        st.session_state.use_etf_state = False
+        st.session_state.use_etf_state = True  # Default to True (ETF as Proxy ticked)
     
     use_etf = st.sidebar.checkbox("Use ETF Proxy", value=st.session_state.use_etf_state, 
                                    help="Toggle between Index and ETF data")
@@ -1572,6 +1572,288 @@ def display_momentum_tab(df, sector_data_dict, benchmark_data, enable_color_codi
     )
 
 
+def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
+    """
+    Display Market Breadth tab with advance/decline and DMA percentage data.
+    
+    Shows data for last ~20 trading days with:
+    - Date, Day, Advances, Declines, Advance/Total (%), % Above 20 DMA, % Above 50 DMA, Nifty, Nifty Chg %
+    - Current day data refreshes every 5 minutes
+    - Color coding: red (<20%), yellow (20-50%), green (>50%)
+    - Summary row for last 20 days aggregate
+    
+    Args:
+        analysis_date: Date for analysis (defaults to today)
+        enable_color_coding: Whether to apply color coding
+    """
+    from data_fetcher import fetch_sector_data
+    import time
+    
+    st.markdown("### 📊 Market Breadth")
+    st.markdown("---")
+    
+    # Instructions and refresh button
+    col_info, col_refresh = st.columns([3, 1])
+    with col_info:
+        st.info("📋 **Note:** Click 'Refresh Current Day' to update Advance/Decline and % DMA data for the current day. Other data is for prior days.")
+    with col_refresh:
+        if st.button("🔄 Refresh Current Day", use_container_width=True):
+            # Clear cache for current day
+            if 'market_breadth_cache' in st.session_state:
+                del st.session_state['market_breadth_cache']
+            st.rerun()
+    
+    # Get Nifty 50 stock list
+    nifty_stocks = [
+        'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
+        'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
+        'LT.NS', 'AXISBANK.NS', 'ASIANPAINT.NS', 'MARUTI.NS', 'TITAN.NS',
+        'NESTLEIND.NS', 'ULTRACEMCO.NS', 'WIPRO.NS', 'SUNPHARMA.NS', 'TATAMOTORS.NS',
+        'TECHM.NS', 'HCLTECH.NS', 'BAJFINANCE.NS', 'JSWSTEEL.NS', 'TATASTEEL.NS',
+        'POWERGRID.NS', 'NTPC.NS', 'ONGC.NS', 'COALINDIA.NS', 'ADANIENT.NS',
+        'ADANIPORTS.NS', 'GRASIM.NS', 'DIVISLAB.NS', 'CIPLA.NS', 'DRREDDY.NS',
+        'BAJAJFINSV.NS', 'M&M.NS', 'HEROMOTOCO.NS', 'EICHERMOT.NS', 'MARICO.NS',
+        'GODREJCP.NS', 'DABUR.NS', 'BRITANNIA.NS', 'HDFCLIFE.NS', 'SBILIFE.NS',
+        'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
+    ]
+    
+    if analysis_date is None:
+        analysis_date = datetime.now().date()
+    
+    # Fetch Nifty 50 index data for historical dates
+    nifty_data = fetch_sector_data('^NSEI', end_date=analysis_date, interval='1d')
+    if nifty_data is None or len(nifty_data) == 0:
+        st.error("❌ Unable to fetch Nifty 50 data")
+        return
+    
+    # Get last 20 trading days (or available days)
+    trading_dates = nifty_data.index.sort_values(ascending=False)[:20]
+    
+    # Check if we need to refresh current day data (every 5 minutes)
+    current_date = trading_dates[0] if len(trading_dates) > 0 else None
+    refresh_key = f"market_breadth_refresh_{current_date}"
+    
+    if refresh_key not in st.session_state:
+        st.session_state[refresh_key] = 0
+    
+    # Check if 5 minutes have passed since last refresh
+    current_time = time.time()
+    last_refresh_time = st.session_state.get(f"{refresh_key}_time", 0)
+    should_refresh = (current_time - last_refresh_time) > 300  # 5 minutes = 300 seconds
+    
+    if should_refresh and current_date == analysis_date:
+        # Force refresh by clearing cache for current day
+        st.session_state[f"{refresh_key}_time"] = current_time
+    
+    # Calculate market breadth for each day
+    breadth_data = []
+    
+    # Cache stock data to avoid redundant fetches
+    cache_key = f"market_breadth_data_{analysis_date}"
+    if cache_key in st.session_state and not should_refresh:
+        breadth_data = st.session_state[cache_key]
+    else:
+        with st.spinner("Calculating market breadth data..."):
+            progress_bar = st.progress(0)
+            total_days = len(trading_dates)
+            
+            # Pre-fetch all stock data once (up to latest date needed)
+            stock_data_cache = {}
+            latest_date = trading_dates[0]
+            latest_date_obj = latest_date.date() if hasattr(latest_date, 'date') else latest_date
+            
+            for symbol in nifty_stocks[:50]:
+                try:
+                    stock_data = fetch_sector_data(symbol, end_date=latest_date_obj, interval='1d')
+                    if stock_data is not None and len(stock_data) >= 2:
+                        stock_data_cache[symbol] = stock_data
+                except:
+                    continue
+            
+            for idx, date in enumerate(trading_dates):
+                progress_bar.progress((idx + 1) / total_days)
+                
+                # Get day name
+                day_name = date.strftime('%A')
+                
+                # Fetch Nifty data for this date
+                nifty_close = nifty_data.loc[date, 'Close']
+                nifty_prev_close = None
+                if idx < len(trading_dates) - 1:
+                    prev_date = trading_dates[idx + 1]
+                    nifty_prev_close = nifty_data.loc[prev_date, 'Close']
+                
+                nifty_chg_pct = ((nifty_close - nifty_prev_close) / nifty_prev_close * 100) if nifty_prev_close else 0.0
+                
+                # Calculate advances/declines and DMA percentages for this date
+                advances = 0
+                declines = 0
+                above_20dma = 0
+                above_50dma = 0
+                total_stocks = 0
+                
+                # Convert pandas Timestamp to date object
+                date_obj = date.date() if hasattr(date, 'date') else date
+                
+                for symbol, stock_data in stock_data_cache.items():
+                    try:
+                        # Get data for this specific date (handle timezone-aware index)
+                        date_in_data = None
+                        for idx_date in stock_data.index:
+                            if idx_date.date() == date_obj:
+                                date_in_data = idx_date
+                                break
+                        
+                        if date_in_data is not None:
+                            current_price = stock_data.loc[date_in_data, 'Close']
+                            
+                            # Get previous day price for advance/decline
+                            date_idx = stock_data.index.get_loc(date_in_data)
+                            if date_idx > 0:
+                                prev_price = stock_data.iloc[date_idx - 1]['Close']
+                                if current_price > prev_price:
+                                    advances += 1
+                                elif current_price < prev_price:
+                                    declines += 1
+                            
+                            # Calculate DMA percentages
+                            if len(stock_data) >= 50:
+                                dma_20 = stock_data['Close'].rolling(20).mean().loc[date_in_data]
+                                dma_50 = stock_data['Close'].rolling(50).mean().loc[date_in_data]
+                                
+                                if not pd.isna(dma_20) and current_price > dma_20:
+                                    above_20dma += 1
+                                if not pd.isna(dma_50) and current_price > dma_50:
+                                    above_50dma += 1
+                            
+                            total_stocks += 1
+                    except Exception as e:
+                        continue
+                
+                # Calculate percentages
+                advance_total_pct = (advances / (advances + declines) * 100) if (advances + declines) > 0 else 0.0
+                pct_above_20dma = (above_20dma / total_stocks * 100) if total_stocks > 0 else 0.0
+                pct_above_50dma = (above_50dma / total_stocks * 100) if total_stocks > 0 else 0.0
+                
+                # Format date
+                date_str = date.strftime('%Y-%m-%d')
+                is_current_day = (date == current_date)
+                
+                breadth_data.append({
+                    'Date': 'Current day' if is_current_day else date_str,
+                    'Day': day_name,
+                    'Advances': advances,
+                    'Declines': declines,
+                    'Advance/Total (%)': round(advance_total_pct, 1),
+                    '% Above 20 DMA': round(pct_above_20dma, 1),
+                    '% Above 50 DMA': round(pct_above_50dma, 1),
+                    'Nifty': int(round(nifty_close)),
+                    'Nifty Chg %': round(nifty_chg_pct, 1)
+                })
+            
+            progress_bar.empty()
+            
+            # Cache the results
+            st.session_state[cache_key] = breadth_data
+    
+    # Create DataFrame
+    df_breadth = pd.DataFrame(breadth_data)
+    
+    # Calculate summary row for last 20 days
+    if len(df_breadth) > 0:
+        summary_row = {
+            'Date': 'upto last 20 days',
+            'Day': '',
+            'Advances': '',
+            'Declines': '',
+            'Advance/Total (%)': round(df_breadth['Advance/Total (%)'].mean(), 1),
+            '% Above 20 DMA': round(df_breadth['% Above 20 DMA'].mean(), 1),
+            '% Above 50 DMA': round(df_breadth['% Above 50 DMA'].mean(), 1),
+            'Nifty': '',
+            'Nifty Chg %': round(df_breadth['Nifty Chg %'].mean(), 1)
+        }
+        
+        # Add summary row
+        df_summary = pd.DataFrame([summary_row])
+        df_breadth = pd.concat([df_breadth, df_summary], ignore_index=True)
+    
+    # Apply color coding
+    if enable_color_coding:
+        def style_breadth_row(row):
+            """Apply color coding based on percentage values."""
+            result = [''] * len(row)
+            
+            # Color coding function: <20% = red, 20-50% = yellow, >50% = green
+            def get_color_for_pct(pct_val):
+                try:
+                    pct = float(pct_val)
+                    if pct < 20:
+                        return 'background-color: #E74C3C; color: #fff; font-weight: bold'  # Red
+                    elif pct <= 50:
+                        return 'background-color: #F39C12; color: #fff; font-weight: bold'  # Yellow
+                    else:
+                        return 'background-color: #27AE60; color: #fff; font-weight: bold'  # Green
+                except:
+                    return ''
+            
+            # Color Advance/Total (%)
+            if 'Advance/Total (%)' in row.index:
+                idx = list(row.index).index('Advance/Total (%)')
+                result[idx] = get_color_for_pct(row['Advance/Total (%)'])
+            
+            # Color % Above 20 DMA
+            if '% Above 20 DMA' in row.index:
+                idx = list(row.index).index('% Above 20 DMA')
+                result[idx] = get_color_for_pct(row['% Above 20 DMA'])
+            
+            # Color % Above 50 DMA
+            if '% Above 50 DMA' in row.index:
+                idx = list(row.index).index('% Above 50 DMA')
+                result[idx] = get_color_for_pct(row['% Above 50 DMA'])
+            
+            # Color Nifty Chg % (positive = green, negative = red)
+            if 'Nifty Chg %' in row.index:
+                idx = list(row.index).index('Nifty Chg %')
+                try:
+                    chg = float(row['Nifty Chg %'])
+                    if chg > 0:
+                        result[idx] = 'background-color: #27AE60; color: #fff; font-weight: bold'
+                    elif chg < 0:
+                        result[idx] = 'background-color: #E74C3C; color: #fff; font-weight: bold'
+                    else:
+                        result[idx] = 'background-color: #F39C12; color: #fff; font-weight: bold'
+                except:
+                    pass
+            
+            return result
+        
+        df_breadth_styled = df_breadth.style.apply(style_breadth_row, axis=1)
+    else:
+        df_breadth_styled = df_breadth.style
+    
+    # Display the dataframe
+    st.dataframe(
+        df_breadth_styled,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Date": st.column_config.TextColumn("Date"),
+            "Day": st.column_config.TextColumn("Day"),
+            "Advances": st.column_config.NumberColumn("Advances", format="%d"),
+            "Declines": st.column_config.NumberColumn("Declines", format="%d"),
+            "Advance/Total (%)": st.column_config.NumberColumn("Advance/Total (%)", format="%.1f%%"),
+            "% Above 20 DMA": st.column_config.NumberColumn("% Above 20 DMA", format="%.1f%%"),
+            "% Above 50 DMA": st.column_config.NumberColumn("% Above 50 DMA", format="%.1f%%"),
+            "Nifty": st.column_config.NumberColumn("Nifty", format="%d"),
+            "Nifty Chg %": st.column_config.NumberColumn("Nifty Chg %", format="%.1f%%")
+        }
+    )
+    
+    # Sentiment guide
+    st.markdown("---")
+    st.caption("**Sentiment Guide:** <20% = Weak sentiment (Red) | 20%-50% = Neutral (Yellow) | >50% = Positive sentiment (Green)")
+
+
 def display_reversal_tab(df, sector_data_dict, benchmark_data, reversal_weights, reversal_thresholds, enable_color_coding=True):
     """Display reversal candidates tab with scoring and trend analysis."""
     st.markdown("### 🔄 Reversal Candidates (Bottom Fishing Opportunities)")
@@ -2502,6 +2784,372 @@ def display_data_sources_tab():
     st.caption(f"⏰ Test completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 
+def display_stock_analysis_tab(analysis_date=None):
+    """
+    Display comprehensive stock analysis with Market Overview and Individual Stock Ranking.
+    
+    PART 1: Market Overview (NSE/NIFTY)
+    - Sentiment: India VIX and Advance/Decline ratio
+    - Breadth: % of Nifty 50 stocks above 20 DMA and 50 DMA
+    
+    PART 2: Individual Stock Ranking
+    - Trend: HH/HL (Uptrend) or LL/LH (Downtrend) on 4H
+    - Direction: Price vs 20 DMA vs 50 DMA
+    - Momentum: RSI (14) with trend and zone analysis
+    - Chart Setup: DMA crossover detection
+    - RSI Divergence: Bullish/Bearish at 50% formation mark
+    
+    Args:
+        analysis_date: Date for analysis
+    """
+    import os
+    import numpy as np
+    from data_fetcher import fetch_sector_data
+    
+    st.markdown("### 📊 Stock Analysis Dashboard")
+    st.markdown("---")
+    
+    # Load stock list from CSV
+    csv_path = 'sector_companies_20260204.csv'
+    if not os.path.exists(csv_path):
+        st.error(f"❌ CSV file not found: {csv_path}")
+        st.info("Please ensure sector_companies_20260204.csv is in the project directory")
+        return
+    
+    try:
+        df_stocks = pd.read_csv(csv_path)
+        # Remove duplicates if any
+        df_stocks = df_stocks.drop_duplicates(subset=['Symbol'], keep='first')
+        st.success(f"✅ Loaded {len(df_stocks)} unique stocks from CSV")
+    except Exception as e:
+        st.error(f"❌ Error loading CSV: {str(e)}")
+        return
+    
+    # ============================================================
+    # PART 1: MARKET OVERVIEW
+    # ============================================================
+    st.markdown("## 📈 PART 1: Market Overview (NSE/NIFTY)")
+    st.markdown("---")
+    
+    with st.spinner("Fetching market data..."):
+        # Fetch Nifty 50 data
+        nifty_data = fetch_sector_data('^NSEI', end_date=analysis_date, interval='1d')
+        
+        # Fetch India VIX (try multiple symbols)
+        vix_symbols = ['^INDIAVIX', 'INDIAVIX.NS', 'INDIAVIX']
+        vix_value = None
+        for vix_sym in vix_symbols:
+            try:
+                vix_data = fetch_sector_data(vix_sym, end_date=analysis_date, interval='1d')
+                if vix_data is not None and len(vix_data) > 0:
+                    vix_value = vix_data['Close'].iloc[-1]
+                    break
+            except:
+                continue
+        
+        if nifty_data is None or len(nifty_data) == 0:
+            st.error("❌ Unable to fetch Nifty 50 data")
+            return
+        
+        # Calculate Advance/Decline ratio for Nifty 50 stocks
+        # Get list of Nifty 50 stocks (top 50 by market cap)
+        nifty_stocks = [
+            'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
+            'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
+            'LT.NS', 'AXISBANK.NS', 'ASIANPAINT.NS', 'MARUTI.NS', 'TITAN.NS',
+            'NESTLEIND.NS', 'ULTRACEMCO.NS', 'WIPRO.NS', 'SUNPHARMA.NS', 'TATAMOTORS.NS',
+            'TECHM.NS', 'HCLTECH.NS', 'BAJFINANCE.NS', 'JSWSTEEL.NS', 'TATASTEEL.NS',
+            'POWERGRID.NS', 'NTPC.NS', 'ONGC.NS', 'COALINDIA.NS', 'ADANIENT.NS',
+            'ADANIPORTS.NS', 'GRASIM.NS', 'DIVISLAB.NS', 'CIPLA.NS', 'DRREDDY.NS',
+            'BAJAJFINSV.NS', 'M&M.NS', 'HEROMOTOCO.NS', 'EICHERMOT.NS', 'MARICO.NS',
+            'GODREJCP.NS', 'DABUR.NS', 'BRITANNIA.NS', 'HDFCLIFE.NS', 'SBILIFE.NS',
+            'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
+        ]
+        
+        advances = 0
+        declines = 0
+        total_nifty = 0
+        
+        for symbol in nifty_stocks[:50]:  # Limit to 50 for performance
+            try:
+                stock_data = fetch_sector_data(symbol, end_date=analysis_date, interval='1d')
+                if stock_data is not None and len(stock_data) > 1:
+                    current_price = stock_data['Close'].iloc[-1]
+                    prev_price = stock_data['Close'].iloc[-2]
+                    if current_price > prev_price:
+                        advances += 1
+                    elif current_price < prev_price:
+                        declines += 1
+                    total_nifty += 1
+            except:
+                continue
+        
+        ad_ratio = advances / declines if declines > 0 else (advances / 1 if advances > 0 else 1.0)
+        
+        # Calculate Breadth (% above 20 DMA and 50 DMA)
+        above_20dma = 0
+        above_50dma = 0
+        
+        for symbol in nifty_stocks[:50]:
+            try:
+                stock_data = fetch_sector_data(symbol, end_date=analysis_date, interval='1d')
+                if stock_data is not None and len(stock_data) >= 50:
+                    current_price = stock_data['Close'].iloc[-1]
+                    dma_20 = stock_data['Close'].rolling(20).mean().iloc[-1]
+                    dma_50 = stock_data['Close'].rolling(50).mean().iloc[-1]
+                    
+                    if current_price > dma_20:
+                        above_20dma += 1
+                    if current_price > dma_50:
+                        above_50dma += 1
+            except:
+                continue
+        
+        breadth_20dma = (above_20dma / total_nifty * 100) if total_nifty > 0 else 0
+        breadth_50dma = (above_50dma / total_nifty * 100) if total_nifty > 0 else 0
+        
+        # Display Market Overview
+        nifty_price = nifty_data['Close'].iloc[-1]
+        
+        overview_data = {
+            'Metric': ['Nifty 50 Price', 'India VIX', 'A/D Ratio', '% Above 20 DMA', '% Above 50 DMA'],
+            'Value': [
+                f"₹{nifty_price:,.2f}",
+                f"{vix_value:.2f}" if vix_value else "N/A",
+                f"{ad_ratio:.2f}",
+                f"{breadth_20dma:.1f}%",
+                f"{breadth_50dma:.1f}%"
+            ]
+        }
+        
+        df_overview = pd.DataFrame(overview_data)
+        st.dataframe(df_overview, use_container_width=True, hide_index=True)
+    
+    # ============================================================
+    # PART 2: INDIVIDUAL STOCK RANKING
+    # ============================================================
+    st.markdown("## 🏆 PART 2: Individual Stock Ranking")
+    st.markdown("---")
+    st.info("Analyzing stocks from CSV file. This may take a few minutes...")
+    
+    stock_results = []
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for idx, row in df_stocks.iterrows():
+        symbol = row['Symbol']
+        sector = row['Sector']
+        company_name = row['Company Name']
+        
+        status_text.text(f"Analyzing {company_name} ({idx+1}/{len(df_stocks)})...")
+        progress_bar.progress((idx + 1) / len(df_stocks))
+        
+        try:
+            # Fetch 1H data and resample to 4H
+            data_1h = fetch_sector_data(symbol, end_date=analysis_date, interval='1h')
+            if data_1h is None or len(data_1h) < 50:
+                continue
+            
+            # Resample to 4H
+            data_4h = data_1h.resample('4H').agg({
+                'Open': 'first',
+                'High': 'max',
+                'Low': 'min',
+                'Close': 'last',
+                'Volume': 'sum'
+            }).dropna()
+            
+            if len(data_4h) < 20:
+                continue
+            
+            # Calculate DMAs
+            data_4h['DMA_20'] = data_4h['Close'].rolling(20).mean()
+            data_4h['DMA_50'] = data_4h['Close'].rolling(50).mean()
+            
+            # Get latest values
+            current_price = data_4h['Close'].iloc[-1]
+            dma_20 = data_4h['DMA_20'].iloc[-1]
+            dma_50 = data_4h['DMA_50'].iloc[-1]
+            
+            # 1. TREND: Detect HH/HL (Uptrend) or LL/LH (Downtrend)
+            recent_highs = data_4h['High'].tail(10).values
+            recent_lows = data_4h['Low'].tail(10).values
+            
+            # Check for Higher Highs and Higher Lows (Uptrend)
+            if len(recent_highs) >= 4:
+                hh_pattern = recent_highs[-1] > recent_highs[-3] > recent_highs[-5] if len(recent_highs) >= 5 else False
+                hl_pattern = recent_lows[-1] > recent_lows[-3] > recent_lows[-5] if len(recent_lows) >= 5 else False
+                uptrend = hh_pattern and hl_pattern
+            else:
+                uptrend = False
+            
+            # Check for Lower Lows and Lower Highs (Downtrend)
+            if len(recent_lows) >= 4:
+                ll_pattern = recent_lows[-1] < recent_lows[-3] < recent_lows[-5] if len(recent_lows) >= 5 else False
+                lh_pattern = recent_highs[-1] < recent_highs[-3] < recent_highs[-5] if len(recent_highs) >= 5 else False
+                downtrend = ll_pattern and lh_pattern
+            else:
+                downtrend = False
+            
+            if uptrend:
+                trend = "HH/HL (Uptrend)"
+            elif downtrend:
+                trend = "LL/LH (Downtrend)"
+            else:
+                trend = "Sideways"
+            
+            # 2. DIRECTION: Price > 20 DMA > 50 DMA (Bullish) or Price < 20 DMA < 50 DMA (Bearish)
+            if pd.notna(dma_20) and pd.notna(dma_50):
+                if current_price > dma_20 > dma_50:
+                    direction = "Bullish"
+                elif current_price < dma_20 < dma_50:
+                    direction = "Bearish"
+                else:
+                    direction = "Mixed"
+            else:
+                direction = "N/A"
+            
+            # 3. MOMENTUM: RSI (14)
+            rsi_series = calculate_rsi(data_4h)
+            rsi_current = rsi_series.iloc[-1] if not rsi_series.isna().all() else 50.0
+            rsi_prev = rsi_series.iloc[-2] if len(rsi_series) > 1 and not pd.isna(rsi_series.iloc[-2]) else rsi_current
+            
+            rsi_rising = rsi_current > rsi_prev
+            rsi_falling = rsi_current < rsi_prev
+            rsi_in_zone = 40 <= rsi_current <= 60
+            
+            rsi_status = []
+            if rsi_rising:
+                rsi_status.append("Rising")
+            if rsi_falling:
+                rsi_status.append("Falling")
+            if rsi_in_zone:
+                rsi_status.append("40-60 Zone")
+            
+            rsi_display = f"{rsi_current:.1f} ({', '.join(rsi_status)})" if rsi_status else f"{rsi_current:.1f}"
+            
+            # 4. CHART SETUP: DMA crossover detection
+            if pd.notna(dma_20) and pd.notna(dma_50):
+                dma_diff_pct = abs((dma_20 - dma_50) / dma_50 * 100)
+                if dma_diff_pct < 2.0:  # Within 2% = approaching crossover
+                    setup = "Crossover Setup"
+                elif dma_20 > dma_50:
+                    setup = "20 DMA > 50 DMA"
+                else:
+                    setup = "20 DMA < 50 DMA"
+            else:
+                setup = "N/A"
+            
+            # 5. RSI DIVERGENCE: At 50% formation mark (2-hour mark of 4H candle)
+            # Get 1H data for the current 4H candle period
+            current_4h_start = data_4h.index[-1] - pd.Timedelta(hours=4)
+            current_1h_data = data_1h[data_1h.index >= current_4h_start]
+            
+            divergence = "None"
+            if len(current_1h_data) >= 2:
+                # Get RSI at 2-hour mark (50% of 4H candle)
+                mid_point_idx = len(current_1h_data) // 2
+                if mid_point_idx > 0 and mid_point_idx < len(current_1h_data):
+                    rsi_1h_series = calculate_rsi(current_1h_data)
+                    if len(rsi_1h_series) > mid_point_idx:
+                        rsi_at_50pct = rsi_1h_series.iloc[mid_point_idx] if not pd.isna(rsi_1h_series.iloc[mid_point_idx]) else rsi_current
+                        
+                        # Compare with price action
+                        price_at_start = current_1h_data['Close'].iloc[0]
+                        price_at_50pct = current_1h_data['Close'].iloc[mid_point_idx]
+                        price_at_end = current_1h_data['Close'].iloc[-1]
+                        
+                        # Bullish divergence: Price makes lower low, RSI makes higher low
+                        if price_at_50pct < price_at_start and rsi_at_50pct > rsi_current:
+                            divergence = "Bullish"
+                        # Bearish divergence: Price makes higher high, RSI makes lower high
+                        elif price_at_50pct > price_at_start and rsi_at_50pct < rsi_current:
+                            divergence = "Bearish"
+            
+            # Calculate Confluence Score
+            score = 0
+            if trend == "HH/HL (Uptrend)":
+                score += 3
+            elif trend == "LL/LH (Downtrend)":
+                score += 0
+            else:
+                score += 1
+            
+            if direction == "Bullish":
+                score += 3
+            elif direction == "Bearish":
+                score += 0
+            else:
+                score += 1
+            
+            if rsi_rising and rsi_in_zone:
+                score += 2
+            elif rsi_rising:
+                score += 1
+            
+            if setup == "Crossover Setup" and direction == "Bullish":
+                score += 2
+            
+            if divergence == "Bullish":
+                score += 2
+            elif divergence == "Bearish":
+                score -= 1
+            
+            stock_results.append({
+                'Sector': sector,
+                'Symbol': symbol,
+                'Company': company_name,
+                'Trend': trend,
+                'Direction': direction,
+                'RSI': rsi_display,
+                'Setup': setup,
+                'Divergence': divergence,
+                'Score': score
+            })
+            
+        except Exception as e:
+            continue
+    
+    progress_bar.empty()
+    status_text.empty()
+    
+    if not stock_results:
+        st.warning("⚠️ No stock data available for analysis")
+        return
+    
+    # Create DataFrame and rank
+    df_results = pd.DataFrame(stock_results)
+    df_results = df_results.sort_values('Score', ascending=False)
+    df_results['Rank'] = range(1, len(df_results) + 1)
+    
+    # Display top 10
+    st.markdown("### 🥇 Top 10 Stocks by Confluence Score")
+    df_top10 = df_results.head(10)[['Rank', 'Sector', 'Symbol', 'Company', 'Trend', 'Direction', 'RSI', 'Setup', 'Divergence', 'Score']]
+    st.dataframe(df_top10, use_container_width=True, hide_index=True)
+    
+    # Export to Excel
+    st.markdown("---")
+    st.markdown("### 📥 Export Results")
+    
+    # Create Excel file in memory
+    from io import BytesIO
+    excel_buffer = BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        df_results.to_excel(writer, sheet_name='All Stocks', index=False)
+        df_top10.to_excel(writer, sheet_name='Top 10', index=False)
+    
+    excel_buffer.seek(0)
+    
+    st.download_button(
+        label="📥 Download Excel File",
+        data=excel_buffer.read(),
+        file_name='stock_analysis_results.xlsx',
+        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    
+    st.success(f"✅ Analysis complete! Analyzed {len(stock_results)} stocks.")
+
+
 def main():
     """Main Streamlit app function."""
     try:
@@ -2569,17 +3217,18 @@ def main():
             </div>
         ''', unsafe_allow_html=True)
         
-        # Create tabs (8 total: 4 sector-level + 2 company-level + 1 historical + 1 sector companies + 1 data sources)
+        # Create tabs (8 total: 4 sector-level + 2 company-level + 1 historical + 1 sector companies + 1 data sources + 1 stock analysis)
         try:
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
                 "📈 Momentum Ranking",
+                "📊 Market Breadth",
+                "📊 Stock Analysis",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
                 "🏢 Company Momentum",
                 "🏢 Company Reversals",
                 "📅 Historical Rankings",
-                "🔌 Data Sources",
-                "🏢 Sector Companies"
+                "🔌 Data Sources"
             ])
             
             # Get benchmark data for trend analysis
@@ -2596,20 +3245,41 @@ def main():
             
             with tab2:
                 try:
+                    display_market_breadth_tab(analysis_date=analysis_date, enable_color_coding=enable_color_coding)
+                except Exception as e:
+                    st.error(f"❌ Error displaying market breadth tab: {str(e)}")
+                    st.text(traceback.format_exc())
+            
+            with tab3:
+                try:
+                    display_stock_analysis_tab(analysis_date=analysis_date)
+                except Exception as e:
+                    st.error(f"❌ Error displaying stock analysis tab: {str(e)}")
+                    st.text(traceback.format_exc())
+            
+            with tab3:
+                try:
+                    display_stock_analysis_tab(analysis_date=analysis_date)
+                except Exception as e:
+                    st.error(f"❌ Error displaying stock analysis tab: {str(e)}")
+                    st.text(traceback.format_exc())
+            
+            with tab4:
+                try:
                     display_reversal_tab(df, sector_data, benchmark_data, reversal_weights, reversal_thresholds, enable_color_coding)
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying reversal tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab3:
+            with tab5:
                 try:
                     display_interpretation_tab()
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying interpretation tab: {str(e)}")
             
-            with tab4:
+            with tab6:
                 try:
                     # Pass top sector as default for company momentum analysis
                     # Sort by Momentum_Score first to get rank #1
@@ -2621,7 +3291,7 @@ def main():
                     st.error(f"❌ Error displaying company momentum tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab5:
+            with tab7:
                 try:
                     # Get top reversal candidate (if any)
                     top_reversal_sector = None
@@ -2635,7 +3305,7 @@ def main():
                     st.error(f"❌ Error displaying company reversal tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab6:
+            with tab8:
                 try:
                     display_historical_rankings_tab(sector_data, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf)
                     display_tooltip_legend()
@@ -2643,19 +3313,14 @@ def main():
                     st.error(f"❌ Error displaying historical rankings tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab7:
+            with tab9:
                 try:
                     display_data_sources_tab()
                 except Exception as e:
                     st.error(f"❌ Error displaying data sources tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab8:
-                try:
-                    display_sector_companies_tab()
-                except Exception as e:
-                    st.error(f"❌ Error displaying sector companies tab: {str(e)}")
-                    st.text(traceback.format_exc())
+            # Note: Sector Companies tab removed to make room for Stock Analysis tab
                     
         except Exception as e:
             st.error(f"❌ Error creating tabs: {str(e)}")
