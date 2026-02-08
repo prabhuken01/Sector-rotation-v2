@@ -283,11 +283,12 @@ def fetch_nifty_broad_universe(min_stocks=750, use_cache=True):
             pass
     
     base_url = "https://www.nseindia.com"
-    # NSE index constituent CSV URLs (500 + 150 + 250 to get 750+ unique)
+    # NSE index constituent CSV URLs (500 + 150 + 250 + microcap 250 for larger universe)
     csv_urls = [
         ("https://www.nseindia.com/content/indices/ind_nifty500list.csv", "Symbol"),
         ("https://www.nseindia.com/content/indices/ind_niftymidcap150list.csv", "Symbol"),
         ("https://www.nseindia.com/content/indices/ind_niftysmallcap250list.csv", "Symbol"),
+        ("https://www.nseindia.com/content/indices/ind_niftymicrocap250list.csv", "Symbol"),
     ]
     
     headers = {
@@ -347,3 +348,82 @@ def fetch_nifty_broad_universe(min_stocks=750, use_cache=True):
         except Exception:
             pass
     return result
+
+
+# ---------- Market breadth history (persist Advance/Decline etc. to avoid re-fetch and iteration) ----------
+BREADTH_HISTORY_FILENAME = "market_breadth_history.csv"
+BREADTH_HISTORY_COLUMNS = [
+    "Date", "Day", "Advances", "Declines", "Advance/Total (%)",
+    "Up 4% (Daily)", "Down 4% (Daily)",
+    "% Above 10 DMA", "% Above 20 DMA", "% Above 40 DMA", "% Above 50 DMA",
+    "Nifty", "Nifty Chg %", "VIX"
+]
+
+
+def load_breadth_history(filepath=None):
+    """
+    Load persisted market breadth rows from CSV.
+    Returns dict: date_str (YYYY-MM-DD) -> row dict (same keys as breadth_data items).
+    """
+    import os
+    try:
+        import pandas as pd
+    except ImportError:
+        return {}
+    if filepath is None:
+        filepath = os.path.join(os.path.dirname(__file__), "data_cache", BREADTH_HISTORY_FILENAME)
+    if not os.path.exists(filepath):
+        return {}
+    try:
+        df = pd.read_csv(filepath)
+        if "Date" not in df.columns or df.empty:
+            return {}
+        out = {}
+        for _, row in df.iterrows():
+            d = row.get("Date")
+            if pd.isna(d):
+                continue
+            d = str(d).strip()
+            if len(d) >= 10:
+                d = d[:10]
+            out[d] = row.to_dict()
+        return out
+    except Exception:
+        return {}
+
+
+def save_breadth_rows(filepath=None, rows=None):
+    """
+    Append/merge breadth rows into the history CSV (by Date). rows: list of dicts with Date key.
+    """
+    import os
+    try:
+        import pandas as pd
+    except ImportError:
+        return
+    if filepath is None:
+        filepath = os.path.join(os.path.dirname(__file__), "data_cache", BREADTH_HISTORY_FILENAME)
+    if not rows:
+        return
+    try:
+        os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
+    except Exception:
+        pass
+    try:
+        existing = load_breadth_history(filepath)
+        for r in rows:
+            d = r.get("Date")
+            if d in ("Current day", ""):
+                from datetime import datetime
+                d = datetime.now().strftime("%Y-%m-%d")
+            if isinstance(d, str) and len(d) >= 10:
+                d = d[:10]
+            else:
+                continue
+            existing[d] = {k: r.get(k) for k in BREADTH_HISTORY_COLUMNS if k in r}
+        df = pd.DataFrame(list(existing.values()))
+        if not df.empty and "Date" in df.columns:
+            df = df.sort_values("Date", ascending=False)
+        df.to_csv(filepath, index=False)
+    except Exception:
+        pass
