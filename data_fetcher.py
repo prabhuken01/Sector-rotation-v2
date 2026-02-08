@@ -253,3 +253,97 @@ def fetch_all_sectors_parallel(sectors_dict, alternates_dict=None, period='1y', 
                     progress_callback(sector_name, False, completed[0], total)
     
     return sector_data, failed_sectors
+
+
+def fetch_nifty_broad_universe(min_stocks=750, use_cache=True):
+    """
+    Fetch a broad NSE universe (Nifty 500 + Midcap 150 + Smallcap 250) from NSE India
+    to get at least min_stocks (default 750) for market breadth.
+    
+    Uses NSE official CSV downloads with session headers. Falls back to empty list
+    if NSE blocks or CSV format changes.
+    
+    Returns:
+        List of Yahoo Finance symbols (e.g. RELIANCE.NS). May be fewer than min_stocks
+        if NSE returns less or only Nifty 500 is available.
+    """
+    import io
+    try:
+        import requests
+        import pandas as pd
+    except ImportError:
+        return []
+    
+    if use_cache:
+        try:
+            cached = getattr(fetch_nifty_broad_universe, '_nifty_broad_cache', None)
+            if cached is not None and len(cached) > 0:
+                return cached
+        except Exception:
+            pass
+    
+    base_url = "https://www.nseindia.com"
+    # NSE index constituent CSV URLs (500 + 150 + 250 to get 750+ unique)
+    csv_urls = [
+        ("https://www.nseindia.com/content/indices/ind_nifty500list.csv", "Symbol"),
+        ("https://www.nseindia.com/content/indices/ind_niftymidcap150list.csv", "Symbol"),
+        ("https://www.nseindia.com/content/indices/ind_niftysmallcap250list.csv", "Symbol"),
+    ]
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/csv,application/csv,*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": base_url + "/",
+    }
+    
+    all_symbols = set()
+    session = requests.Session()
+    session.headers.update(headers)
+    
+    try:
+        # Establish session (NSE often requires a prior visit)
+        session.get(base_url, timeout=10)
+        for url, symbol_col in csv_urls:
+            try:
+                r = session.get(url, timeout=15)
+                if r.status_code != 200:
+                    continue
+                try:
+                    df = pd.read_csv(io.StringIO(r.text))
+                except Exception:
+                    continue
+                # NSE CSV column: 'Symbol' or 'Company Symbol'
+                col = None
+                for c in ("Symbol", "Company Symbol", symbol_col):
+                    if c in df.columns:
+                        col = c
+                        break
+                if col is None and len(df.columns) > 0:
+                    col = df.columns[0]
+                for s in df[col].dropna().astype(str).str.strip():
+                    if not s or s.upper() in ("SYMBOL", "NAN", ""):
+                        continue
+                    s = s.strip().upper()
+                    if not s.endswith(".NS"):
+                        s = s + ".NS"
+                    all_symbols.add(s)
+                if len(all_symbols) >= min_stocks:
+                    break
+            except Exception:
+                continue
+    except Exception:
+        pass
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+    
+    result = sorted(all_symbols)
+    if len(result) > 0:
+        try:
+            fetch_nifty_broad_universe._nifty_broad_cache = result
+        except Exception:
+            pass
+    return result

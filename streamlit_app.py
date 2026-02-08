@@ -1576,9 +1576,10 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
     """
     Display Market Breadth tab with advance/decline and DMA percentage data.
     
+    Uses Nifty Total Market: NSE Nifty 500 + Midcap 150 + Smallcap 250 (750+ stocks) when available; else sector CSV or Nifty 50 fallback.
     Shows data for last ~20 trading days with:
     - Date, Day, Advances, Declines, Advance/Total (%), % Above 20 DMA, % Above 50 DMA, Nifty, Nifty Chg %
-    - Current day data refreshes every 5 minutes
+    - India VIX displayed alongside.
     - Color coding: red (<20%), yellow (20-50%), green (>50%)
     - Summary row for last 20 days aggregate
     
@@ -1586,11 +1587,73 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
         analysis_date: Date for analysis (defaults to today)
         enable_color_coding: Whether to apply color coding
     """
-    from data_fetcher import fetch_sector_data
+    from data_fetcher import fetch_sector_data, fetch_nifty_broad_universe
     import time
+    import os
     
     st.markdown("### 📊 Market Breadth")
     st.markdown("---")
+    
+    # Prefer broad NSE universe (Nifty 500 + Midcap 150 + Smallcap 250) for 750+ stocks
+    nifty_stocks = []
+    universe_source = "Nifty 50 (fallback)"
+    
+    try:
+        nifty_stocks = fetch_nifty_broad_universe(min_stocks=750, use_cache=True)
+        if nifty_stocks:
+            universe_source = "Nifty Total Market (NSE)"
+    except Exception:
+        pass
+    
+    # Fallback: sector CSV (broader than 50, fewer than 750)
+    if not nifty_stocks or len(nifty_stocks) < 100:
+        for csv_path in ['sector_companies_20260204.csv', 'sector_companies_cleaned.csv']:
+            if os.path.exists(csv_path):
+                try:
+                    df_csv = pd.read_csv(csv_path)
+                    if 'Symbol' in df_csv.columns:
+                        nifty_stocks = df_csv['Symbol'].drop_duplicates().dropna().astype(str).str.strip().tolist()
+                        nifty_stocks = [s if s.endswith('.NS') else s + '.NS' for s in nifty_stocks if s and len(s) > 1]
+                        universe_source = "Sector CSV (local)"
+                        break
+                except Exception:
+                    continue
+    
+    # Final fallback: Nifty 50 list
+    if not nifty_stocks:
+        nifty_stocks = [
+            'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
+            'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
+            'LT.NS', 'AXISBANK.NS', 'ASIANPAINT.NS', 'MARUTI.NS', 'TITAN.NS',
+            'NESTLEIND.NS', 'ULTRACEMCO.NS', 'WIPRO.NS', 'SUNPHARMA.NS', 'TATAMOTORS.NS',
+            'TECHM.NS', 'HCLTECH.NS', 'BAJFINANCE.NS', 'JSWSTEEL.NS', 'TATASTEEL.NS',
+            'POWERGRID.NS', 'NTPC.NS', 'ONGC.NS', 'COALINDIA.NS', 'ADANIENT.NS',
+            'ADANIPORTS.NS', 'GRASIM.NS', 'DIVISLAB.NS', 'CIPLA.NS', 'DRREDDY.NS',
+            'BAJAJFINSV.NS', 'M&M.NS', 'HEROMOTOCO.NS', 'EICHERMOT.NS', 'MARICO.NS',
+            'GODREJCP.NS', 'DABUR.NS', 'BRITANNIA.NS', 'HDFCLIFE.NS', 'SBILIFE.NS',
+            'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
+        ]
+    
+    num_stocks_considered = len(nifty_stocks)
+    
+    # Fetch India VIX for display alongside
+    vix_value = None
+    vix_symbols = ['^INDIAVIX', 'INDIAVIX.NS', 'INDIAVIX']
+    for vix_sym in vix_symbols:
+        try:
+            vix_data = fetch_sector_data(vix_sym, end_date=analysis_date, interval='1d')
+            if vix_data is not None and len(vix_data) > 0:
+                vix_value = vix_data['Close'].iloc[-1]
+                break
+        except Exception:
+            continue
+    
+    # Header: Nifty Total Market (stocks considered) + India VIX
+    col_market, col_vix = st.columns([2, 1])
+    with col_market:
+        st.markdown(f"**Nifty Total Market** — *Stocks considered: **{num_stocks_considered}** ({universe_source})*")
+    with col_vix:
+        st.metric("India VIX", f"{vix_value:.2f}" if vix_value is not None else "N/A")
     
     # Instructions and refresh button
     col_info, col_refresh = st.columns([3, 1])
@@ -1598,29 +1661,14 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
         st.info("📋 **Note:** Click 'Refresh Current Day' to update Advance/Decline and % DMA data for the current day. Other data is for prior days.")
     with col_refresh:
         if st.button("🔄 Refresh Current Day", use_container_width=True):
-            # Clear cache for current day
             if 'market_breadth_cache' in st.session_state:
                 del st.session_state['market_breadth_cache']
             st.rerun()
     
-    # Get Nifty 50 stock list
-    nifty_stocks = [
-        'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
-        'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
-        'LT.NS', 'AXISBANK.NS', 'ASIANPAINT.NS', 'MARUTI.NS', 'TITAN.NS',
-        'NESTLEIND.NS', 'ULTRACEMCO.NS', 'WIPRO.NS', 'SUNPHARMA.NS', 'TATAMOTORS.NS',
-        'TECHM.NS', 'HCLTECH.NS', 'BAJFINANCE.NS', 'JSWSTEEL.NS', 'TATASTEEL.NS',
-        'POWERGRID.NS', 'NTPC.NS', 'ONGC.NS', 'COALINDIA.NS', 'ADANIENT.NS',
-        'ADANIPORTS.NS', 'GRASIM.NS', 'DIVISLAB.NS', 'CIPLA.NS', 'DRREDDY.NS',
-        'BAJAJFINSV.NS', 'M&M.NS', 'HEROMOTOCO.NS', 'EICHERMOT.NS', 'MARICO.NS',
-        'GODREJCP.NS', 'DABUR.NS', 'BRITANNIA.NS', 'HDFCLIFE.NS', 'SBILIFE.NS',
-        'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
-    ]
-    
     if analysis_date is None:
         analysis_date = datetime.now().date()
     
-    # Fetch Nifty 50 index data for historical dates
+    # Fetch Nifty 50 index data for historical dates (for Nifty column and Nifty Chg %)
     nifty_data = fetch_sector_data('^NSEI', end_date=analysis_date, interval='1d')
     if nifty_data is None or len(nifty_data) == 0:
         st.error("❌ Unable to fetch Nifty 50 data")
@@ -1662,12 +1710,12 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
             latest_date = trading_dates[0]
             latest_date_obj = latest_date.date() if hasattr(latest_date, 'date') else latest_date
             
-            for symbol in nifty_stocks[:50]:
+            for symbol in nifty_stocks:
                 try:
                     stock_data = fetch_sector_data(symbol, end_date=latest_date_obj, interval='1d')
                     if stock_data is not None and len(stock_data) >= 2:
                         stock_data_cache[symbol] = stock_data
-                except:
+                except Exception:
                     continue
             
             for idx, date in enumerate(trading_dates):
@@ -1685,11 +1733,21 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
                 
                 nifty_chg_pct = ((nifty_close - nifty_prev_close) / nifty_prev_close * 100) if nifty_prev_close else 0.0
                 
-                # Calculate advances/declines and DMA percentages for this date
+                # Calculate advances/declines, daily/monthly extremes, and DMA percentages (match Google Sheet)
                 advances = 0
                 declines = 0
+                up_4_daily = 0
+                down_4_daily = 0
+                up_25_monthly = 0
+                down_25_monthly = 0
+                up_50_monthly = 0
+                down_50_monthly = 0
+                above_10dma = 0
                 above_20dma = 0
+                above_40dma = 0
                 above_50dma = 0
+                dma10_gt_20 = 0
+                dma20_gt_40 = 0
                 total_stocks = 0
                 
                 # Convert pandas Timestamp to date object
@@ -1706,36 +1764,67 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
                         
                         if date_in_data is not None:
                             current_price = stock_data.loc[date_in_data, 'Close']
-                            
-                            # Get previous day price for advance/decline
                             date_idx = stock_data.index.get_loc(date_in_data)
+                            
+                            # Get previous day price for advance/decline and daily %
                             if date_idx > 0:
                                 prev_price = stock_data.iloc[date_idx - 1]['Close']
                                 if current_price > prev_price:
                                     advances += 1
                                 elif current_price < prev_price:
                                     declines += 1
+                                daily_chg_pct = (current_price - prev_price) / prev_price * 100
+                                if daily_chg_pct >= 4:
+                                    up_4_daily += 1
+                                elif daily_chg_pct <= -4:
+                                    down_4_daily += 1
                             
-                            # Calculate DMA percentages
+                            # Monthly return (~21 trading days)
+                            month_ago_idx = date_idx - 21
+                            if month_ago_idx >= 0:
+                                price_21d_ago = stock_data.iloc[month_ago_idx]['Close']
+                                monthly_chg_pct = (current_price - price_21d_ago) / price_21d_ago * 100
+                                if monthly_chg_pct >= 25:
+                                    up_25_monthly += 1
+                                elif monthly_chg_pct <= -25:
+                                    down_25_monthly += 1
+                                if monthly_chg_pct >= 50:
+                                    up_50_monthly += 1
+                                elif monthly_chg_pct <= -50:
+                                    down_50_monthly += 1
+                            
+                            # DMA: 10, 20, 40, 50 and % above / crossover counts
                             if len(stock_data) >= 50:
+                                dma_10 = stock_data['Close'].rolling(10).mean().loc[date_in_data]
                                 dma_20 = stock_data['Close'].rolling(20).mean().loc[date_in_data]
+                                dma_40 = stock_data['Close'].rolling(40).mean().loc[date_in_data]
                                 dma_50 = stock_data['Close'].rolling(50).mean().loc[date_in_data]
-                                
+                                if not pd.isna(dma_10) and current_price > dma_10:
+                                    above_10dma += 1
                                 if not pd.isna(dma_20) and current_price > dma_20:
                                     above_20dma += 1
+                                if not pd.isna(dma_40) and current_price > dma_40:
+                                    above_40dma += 1
                                 if not pd.isna(dma_50) and current_price > dma_50:
                                     above_50dma += 1
+                                if not pd.isna(dma_10) and not pd.isna(dma_20) and dma_10 > dma_20:
+                                    dma10_gt_20 += 1
+                                if not pd.isna(dma_20) and not pd.isna(dma_40) and dma_20 > dma_40:
+                                    dma20_gt_40 += 1
                             
                             total_stocks += 1
                     except Exception as e:
                         continue
                 
-                # Calculate percentages
+                # Percentages
                 advance_total_pct = (advances / (advances + declines) * 100) if (advances + declines) > 0 else 0.0
+                pct_above_10dma = (above_10dma / total_stocks * 100) if total_stocks > 0 else 0.0
                 pct_above_20dma = (above_20dma / total_stocks * 100) if total_stocks > 0 else 0.0
+                pct_above_40dma = (above_40dma / total_stocks * 100) if total_stocks > 0 else 0.0
                 pct_above_50dma = (above_50dma / total_stocks * 100) if total_stocks > 0 else 0.0
+                pct_10_gt_20 = (dma10_gt_20 / total_stocks * 100) if total_stocks > 0 else 0.0
+                pct_20_gt_40 = (dma20_gt_40 / total_stocks * 100) if total_stocks > 0 else 0.0
                 
-                # Format date
                 date_str = date.strftime('%Y-%m-%d')
                 is_current_day = (date == current_date)
                 
@@ -1744,9 +1833,17 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
                     'Day': day_name,
                     'Advances': advances,
                     'Declines': declines,
-                    'Advance/Total (%)': round(advance_total_pct, 1),
+                    'Up 4% (Daily)': up_4_daily,
+                    'Down 4% (Daily)': down_4_daily,
+                    'Up 25% (Monthly)': up_25_monthly,
+                    'Down 25% (Monthly)': down_25_monthly,
+                    'Up 50% (Monthly)': up_50_monthly,
+                    'Down 50% (Monthly)': down_50_monthly,
+                    '% Above 10 DMA': round(pct_above_10dma, 1),
                     '% Above 20 DMA': round(pct_above_20dma, 1),
-                    '% Above 50 DMA': round(pct_above_50dma, 1),
+                    '% Above 40 DMA': round(pct_above_40dma, 1),
+                    '% 10 DMA > 20 DMA': round(pct_10_gt_20, 1),
+                    '% 20 DMA > 40 DMA': round(pct_20_gt_40, 1),
                     'Nifty': int(round(nifty_close)),
                     'Nifty Chg %': round(nifty_chg_pct, 1)
                 })
@@ -1759,16 +1856,24 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
     # Create DataFrame
     df_breadth = pd.DataFrame(breadth_data)
     
-    # Calculate summary row for last 20 days
+    # Calculate summary row for last 20 days (match Google Sheet)
     if len(df_breadth) > 0:
         summary_row = {
             'Date': 'upto last 20 days',
             'Day': '',
             'Advances': '',
             'Declines': '',
-            'Advance/Total (%)': round(df_breadth['Advance/Total (%)'].mean(), 1),
+            'Up 4% (Daily)': '',
+            'Down 4% (Daily)': '',
+            'Up 25% (Monthly)': '',
+            'Down 25% (Monthly)': '',
+            'Up 50% (Monthly)': '',
+            'Down 50% (Monthly)': '',
+            '% Above 10 DMA': round(df_breadth['% Above 10 DMA'].mean(), 1),
             '% Above 20 DMA': round(df_breadth['% Above 20 DMA'].mean(), 1),
-            '% Above 50 DMA': round(df_breadth['% Above 50 DMA'].mean(), 1),
+            '% Above 40 DMA': round(df_breadth['% Above 40 DMA'].mean(), 1),
+            '% 10 DMA > 20 DMA': round(df_breadth['% 10 DMA > 20 DMA'].mean(), 1),
+            '% 20 DMA > 40 DMA': round(df_breadth['% 20 DMA > 40 DMA'].mean(), 1),
             'Nifty': '',
             'Nifty Chg %': round(df_breadth['Nifty Chg %'].mean(), 1)
         }
@@ -1796,20 +1901,11 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
                 except:
                     return ''
             
-            # Color Advance/Total (%)
-            if 'Advance/Total (%)' in row.index:
-                idx = list(row.index).index('Advance/Total (%)')
-                result[idx] = get_color_for_pct(row['Advance/Total (%)'])
-            
-            # Color % Above 20 DMA
-            if '% Above 20 DMA' in row.index:
-                idx = list(row.index).index('% Above 20 DMA')
-                result[idx] = get_color_for_pct(row['% Above 20 DMA'])
-            
-            # Color % Above 50 DMA
-            if '% Above 50 DMA' in row.index:
-                idx = list(row.index).index('% Above 50 DMA')
-                result[idx] = get_color_for_pct(row['% Above 50 DMA'])
+            # Color % DMA columns (<20% red, 20-50% yellow, >50% green)
+            for col in ['% Above 10 DMA', '% Above 20 DMA', '% Above 40 DMA', '% 10 DMA > 20 DMA', '% 20 DMA > 40 DMA']:
+                if col in row.index:
+                    idx = list(row.index).index(col)
+                    result[idx] = get_color_for_pct(row[col])
             
             # Color Nifty Chg % (positive = green, negative = red)
             if 'Nifty Chg %' in row.index:
@@ -1841,9 +1937,17 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
             "Day": st.column_config.TextColumn("Day"),
             "Advances": st.column_config.NumberColumn("Advances", format="%d"),
             "Declines": st.column_config.NumberColumn("Declines", format="%d"),
-            "Advance/Total (%)": st.column_config.NumberColumn("Advance/Total (%)", format="%.1f%%"),
+            "Up 4% (Daily)": st.column_config.NumberColumn("Up 4% (Daily)", format="%d"),
+            "Down 4% (Daily)": st.column_config.NumberColumn("Down 4% (Daily)", format="%d"),
+            "Up 25% (Monthly)": st.column_config.NumberColumn("Up 25% (Monthly)", format="%d"),
+            "Down 25% (Monthly)": st.column_config.NumberColumn("Down 25% (Monthly)", format="%d"),
+            "Up 50% (Monthly)": st.column_config.NumberColumn("Up 50% (Monthly)", format="%d"),
+            "Down 50% (Monthly)": st.column_config.NumberColumn("Down 50% (Monthly)", format="%d"),
+            "% Above 10 DMA": st.column_config.NumberColumn("% Above 10 DMA", format="%.1f%%"),
             "% Above 20 DMA": st.column_config.NumberColumn("% Above 20 DMA", format="%.1f%%"),
-            "% Above 50 DMA": st.column_config.NumberColumn("% Above 50 DMA", format="%.1f%%"),
+            "% Above 40 DMA": st.column_config.NumberColumn("% Above 40 DMA", format="%.1f%%"),
+            "% 10 DMA > 20 DMA": st.column_config.NumberColumn("% 10 DMA > 20 DMA", format="%.1f%%"),
+            "% 20 DMA > 40 DMA": st.column_config.NumberColumn("% 20 DMA > 40 DMA", format="%.1f%%"),
             "Nifty": st.column_config.NumberColumn("Nifty", format="%d"),
             "Nifty Chg %": st.column_config.NumberColumn("Nifty Chg %", format="%.1f%%")
         }
