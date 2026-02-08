@@ -2784,22 +2784,6 @@ def display_data_sources_tab():
     st.caption(f"⏰ Test completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 
-<<<<<<< HEAD
-def display_stock_analysis_tab(analysis_date=None):
-    """
-    Display comprehensive stock analysis with Market Overview and Individual Stock Ranking.
-    
-    PART 1: Market Overview (NSE/NIFTY)
-    - Sentiment: India VIX and Advance/Decline ratio
-    - Breadth: % of Nifty 50 stocks above 20 DMA and 50 DMA
-    
-    PART 2: Individual Stock Ranking
-    - Trend: HH/HL (Uptrend) or LL/LH (Downtrend) on 4H
-    - Direction: Price vs 20 DMA vs 50 DMA
-    - Momentum: RSI (14) with trend and zone analysis
-    - Chart Setup: DMA crossover detection
-    - RSI Divergence: Bullish/Bearish at 50% formation mark
-=======
 def calculate_fibonacci_levels(high, low):
     """
     Calculate Fibonacci retracement levels.
@@ -2925,17 +2909,13 @@ def display_stock_analysis_tab(analysis_date=None):
     PART 4: Individual Stock Ranking - Confluence Analysis
     - Trend, Direction, RSI, Setup, Divergence
     - Confluence Score ranking
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
     
     Args:
         analysis_date: Date for analysis
     """
     import os
     import numpy as np
-<<<<<<< HEAD
-=======
     from io import BytesIO
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
     from data_fetcher import fetch_sector_data
     
     st.markdown("### 📊 Stock Analysis Dashboard")
@@ -2952,37 +2932,23 @@ def display_stock_analysis_tab(analysis_date=None):
         df_stocks = pd.read_csv(csv_path)
         # Remove duplicates if any
         df_stocks = df_stocks.drop_duplicates(subset=['Symbol'], keep='first')
-<<<<<<< HEAD
-        st.success(f"✅ Loaded {len(df_stocks)} unique stocks from CSV")
-=======
         total_market_stocks = len(df_stocks)
         st.success(f"✅ Loaded {total_market_stocks} unique stocks from CSV")
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
     except Exception as e:
         st.error(f"❌ Error loading CSV: {str(e)}")
         return
     
-<<<<<<< HEAD
-    # ============================================================
-    # PART 1: MARKET OVERVIEW
-=======
     # Historical data storage for logging
     historical_logs = []
     
     # ============================================================
     # PART 1: MARKET OVERVIEW (ENHANCED)
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
     # ============================================================
     st.markdown("## 📈 PART 1: Market Overview (NSE/NIFTY)")
     st.markdown("---")
     
-<<<<<<< HEAD
-    with st.spinner("Fetching market data..."):
-        # Fetch Nifty 50 data
-=======
     with st.spinner("Fetching market data and calculating 7-day trends..."):
         # Fetch Nifty 50 data (need at least 7 days for trends)
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
         nifty_data = fetch_sector_data('^NSEI', end_date=analysis_date, interval='1d')
         
         # Fetch India VIX (try multiple symbols)
@@ -3001,12 +2967,7 @@ def display_stock_analysis_tab(analysis_date=None):
             st.error("❌ Unable to fetch Nifty 50 data")
             return
         
-<<<<<<< HEAD
-        # Calculate Advance/Decline ratio for Nifty 50 stocks
-        # Get list of Nifty 50 stocks (top 50 by market cap)
-=======
         # Get list of Nifty 50 stocks
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
         nifty_stocks = [
             'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
             'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
@@ -3020,74 +2981,6 @@ def display_stock_analysis_tab(analysis_date=None):
             'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
         ]
         
-<<<<<<< HEAD
-        advances = 0
-        declines = 0
-        total_nifty = 0
-        
-        for symbol in nifty_stocks[:50]:  # Limit to 50 for performance
-            try:
-                stock_data = fetch_sector_data(symbol, end_date=analysis_date, interval='1d')
-                if stock_data is not None and len(stock_data) > 1:
-                    current_price = stock_data['Close'].iloc[-1]
-                    prev_price = stock_data['Close'].iloc[-2]
-                    if current_price > prev_price:
-                        advances += 1
-                    elif current_price < prev_price:
-                        declines += 1
-                    total_nifty += 1
-            except:
-                continue
-        
-        ad_ratio = advances / declines if declines > 0 else (advances / 1 if advances > 0 else 1.0)
-        
-        # Calculate Breadth (% above 20 DMA and 50 DMA)
-        above_20dma = 0
-        above_50dma = 0
-        
-        for symbol in nifty_stocks[:50]:
-            try:
-                stock_data = fetch_sector_data(symbol, end_date=analysis_date, interval='1d')
-                if stock_data is not None and len(stock_data) >= 50:
-                    current_price = stock_data['Close'].iloc[-1]
-                    dma_20 = stock_data['Close'].rolling(20).mean().iloc[-1]
-                    dma_50 = stock_data['Close'].rolling(50).mean().iloc[-1]
-                    
-                    if current_price > dma_20:
-                        above_20dma += 1
-                    if current_price > dma_50:
-                        above_50dma += 1
-            except:
-                continue
-        
-        breadth_20dma = (above_20dma / total_nifty * 100) if total_nifty > 0 else 0
-        breadth_50dma = (above_50dma / total_nifty * 100) if total_nifty > 0 else 0
-        
-        # Display Market Overview
-        nifty_price = nifty_data['Close'].iloc[-1]
-        
-        overview_data = {
-            'Metric': ['Nifty 50 Price', 'India VIX', 'A/D Ratio', '% Above 20 DMA', '% Above 50 DMA'],
-            'Value': [
-                f"₹{nifty_price:,.2f}",
-                f"{vix_value:.2f}" if vix_value else "N/A",
-                f"{ad_ratio:.2f}",
-                f"{breadth_20dma:.1f}%",
-                f"{breadth_50dma:.1f}%"
-            ]
-        }
-        
-        df_overview = pd.DataFrame(overview_data)
-        st.dataframe(df_overview, use_container_width=True, hide_index=True)
-    
-    # ============================================================
-    # PART 2: INDIVIDUAL STOCK RANKING
-    # ============================================================
-    st.markdown("## 🏆 PART 2: Individual Stock Ranking")
-    st.markdown("---")
-    st.info("Analyzing stocks from CSV file. This may take a few minutes...")
-=======
-        # Calculate current day metrics
         advances = 0
         declines = 0
         total_nifty = 0
@@ -3488,7 +3381,6 @@ def display_stock_analysis_tab(analysis_date=None):
     st.markdown("## 🏆 PART 4: Individual Stock Ranking - Confluence Analysis")
     st.markdown("---")
     st.info("Analyzing stocks for confluence factors. This may take a few minutes...")
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
     
     stock_results = []
     progress_bar = st.progress(0)
@@ -3499,11 +3391,7 @@ def display_stock_analysis_tab(analysis_date=None):
         sector = row['Sector']
         company_name = row['Company Name']
         
-<<<<<<< HEAD
-        status_text.text(f"Analyzing {company_name} ({idx+1}/{len(df_stocks)})...")
-=======
         status_text.text(f"Analyzing confluence for {company_name} ({idx+1}/{len(df_stocks)})...")
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
         progress_bar.progress((idx + 1) / len(df_stocks))
         
         try:
@@ -3603,42 +3491,23 @@ def display_stock_analysis_tab(analysis_date=None):
                 setup = "N/A"
             
             # 5. RSI DIVERGENCE: At 50% formation mark (2-hour mark of 4H candle)
-<<<<<<< HEAD
-            # Get 1H data for the current 4H candle period
-=======
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
             current_4h_start = data_4h.index[-1] - pd.Timedelta(hours=4)
             current_1h_data = data_1h[data_1h.index >= current_4h_start]
             
             divergence = "None"
             if len(current_1h_data) >= 2:
-<<<<<<< HEAD
-                # Get RSI at 2-hour mark (50% of 4H candle)
-=======
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                 mid_point_idx = len(current_1h_data) // 2
                 if mid_point_idx > 0 and mid_point_idx < len(current_1h_data):
                     rsi_1h_series = calculate_rsi(current_1h_data)
                     if len(rsi_1h_series) > mid_point_idx:
                         rsi_at_50pct = rsi_1h_series.iloc[mid_point_idx] if not pd.isna(rsi_1h_series.iloc[mid_point_idx]) else rsi_current
                         
-<<<<<<< HEAD
-                        # Compare with price action
-=======
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                         price_at_start = current_1h_data['Close'].iloc[0]
                         price_at_50pct = current_1h_data['Close'].iloc[mid_point_idx]
                         price_at_end = current_1h_data['Close'].iloc[-1]
                         
-<<<<<<< HEAD
-                        # Bullish divergence: Price makes lower low, RSI makes higher low
                         if price_at_50pct < price_at_start and rsi_at_50pct > rsi_current:
                             divergence = "Bullish"
-                        # Bearish divergence: Price makes higher high, RSI makes lower high
-=======
-                        if price_at_50pct < price_at_start and rsi_at_50pct > rsi_current:
-                            divergence = "Bullish"
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                         elif price_at_50pct > price_at_start and rsi_at_50pct < rsi_current:
                             divergence = "Bearish"
             
@@ -3690,31 +3559,6 @@ def display_stock_analysis_tab(analysis_date=None):
     status_text.empty()
     
     if not stock_results:
-<<<<<<< HEAD
-        st.warning("⚠️ No stock data available for analysis")
-        return
-    
-    # Create DataFrame and rank
-    df_results = pd.DataFrame(stock_results)
-    df_results = df_results.sort_values('Score', ascending=False)
-    df_results['Rank'] = range(1, len(df_results) + 1)
-    
-    # Display top 10
-    st.markdown("### 🥇 Top 10 Stocks by Confluence Score")
-    df_top10 = df_results.head(10)[['Rank', 'Sector', 'Symbol', 'Company', 'Trend', 'Direction', 'RSI', 'Setup', 'Divergence', 'Score']]
-    st.dataframe(df_top10, use_container_width=True, hide_index=True)
-    
-    # Export to Excel
-    st.markdown("---")
-    st.markdown("### 📥 Export Results")
-    
-    # Create Excel file in memory
-    from io import BytesIO
-    excel_buffer = BytesIO()
-    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-        df_results.to_excel(writer, sheet_name='All Stocks', index=False)
-        df_top10.to_excel(writer, sheet_name='Top 10', index=False)
-=======
         st.warning("⚠️ No stock data available for confluence analysis")
     else:
         # Create DataFrame and rank
@@ -3752,20 +3596,10 @@ def display_stock_analysis_tab(analysis_date=None):
         if stock_results:
             df_results.to_excel(writer, sheet_name='Confluence Analysis - All', index=False)
             df_top10.to_excel(writer, sheet_name='Confluence Analysis - Top 10', index=False)
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
     
     excel_buffer.seek(0)
     
     st.download_button(
-<<<<<<< HEAD
-        label="📥 Download Excel File",
-        data=excel_buffer.read(),
-        file_name='stock_analysis_results.xlsx',
-        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    )
-    
-    st.success(f"✅ Analysis complete! Analyzed {len(stock_results)} stocks.")
-=======
         label="📥 Download Complete Analysis (Excel)",
         data=excel_buffer.read(),
         file_name=f'stock_analysis_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx',
@@ -3773,7 +3607,6 @@ def display_stock_analysis_tab(analysis_date=None):
     )
     
     st.success(f"✅ Complete analysis finished! Total stocks analyzed: {total_market_stocks}")
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
 
 
 def main():
@@ -3843,15 +3676,11 @@ def main():
             </div>
         ''', unsafe_allow_html=True)
         
-        # Create tabs (8 total: 4 sector-level + 2 company-level + 1 historical + 1 sector companies + 1 data sources + 1 stock analysis)
+        # Create tabs (Momentum, Market Breadth, Reversal, Interpretation, Company Momentum, Company Reversals, Historical, Data Sources)
         try:
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
                 "📈 Momentum Ranking",
-<<<<<<< HEAD
                 "📊 Market Breadth",
-=======
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
-                "📊 Stock Analysis",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
                 "🏢 Company Momentum",
@@ -3874,7 +3703,6 @@ def main():
             
             with tab2:
                 try:
-<<<<<<< HEAD
                     display_market_breadth_tab(analysis_date=analysis_date, enable_color_coding=enable_color_coding)
                 except Exception as e:
                     st.error(f"❌ Error displaying market breadth tab: {str(e)}")
@@ -3882,47 +3710,20 @@ def main():
             
             with tab3:
                 try:
-=======
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
-                    display_stock_analysis_tab(analysis_date=analysis_date)
-                except Exception as e:
-                    st.error(f"❌ Error displaying stock analysis tab: {str(e)}")
-                    st.text(traceback.format_exc())
-            
-            with tab3:
-                try:
-<<<<<<< HEAD
-                    display_stock_analysis_tab(analysis_date=analysis_date)
-                except Exception as e:
-                    st.error(f"❌ Error displaying stock analysis tab: {str(e)}")
-                    st.text(traceback.format_exc())
-            
-            with tab4:
-                try:
-=======
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                     display_reversal_tab(df, sector_data, benchmark_data, reversal_weights, reversal_thresholds, enable_color_coding)
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying reversal tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-<<<<<<< HEAD
-            with tab5:
-=======
             with tab4:
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                 try:
                     display_interpretation_tab()
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying interpretation tab: {str(e)}")
             
-<<<<<<< HEAD
-            with tab6:
-=======
             with tab5:
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                 try:
                     # Pass top sector as default for company momentum analysis
                     # Sort by Momentum_Score first to get rank #1
@@ -3934,11 +3735,7 @@ def main():
                     st.error(f"❌ Error displaying company momentum tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-<<<<<<< HEAD
-            with tab7:
-=======
             with tab6:
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                 try:
                     # Get top reversal candidate (if any)
                     top_reversal_sector = None
@@ -3952,11 +3749,7 @@ def main():
                     st.error(f"❌ Error displaying company reversal tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-<<<<<<< HEAD
-            with tab8:
-=======
             with tab7:
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                 try:
                     display_historical_rankings_tab(sector_data, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf)
                     display_tooltip_legend()
@@ -3964,18 +3757,14 @@ def main():
                     st.error(f"❌ Error displaying historical rankings tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-<<<<<<< HEAD
-            with tab9:
-=======
             with tab8:
->>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                 try:
                     display_data_sources_tab()
                 except Exception as e:
                     st.error(f"❌ Error displaying data sources tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            # Note: Sector Companies tab removed to make room for Stock Analysis tab
+            # Note: Stock Analysis tab removed for stability; Market Breadth retained
                     
         except Exception as e:
             st.error(f"❌ Error creating tabs: {str(e)}")
