@@ -2784,6 +2784,7 @@ def display_data_sources_tab():
     st.caption(f"⏰ Test completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
 
+<<<<<<< HEAD
 def display_stock_analysis_tab(analysis_date=None):
     """
     Display comprehensive stock analysis with Market Overview and Individual Stock Ranking.
@@ -2798,12 +2799,143 @@ def display_stock_analysis_tab(analysis_date=None):
     - Momentum: RSI (14) with trend and zone analysis
     - Chart Setup: DMA crossover detection
     - RSI Divergence: Bullish/Bearish at 50% formation mark
+=======
+def calculate_fibonacci_levels(high, low):
+    """
+    Calculate Fibonacci retracement levels.
+    Returns dict with fib levels: 0.236, 0.382, 0.5, 0.618, 0.786
+    """
+    diff = high - low
+    return {
+        0.236: high - (diff * 0.236),
+        0.382: high - (diff * 0.382),
+        0.5: high - (diff * 0.5),
+        0.618: high - (diff * 0.618),
+        0.786: high - (diff * 0.786)
+    }
+
+
+def find_swing_high_low(data, lookback_days=20):
+    """
+    Find swing high and swing low based on day's HIGH and LOW (not close).
+    Looks within last N days.
+    
+    Args:
+        data: DataFrame with daily OHLC data
+        lookback_days: Number of days to look back (default 20)
+    
+    Returns:
+        Tuple of (swing_high, swing_low, swing_high_date, swing_low_date)
+    """
+    if len(data) < lookback_days:
+        lookback_days = len(data)
+    
+    recent_data = data.tail(lookback_days)
+    
+    # Find swing high (highest HIGH in the period)
+    swing_high_idx = recent_data['High'].idxmax()
+    swing_high = recent_data.loc[swing_high_idx, 'High']
+    swing_high_date = swing_high_idx
+    
+    # Find swing low (lowest LOW in the period)
+    swing_low_idx = recent_data['Low'].idxmin()
+    swing_low = recent_data.loc[swing_low_idx, 'Low']
+    swing_low_date = swing_low_idx
+    
+    return swing_high, swing_low, swing_high_date, swing_low_date
+
+
+def check_fibonacci_golden_zone(price, fib_levels):
+    """
+    Check if price is in Fibonacci golden zone (0.5 to 0.618).
+    
+    Returns:
+        Tuple of (is_in_zone, fib_level, distance_pct)
+        fib_level: '0.5', '0.618', or None
+        distance_pct: % distance from fib level
+    """
+    fib_50 = fib_levels[0.5]
+    fib_618 = fib_levels[0.618]
+    
+    # Check if price is between 0.5 and 0.618
+    if fib_618 <= price <= fib_50:
+        # Calculate which level is closer
+        dist_to_50 = abs(price - fib_50) / fib_50 * 100
+        dist_to_618 = abs(price - fib_618) / fib_618 * 100
+        
+        if dist_to_50 < dist_to_618:
+            return True, '0.5', dist_to_50
+        else:
+            return True, '0.618', dist_to_618
+    
+    # Check if price is near 0.5 (within 2%)
+    if abs(price - fib_50) / fib_50 * 100 < 2.0:
+        return True, '0.5', abs(price - fib_50) / fib_50 * 100
+    
+    # Check if price is near 0.618 (within 2%)
+    if abs(price - fib_618) / fib_618 * 100 < 2.0:
+        return True, '0.618', abs(price - fib_618) / fib_618 * 100
+    
+    return False, None, None
+
+
+def find_last_crossing_time(data, fib_level, current_price):
+    """
+    Find last time when stock price crossed the Fibonacci level.
+    
+    Args:
+        data: DataFrame with OHLC data
+        fib_level: Fibonacci level value
+        current_price: Current stock price
+    
+    Returns:
+        String with last crossing time or "N/A"
+    """
+    # Check if price crossed from below to above or vice versa
+    for i in range(len(data) - 1, 0, -1):
+        prev_price = data.iloc[i-1]['Close']
+        curr_price = data.iloc[i]['Close']
+        
+        # Check if crossed the fib level
+        if (prev_price <= fib_level <= curr_price) or (prev_price >= fib_level >= curr_price):
+            return data.index[i].strftime('%Y-%m-%d %H:%M')
+    
+    return "N/A"
+
+
+def display_stock_analysis_tab(analysis_date=None):
+    """
+    Display comprehensive stock analysis with 4-part structure.
+    
+    PART 1: Market Overview (NSE/NIFTY)
+    - Sentiment: India VIX, Advance/Decline (with totals and 7-day trend)
+    - Breadth: % above 20 DMA and 50 DMA (with 7-day trend)
+    - Total market stocks count
+    
+    PART 2: Nifty - Fibonacci Analysis
+    - Swing high/low from daily high/low (last 20 days)
+    - Fibonacci levels (0.5-0.618 golden zone)
+    
+    PART 3: Individual Stock - Fibonacci
+    - Fibonacci analysis for stocks from CSV
+    - 15-minute timeframe, day-end data after 4 PM
+    - Display: Co name, Stock price, Fib level, Remark, Last crossing time, RSI (1H), ADX (1H)
+    - Ranked in descending order of best match
+    
+    PART 4: Individual Stock Ranking - Confluence Analysis
+    - Trend, Direction, RSI, Setup, Divergence
+    - Confluence Score ranking
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
     
     Args:
         analysis_date: Date for analysis
     """
     import os
     import numpy as np
+<<<<<<< HEAD
+=======
+    from io import BytesIO
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
     from data_fetcher import fetch_sector_data
     
     st.markdown("### 📊 Stock Analysis Dashboard")
@@ -2820,19 +2952,37 @@ def display_stock_analysis_tab(analysis_date=None):
         df_stocks = pd.read_csv(csv_path)
         # Remove duplicates if any
         df_stocks = df_stocks.drop_duplicates(subset=['Symbol'], keep='first')
+<<<<<<< HEAD
         st.success(f"✅ Loaded {len(df_stocks)} unique stocks from CSV")
+=======
+        total_market_stocks = len(df_stocks)
+        st.success(f"✅ Loaded {total_market_stocks} unique stocks from CSV")
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
     except Exception as e:
         st.error(f"❌ Error loading CSV: {str(e)}")
         return
     
+<<<<<<< HEAD
     # ============================================================
     # PART 1: MARKET OVERVIEW
+=======
+    # Historical data storage for logging
+    historical_logs = []
+    
+    # ============================================================
+    # PART 1: MARKET OVERVIEW (ENHANCED)
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
     # ============================================================
     st.markdown("## 📈 PART 1: Market Overview (NSE/NIFTY)")
     st.markdown("---")
     
+<<<<<<< HEAD
     with st.spinner("Fetching market data..."):
         # Fetch Nifty 50 data
+=======
+    with st.spinner("Fetching market data and calculating 7-day trends..."):
+        # Fetch Nifty 50 data (need at least 7 days for trends)
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
         nifty_data = fetch_sector_data('^NSEI', end_date=analysis_date, interval='1d')
         
         # Fetch India VIX (try multiple symbols)
@@ -2851,8 +3001,12 @@ def display_stock_analysis_tab(analysis_date=None):
             st.error("❌ Unable to fetch Nifty 50 data")
             return
         
+<<<<<<< HEAD
         # Calculate Advance/Decline ratio for Nifty 50 stocks
         # Get list of Nifty 50 stocks (top 50 by market cap)
+=======
+        # Get list of Nifty 50 stocks
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
         nifty_stocks = [
             'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
             'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
@@ -2866,6 +3020,7 @@ def display_stock_analysis_tab(analysis_date=None):
             'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
         ]
         
+<<<<<<< HEAD
         advances = 0
         declines = 0
         total_nifty = 0
@@ -2931,6 +3086,409 @@ def display_stock_analysis_tab(analysis_date=None):
     st.markdown("## 🏆 PART 2: Individual Stock Ranking")
     st.markdown("---")
     st.info("Analyzing stocks from CSV file. This may take a few minutes...")
+=======
+        # Calculate current day metrics
+        advances = 0
+        declines = 0
+        total_nifty = 0
+        above_20dma = 0
+        above_50dma = 0
+        
+        # Store historical data for 7-day trend
+        historical_ad_ratios = []
+        historical_breadth_20 = []
+        historical_breadth_50 = []
+        
+        # Calculate metrics for last 7 days
+        for day_offset in range(7):
+            day_advances = 0
+            day_declines = 0
+            day_total = 0
+            day_above_20 = 0
+            day_above_50 = 0
+            
+            for symbol in nifty_stocks[:50]:
+                try:
+                    # Get data up to (analysis_date - day_offset)
+                    check_date = analysis_date - timedelta(days=day_offset) if analysis_date else None
+                    stock_data = fetch_sector_data(symbol, end_date=check_date, interval='1d')
+                    
+                    if stock_data is not None and len(stock_data) > 1:
+                        if day_offset == 0:  # Current day
+                            current_price = stock_data['Close'].iloc[-1]
+                            prev_price = stock_data['Close'].iloc[-2] if len(stock_data) > 1 else current_price
+                            
+                            if current_price > prev_price:
+                                advances += 1
+                            elif current_price < prev_price:
+                                declines += 1
+                            total_nifty += 1
+                            
+                            # Calculate DMA breadth for current day
+                            if len(stock_data) >= 50:
+                                dma_20 = stock_data['Close'].rolling(20).mean().iloc[-1]
+                                dma_50 = stock_data['Close'].rolling(50).mean().iloc[-1]
+                                
+                                if current_price > dma_20:
+                                    above_20dma += 1
+                                if current_price > dma_50:
+                                    above_50dma += 1
+                        
+                        # Historical data for trends
+                        if len(stock_data) > 1:
+                            hist_price = stock_data['Close'].iloc[-1]
+                            hist_prev = stock_data['Close'].iloc[-2] if len(stock_data) > 1 else hist_price
+                            
+                            if hist_price > hist_prev:
+                                day_advances += 1
+                            elif hist_price < hist_prev:
+                                day_declines += 1
+                            day_total += 1
+                            
+                            if len(stock_data) >= 50:
+                                hist_dma_20 = stock_data['Close'].rolling(20).mean().iloc[-1]
+                                hist_dma_50 = stock_data['Close'].rolling(50).mean().iloc[-1]
+                                
+                                if hist_price > hist_dma_20:
+                                    day_above_20 += 1
+                                if hist_price > hist_dma_50:
+                                    day_above_50 += 1
+                except:
+                    continue
+            
+            # Calculate ratios for this day
+            if day_total > 0:
+                day_ad_ratio = day_advances / day_declines if day_declines > 0 else (day_advances / 1 if day_advances > 0 else 1.0)
+                day_breadth_20 = (day_above_20 / day_total * 100) if day_total > 0 else 0
+                day_breadth_50 = (day_above_50 / day_total * 100) if day_total > 0 else 0
+                
+                historical_ad_ratios.append(day_ad_ratio)
+                historical_breadth_20.append(day_breadth_20)
+                historical_breadth_50.append(day_breadth_50)
+        
+        # Reverse to get chronological order (oldest to newest)
+        historical_ad_ratios = historical_ad_ratios[::-1]
+        historical_breadth_20 = historical_breadth_20[::-1]
+        historical_breadth_50 = historical_breadth_50[::-1]
+        
+        # Calculate current metrics
+        ad_ratio = advances / declines if declines > 0 else (advances / 1 if advances > 0 else 1.0)
+        breadth_20dma = (above_20dma / total_nifty * 100) if total_nifty > 0 else 0
+        breadth_50dma = (above_50dma / total_nifty * 100) if total_nifty > 0 else 0
+        
+        # Calculate 7-day trends
+        if len(historical_ad_ratios) >= 2:
+            ad_trend = historical_ad_ratios[-1] - historical_ad_ratios[0]
+            ad_trend_pct = (ad_trend / historical_ad_ratios[0] * 100) if historical_ad_ratios[0] > 0 else 0
+        else:
+            ad_trend = 0
+            ad_trend_pct = 0
+        
+        if len(historical_breadth_20) >= 2:
+            breadth_20_trend = historical_breadth_20[-1] - historical_breadth_20[0]
+        else:
+            breadth_20_trend = 0
+        
+        if len(historical_breadth_50) >= 2:
+            breadth_50_trend = historical_breadth_50[-1] - historical_breadth_50[0]
+        else:
+            breadth_50_trend = 0
+        
+        # Display Market Overview with enhanced formatting
+        nifty_price = nifty_data['Close'].iloc[-1]
+        
+        # Create styled overview table
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Nifty 50 Price", f"₹{nifty_price:,.2f}")
+        with col2:
+            st.metric("India VIX", f"{vix_value:.2f}" if vix_value else "N/A")
+        with col3:
+            st.metric("Total Market Stocks", total_market_stocks)
+        with col4:
+            st.metric("Nifty Stocks Analyzed", total_nifty)
+        
+        st.markdown("---")
+        
+        # A/D Section with totals and trend
+        st.markdown("### 📊 Advance/Decline Analysis")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Advances", advances, delta=f"{ad_trend:.2f}" if ad_trend != 0 else None)
+        with col2:
+            st.metric("Declines", declines)
+        with col3:
+            st.metric("A/D Ratio", f"{ad_ratio:.2f}", delta=f"{ad_trend_pct:+.1f}%" if ad_trend_pct != 0 else None)
+        with col4:
+            st.metric("Total", advances + declines)
+        
+        # Breadth Section with trends
+        st.markdown("### 📈 Market Breadth Analysis")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("% Above 20 DMA", f"{breadth_20dma:.1f}%", 
+                     delta=f"{breadth_20_trend:+.1f}%" if breadth_20_trend != 0 else None)
+        with col2:
+            st.metric("% Above 50 DMA", f"{breadth_50dma:.1f}%",
+                     delta=f"{breadth_50_trend:+.1f}%" if breadth_50_trend != 0 else None)
+        
+        # 7-Day Trend Chart
+        st.markdown("### 📉 7-Day Trend Analysis")
+        
+        if len(historical_ad_ratios) >= 2:
+            trend_data = pd.DataFrame({
+                'Day': [f'T-{6-i}' for i in range(len(historical_ad_ratios))],
+                'A/D Ratio': historical_ad_ratios,
+                '% Above 20 DMA': historical_breadth_20,
+                '% Above 50 DMA': historical_breadth_50
+            })
+            
+            # Add color coding function
+            def style_trend_row(row):
+                result = [''] * len(row)
+                
+                # Color A/D Ratio column
+                if 'A/D Ratio' in row.index:
+                    idx = list(row.index).index('A/D Ratio')
+                    try:
+                        val = float(row['A/D Ratio'])
+                        if val > 1.2:
+                            result[idx] = 'background-color: #27AE60; color: #fff; font-weight: bold'
+                        elif val < 0.8:
+                            result[idx] = 'background-color: #E74C3C; color: #fff; font-weight: bold'
+                    except:
+                        pass
+                
+                # Color % Above 20 DMA
+                if '% Above 20 DMA' in row.index:
+                    idx = list(row.index).index('% Above 20 DMA')
+                    try:
+                        val = float(row['% Above 20 DMA'])
+                        if val > 60:
+                            result[idx] = 'background-color: #27AE60; color: #fff; font-weight: bold'
+                        elif val < 40:
+                            result[idx] = 'background-color: #E74C3C; color: #fff; font-weight: bold'
+                    except:
+                        pass
+                
+                # Color % Above 50 DMA
+                if '% Above 50 DMA' in row.index:
+                    idx = list(row.index).index('% Above 50 DMA')
+                    try:
+                        val = float(row['% Above 50 DMA'])
+                        if val > 60:
+                            result[idx] = 'background-color: #27AE60; color: #fff; font-weight: bold'
+                        elif val < 40:
+                            result[idx] = 'background-color: #E74C3C; color: #fff; font-weight: bold'
+                    except:
+                        pass
+                
+                return result
+            
+            df_trend_styled = trend_data.style.apply(style_trend_row, axis=1)
+            st.dataframe(df_trend_styled, use_container_width=True, hide_index=True)
+            
+            st.caption("🟢 Green: Bullish | 🔴 Red: Bearish")
+        
+        # Store in historical logs
+        historical_logs.append({
+            'Date': analysis_date.strftime('%Y-%m-%d') if analysis_date else datetime.now().strftime('%Y-%m-%d'),
+            'Nifty_Price': nifty_price,
+            'VIX': vix_value if vix_value else None,
+            'Advances': advances,
+            'Declines': declines,
+            'AD_Ratio': ad_ratio,
+            'Breadth_20DMA': breadth_20dma,
+            'Breadth_50DMA': breadth_50dma
+        })
+    
+    # ============================================================
+    # PART 2: NIFTY - FIBONACCI ANALYSIS
+    # ============================================================
+    st.markdown("## 🔢 PART 2: Nifty - Fibonacci Analysis")
+    st.markdown("---")
+    
+    with st.spinner("Calculating Nifty Fibonacci levels..."):
+        try:
+            # Fetch daily Nifty data for last 20 days
+            nifty_daily = fetch_sector_data('^NSEI', end_date=analysis_date, interval='1d')
+            
+            if nifty_daily is not None and len(nifty_daily) >= 20:
+                # Find swing high and swing low based on day's HIGH and LOW
+                swing_high, swing_low, swing_high_date, swing_low_date = find_swing_high_low(nifty_daily, lookback_days=20)
+                
+                # Calculate Fibonacci levels
+                fib_levels = calculate_fibonacci_levels(swing_high, swing_low)
+                
+                # Current Nifty price
+                current_nifty_price = nifty_daily['Close'].iloc[-1]
+                
+                # Check if current price is in golden zone
+                in_zone, fib_level, distance = check_fibonacci_golden_zone(current_nifty_price, fib_levels)
+                
+                # Display Fibonacci analysis
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("### 📊 Swing Points (Last 20 Days)")
+                    st.write(f"**Swing High:** ₹{swing_high:,.2f} ({swing_high_date.strftime('%Y-%m-%d')})")
+                    st.write(f"**Swing Low:** ₹{swing_low:,.2f} ({swing_low_date.strftime('%Y-%m-%d')})")
+                    st.write(f"**Current Price:** ₹{current_nifty_price:,.2f}")
+                
+                with col2:
+                    st.markdown("### 🔢 Fibonacci Levels")
+                    st.write(f"**0.236:** ₹{fib_levels[0.236]:,.2f}")
+                    st.write(f"**0.382:** ₹{fib_levels[0.382]:,.2f}")
+                    st.write(f"**0.500:** ₹{fib_levels[0.5]:,.2f} ⭐")
+                    st.write(f"**0.618:** ₹{fib_levels[0.618]:,.2f} ⭐")
+                    st.write(f"**0.786:** ₹{fib_levels[0.786]:,.2f}")
+                
+                if in_zone:
+                    st.success(f"✅ Nifty is in Golden Zone (Fib {fib_level}) - Distance: {distance:.2f}%")
+                else:
+                    st.info(f"ℹ️ Nifty is not in Golden Zone. Nearest level: {fib_level if fib_level else 'N/A'}")
+            else:
+                st.warning("⚠️ Insufficient Nifty data for Fibonacci analysis")
+        except Exception as e:
+            st.error(f"❌ Error in Nifty Fibonacci analysis: {str(e)}")
+    
+    # ============================================================
+    # PART 3: INDIVIDUAL STOCK - FIBONACCI ANALYSIS
+    # ============================================================
+    st.markdown("## 📊 PART 3: Individual Stock - Fibonacci Analysis")
+    st.markdown("---")
+    st.info("Analyzing stocks for Fibonacci golden zone (0.5-0.618). This may take a few minutes...")
+    
+    fib_results = []
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    for idx, row in df_stocks.iterrows():
+        symbol = row['Symbol']
+        sector = row['Sector']
+        company_name = row['Company Name']
+        
+        status_text.text(f"Analyzing Fibonacci for {company_name} ({idx+1}/{len(df_stocks)})...")
+        progress_bar.progress((idx + 1) / len(df_stocks))
+        
+        try:
+            # Fetch 15-minute data (preferred timeframe)
+            # For day-end data after 4 PM, we'll use daily data and resample if needed
+            data_15m = fetch_sector_data(symbol, end_date=analysis_date, interval='15m')
+            
+            # If 15m not available, try daily and use it
+            if data_15m is None or len(data_15m) < 20:
+                data_daily = fetch_sector_data(symbol, end_date=analysis_date, interval='1d')
+                if data_daily is None or len(data_daily) < 20:
+                    continue
+                data_for_fib = data_daily
+            else:
+                data_for_fib = data_15m
+            
+            # Find swing high and swing low based on day's HIGH and LOW (last 20 days)
+            # For intraday data, we need to aggregate to daily first
+            if data_for_fib.index.freq is None or 'D' not in str(data_for_fib.index.freq):
+                # Resample to daily using HIGH and LOW
+                data_daily_agg = data_for_fib.resample('D').agg({
+                    'Open': 'first',
+                    'High': 'max',  # Day's high
+                    'Low': 'min',   # Day's low
+                    'Close': 'last',
+                    'Volume': 'sum'
+                }).dropna()
+            else:
+                data_daily_agg = data_for_fib
+            
+            if len(data_daily_agg) < 20:
+                continue
+            
+            # Find swing points
+            swing_high, swing_low, swing_high_date, swing_low_date = find_swing_high_low(data_daily_agg, lookback_days=20)
+            
+            # Calculate Fibonacci levels
+            fib_levels = calculate_fibonacci_levels(swing_high, swing_low)
+            
+            # Current stock price
+            current_price = data_daily_agg['Close'].iloc[-1]
+            
+            # Check if in golden zone (0.5-0.618)
+            in_zone, fib_level, distance = check_fibonacci_golden_zone(current_price, fib_levels)
+            
+            if in_zone:
+                # Calculate price range
+                fib_50 = fib_levels[0.5]
+                fib_618 = fib_levels[0.618]
+                price_range = f"₹{fib_618:,.2f} - ₹{fib_50:,.2f}"
+                
+                # Calculate % up from Fib 0.5 or % down from Fib 0.618
+                if fib_level == '0.5':
+                    pct_from_fib = ((current_price - fib_50) / fib_50) * 100
+                    remark = f"{price_range} | {pct_from_fib:+.2f}% from Fib 0.5"
+                else:
+                    pct_from_fib = ((current_price - fib_618) / fib_618) * 100
+                    remark = f"{price_range} | {pct_from_fib:+.2f}% from Fib 0.618"
+                
+                # Find last crossing time
+                last_crossing = find_last_crossing_time(data_daily_agg, fib_levels[0.5] if fib_level == '0.5' else fib_levels[0.618], current_price)
+                
+                # Fetch 1H data for RSI and ADX
+                data_1h = fetch_sector_data(symbol, end_date=analysis_date, interval='1h')
+                rsi_1h = None
+                adx_1h = None
+                
+                if data_1h is not None and len(data_1h) >= 14:
+                    rsi_series = calculate_rsi(data_1h)
+                    rsi_1h = rsi_series.iloc[-1] if not rsi_series.isna().all() else None
+                    
+                    adx_series, _, _, _ = calculate_adx(data_1h)
+                    adx_1h = adx_series.iloc[-1] if adx_series is not None and not adx_series.isna().all() else None
+                
+                # Calculate match score (lower distance = better match)
+                match_score = 100 - distance  # Invert distance so higher = better
+                
+                fib_results.append({
+                    'Company': company_name,
+                    'Stock Price': current_price,
+                    'Fib Level': fib_level,
+                    'Remark': remark,
+                    'Last Crossing Time': last_crossing,
+                    'RSI (1H)': f"{rsi_1h:.1f}" if rsi_1h else "N/A",
+                    'ADX (1H)': f"{adx_1h:.1f}" if adx_1h else "N/A",
+                    'Match Score': match_score,
+                    'Sector': sector,
+                    'Symbol': symbol
+                })
+        
+        except Exception as e:
+            continue
+    
+    progress_bar.empty()
+    status_text.empty()
+    
+    if fib_results:
+        # Sort by match score (descending order of best match)
+        df_fib = pd.DataFrame(fib_results)
+        df_fib = df_fib.sort_values('Match Score', ascending=False)
+        
+        # Display results
+        st.markdown("### 🎯 Stocks in Fibonacci Golden Zone (0.5-0.618)")
+        display_cols = ['Company', 'Stock Price', 'Fib Level', 'Remark', 'Last Crossing Time', 'RSI (1H)', 'ADX (1H)']
+        st.dataframe(df_fib[display_cols], use_container_width=True, hide_index=True)
+        
+        st.success(f"✅ Found {len(fib_results)} stocks in Fibonacci golden zone")
+    else:
+        st.warning("⚠️ No stocks found in Fibonacci golden zone")
+    
+    # ============================================================
+    # PART 4: INDIVIDUAL STOCK RANKING - CONFLUENCE ANALYSIS
+    # ============================================================
+    st.markdown("## 🏆 PART 4: Individual Stock Ranking - Confluence Analysis")
+    st.markdown("---")
+    st.info("Analyzing stocks for confluence factors. This may take a few minutes...")
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
     
     stock_results = []
     progress_bar = st.progress(0)
@@ -2941,7 +3499,11 @@ def display_stock_analysis_tab(analysis_date=None):
         sector = row['Sector']
         company_name = row['Company Name']
         
+<<<<<<< HEAD
         status_text.text(f"Analyzing {company_name} ({idx+1}/{len(df_stocks)})...")
+=======
+        status_text.text(f"Analyzing confluence for {company_name} ({idx+1}/{len(df_stocks)})...")
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
         progress_bar.progress((idx + 1) / len(df_stocks))
         
         try:
@@ -3041,28 +3603,42 @@ def display_stock_analysis_tab(analysis_date=None):
                 setup = "N/A"
             
             # 5. RSI DIVERGENCE: At 50% formation mark (2-hour mark of 4H candle)
+<<<<<<< HEAD
             # Get 1H data for the current 4H candle period
+=======
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
             current_4h_start = data_4h.index[-1] - pd.Timedelta(hours=4)
             current_1h_data = data_1h[data_1h.index >= current_4h_start]
             
             divergence = "None"
             if len(current_1h_data) >= 2:
+<<<<<<< HEAD
                 # Get RSI at 2-hour mark (50% of 4H candle)
+=======
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                 mid_point_idx = len(current_1h_data) // 2
                 if mid_point_idx > 0 and mid_point_idx < len(current_1h_data):
                     rsi_1h_series = calculate_rsi(current_1h_data)
                     if len(rsi_1h_series) > mid_point_idx:
                         rsi_at_50pct = rsi_1h_series.iloc[mid_point_idx] if not pd.isna(rsi_1h_series.iloc[mid_point_idx]) else rsi_current
                         
+<<<<<<< HEAD
                         # Compare with price action
+=======
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                         price_at_start = current_1h_data['Close'].iloc[0]
                         price_at_50pct = current_1h_data['Close'].iloc[mid_point_idx]
                         price_at_end = current_1h_data['Close'].iloc[-1]
                         
+<<<<<<< HEAD
                         # Bullish divergence: Price makes lower low, RSI makes higher low
                         if price_at_50pct < price_at_start and rsi_at_50pct > rsi_current:
                             divergence = "Bullish"
                         # Bearish divergence: Price makes higher high, RSI makes lower high
+=======
+                        if price_at_50pct < price_at_start and rsi_at_50pct > rsi_current:
+                            divergence = "Bullish"
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                         elif price_at_50pct > price_at_start and rsi_at_50pct < rsi_current:
                             divergence = "Bearish"
             
@@ -3114,6 +3690,7 @@ def display_stock_analysis_tab(analysis_date=None):
     status_text.empty()
     
     if not stock_results:
+<<<<<<< HEAD
         st.warning("⚠️ No stock data available for analysis")
         return
     
@@ -3137,10 +3714,50 @@ def display_stock_analysis_tab(analysis_date=None):
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
         df_results.to_excel(writer, sheet_name='All Stocks', index=False)
         df_top10.to_excel(writer, sheet_name='Top 10', index=False)
+=======
+        st.warning("⚠️ No stock data available for confluence analysis")
+    else:
+        # Create DataFrame and rank
+        df_results = pd.DataFrame(stock_results)
+        df_results = df_results.sort_values('Score', ascending=False)
+        df_results['Rank'] = range(1, len(df_results) + 1)
+        
+        # Display top 10
+        st.markdown("### 🥇 Top 10 Stocks by Confluence Score")
+        df_top10 = df_results.head(10)[['Rank', 'Sector', 'Symbol', 'Company', 'Trend', 'Direction', 'RSI', 'Setup', 'Divergence', 'Score']]
+        st.dataframe(df_top10, use_container_width=True, hide_index=True)
+        
+        st.success(f"✅ Confluence analysis complete! Analyzed {len(stock_results)} stocks.")
+    
+    # ============================================================
+    # HISTORICAL LOGGING & EXPORT
+    # ============================================================
+    st.markdown("---")
+    st.markdown("## 📥 Export & Historical Logs")
+    
+    # Prepare Excel export with all data
+    excel_buffer = BytesIO()
+    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+        # Market Overview logs
+        if historical_logs:
+            df_logs = pd.DataFrame(historical_logs)
+            df_logs.to_excel(writer, sheet_name='Market Overview Logs', index=False)
+        
+        # Fibonacci results
+        if fib_results:
+            df_fib_export = pd.DataFrame(fib_results)
+            df_fib_export.to_excel(writer, sheet_name='Fibonacci Analysis', index=False)
+        
+        # Confluence results
+        if stock_results:
+            df_results.to_excel(writer, sheet_name='Confluence Analysis - All', index=False)
+            df_top10.to_excel(writer, sheet_name='Confluence Analysis - Top 10', index=False)
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
     
     excel_buffer.seek(0)
     
     st.download_button(
+<<<<<<< HEAD
         label="📥 Download Excel File",
         data=excel_buffer.read(),
         file_name='stock_analysis_results.xlsx',
@@ -3148,6 +3765,15 @@ def display_stock_analysis_tab(analysis_date=None):
     )
     
     st.success(f"✅ Analysis complete! Analyzed {len(stock_results)} stocks.")
+=======
+        label="📥 Download Complete Analysis (Excel)",
+        data=excel_buffer.read(),
+        file_name=f'stock_analysis_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx',
+        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    
+    st.success(f"✅ Complete analysis finished! Total stocks analyzed: {total_market_stocks}")
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
 
 
 def main():
@@ -3221,7 +3847,10 @@ def main():
         try:
             tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
                 "📈 Momentum Ranking",
+<<<<<<< HEAD
                 "📊 Market Breadth",
+=======
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                 "📊 Stock Analysis",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
@@ -3245,6 +3874,7 @@ def main():
             
             with tab2:
                 try:
+<<<<<<< HEAD
                     display_market_breadth_tab(analysis_date=analysis_date, enable_color_coding=enable_color_coding)
                 except Exception as e:
                     st.error(f"❌ Error displaying market breadth tab: {str(e)}")
@@ -3252,6 +3882,8 @@ def main():
             
             with tab3:
                 try:
+=======
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                     display_stock_analysis_tab(analysis_date=analysis_date)
                 except Exception as e:
                     st.error(f"❌ Error displaying stock analysis tab: {str(e)}")
@@ -3259,6 +3891,7 @@ def main():
             
             with tab3:
                 try:
+<<<<<<< HEAD
                     display_stock_analysis_tab(analysis_date=analysis_date)
                 except Exception as e:
                     st.error(f"❌ Error displaying stock analysis tab: {str(e)}")
@@ -3266,20 +3899,30 @@ def main():
             
             with tab4:
                 try:
+=======
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                     display_reversal_tab(df, sector_data, benchmark_data, reversal_weights, reversal_thresholds, enable_color_coding)
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying reversal tab: {str(e)}")
                     st.text(traceback.format_exc())
             
+<<<<<<< HEAD
             with tab5:
+=======
+            with tab4:
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                 try:
                     display_interpretation_tab()
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying interpretation tab: {str(e)}")
             
+<<<<<<< HEAD
             with tab6:
+=======
+            with tab5:
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                 try:
                     # Pass top sector as default for company momentum analysis
                     # Sort by Momentum_Score first to get rank #1
@@ -3291,7 +3934,11 @@ def main():
                     st.error(f"❌ Error displaying company momentum tab: {str(e)}")
                     st.text(traceback.format_exc())
             
+<<<<<<< HEAD
             with tab7:
+=======
+            with tab6:
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                 try:
                     # Get top reversal candidate (if any)
                     top_reversal_sector = None
@@ -3305,7 +3952,11 @@ def main():
                     st.error(f"❌ Error displaying company reversal tab: {str(e)}")
                     st.text(traceback.format_exc())
             
+<<<<<<< HEAD
             with tab8:
+=======
+            with tab7:
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                 try:
                     display_historical_rankings_tab(sector_data, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf)
                     display_tooltip_legend()
@@ -3313,7 +3964,11 @@ def main():
                     st.error(f"❌ Error displaying historical rankings tab: {str(e)}")
                     st.text(traceback.format_exc())
             
+<<<<<<< HEAD
             with tab9:
+=======
+            with tab8:
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
                 try:
                     display_data_sources_tab()
                 except Exception as e:
