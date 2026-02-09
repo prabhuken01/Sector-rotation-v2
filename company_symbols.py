@@ -186,6 +186,19 @@ def get_company_symbol_list(sector_name):
     return list(companies.keys())
 
 
+def get_all_screener_symbols():
+    """Get unique (symbol, name) pairs across all sectors for Stock Screener. Based on 97 stocks in excel."""
+    seen = set()
+    result = []
+    for sector_name, companies in SECTOR_COMPANIES.items():
+        for symbol, info in companies.items():
+            if symbol not in seen:
+                seen.add(symbol)
+                name = info.get('name', symbol) if isinstance(info, dict) else symbol
+                result.append((symbol, name))
+    return result
+
+
 def load_sector_companies_from_excel(excel_file='Sector-Company.xlsx'):
     """
     Load sector-company mappings from Excel file.

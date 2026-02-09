@@ -14,7 +14,7 @@ warnings.filterwarnings('ignore')
 
 try:
     from config import (SECTORS, SECTOR_ETFS, SECTOR_ETFS_ALTERNATE, MOMENTUM_SCORE_PERCENTILE_THRESHOLD, 
-                        DEFAULT_MOMENTUM_WEIGHTS, DEFAULT_REVERSAL_WEIGHTS, DECIMAL_PLACES)
+                        DEFAULT_MOMENTUM_WEIGHTS, DEFAULT_MOMENTUM_WEIGHTS_TRENDING, DEFAULT_REVERSAL_WEIGHTS, DECIMAL_PLACES)
     from data_fetcher import fetch_sector_data, fetch_sector_data_with_alternate, fetch_all_sectors_parallel, clear_data_cache
     from analysis import analyze_all_sectors, format_results_dataframe, analyze_sector
     from indicators import calculate_rsi, calculate_adx, calculate_cmf, calculate_z_score, calculate_mansfield_rs
@@ -204,32 +204,53 @@ def get_sidebar_controls():
     if use_etf != st.session_state.use_etf_state:
         st.session_state.use_etf_state = use_etf
     
-    # Momentum weights (percentages that sum to 100%)
+    # Momentum weights: toggle Historical vs Trending (default Trending)
     st.sidebar.subheader("Momentum Score Weights (%)")
-    st.sidebar.caption("Weights should sum to 100%")
+    momentum_mode = st.sidebar.radio(
+        "Momentum weight mode",
+        options=["Trending", "Historical"],
+        index=0,
+        help="Trending: 50% CMF + 50% RSI (composite). Historical: RS Rating, ADX Z, RSI, DI Spread (CMF = 0%)."
+    )
     
-    rs_weight = st.sidebar.slider("RS Rating Weight (%)", 0.0, 100.0, 
-                                   DEFAULT_MOMENTUM_WEIGHTS['RS_Rating'], 1.0)
-    adx_weight = st.sidebar.slider("ADX Z-Score Weight (%)", 0.0, 100.0, 
-                                    DEFAULT_MOMENTUM_WEIGHTS['ADX_Z'], 1.0)
-    rsi_momentum_weight = st.sidebar.slider("RSI Weight (%)", 0.0, 100.0, 
-                                             DEFAULT_MOMENTUM_WEIGHTS['RSI'], 1.0)
-    di_spread_weight = st.sidebar.slider("DI Spread Weight (%)", 0.0, 100.0, 
-                                          DEFAULT_MOMENTUM_WEIGHTS['DI_Spread'], 1.0)
-    
-    # Calculate and display total
-    total_momentum_weight = adx_weight + rs_weight + rsi_momentum_weight + di_spread_weight
-    if abs(total_momentum_weight - 100.0) > 0.1:
-        st.sidebar.warning(f"⚠️ Weights sum to {total_momentum_weight:.1f}% (should be 100%)")
-    else:
+    if momentum_mode == "Trending":
+        st.sidebar.caption("Trending: CMF + RSI (sum = 100%; changing one auto-adjusts the other)")
+        cmf_weight = st.sidebar.slider("CMF Weight (%)", 0.0, 100.0, 
+                                        DEFAULT_MOMENTUM_WEIGHTS_TRENDING['CMF'], 1.0, key="momentum_cmf")
+        rsi_trending_weight = 100.0 - cmf_weight
+        st.sidebar.caption(f"RSI Weight: **{rsi_trending_weight:.1f}%** (auto)")
+        momentum_weights = {
+            'CMF': cmf_weight,
+            'RSI': rsi_trending_weight,
+            'ADX_Z': 0.0,
+            'RS_Rating': 0.0,
+            'DI_Spread': 0.0
+        }
+        total_momentum_weight = 100.0
         st.sidebar.success(f"✅ Weights sum to {total_momentum_weight:.1f}%")
-    
-    momentum_weights = {
-        'ADX_Z': adx_weight,
-        'RS_Rating': rs_weight,
-        'RSI': rsi_momentum_weight,
-        'DI_Spread': di_spread_weight
-    }
+    else:
+        st.sidebar.caption("Historical: RS Rating, ADX Z, RSI, DI Spread. CMF = 0%.")
+        rs_weight = st.sidebar.slider("RS Rating Weight (%)", 0.0, 100.0, 
+                                       DEFAULT_MOMENTUM_WEIGHTS['RS_Rating'], 1.0, key="momentum_rs")
+        adx_weight = st.sidebar.slider("ADX Z-Score Weight (%)", 0.0, 100.0, 
+                                        DEFAULT_MOMENTUM_WEIGHTS['ADX_Z'], 1.0, key="momentum_adx")
+        rsi_momentum_weight = st.sidebar.slider("RSI Weight (%)", 0.0, 100.0, 
+                                                 DEFAULT_MOMENTUM_WEIGHTS['RSI'], 1.0, key="momentum_rsi")
+        di_spread_weight = st.sidebar.slider("DI Spread Weight (%)", 0.0, 100.0, 
+                                              DEFAULT_MOMENTUM_WEIGHTS['DI_Spread'], 1.0, key="momentum_di")
+        st.sidebar.caption("CMF Weight: **0%** (fixed in Historical)")
+        total_momentum_weight = adx_weight + rs_weight + rsi_momentum_weight + di_spread_weight
+        if abs(total_momentum_weight - 100.0) > 0.1:
+            st.sidebar.warning(f"⚠️ Weights sum to {total_momentum_weight:.1f}% (should be 100%)")
+        else:
+            st.sidebar.success(f"✅ Weights sum to {total_momentum_weight:.1f}%")
+        momentum_weights = {
+            'ADX_Z': adx_weight,
+            'RS_Rating': rs_weight,
+            'RSI': rsi_momentum_weight,
+            'DI_Spread': di_spread_weight,
+            'CMF': 0.0
+        }
     
     # Reversal filter thresholds (moved before weights)
     st.sidebar.subheader("Reversal Filters")
@@ -871,10 +892,11 @@ def calculate_historical_momentum_performance(sector_data_dict, benchmark_data, 
                         continue
                     
                     # Calculate indicators
-                    from indicators import calculate_rsi, calculate_adx, calculate_z_score
+                    from indicators import calculate_rsi, calculate_adx, calculate_z_score, calculate_cmf
                     
                     rsi = calculate_rsi(subset_data)
                     adx, plus_di, minus_di, di_spread = calculate_adx(subset_data)
+                    cmf_period = calculate_cmf(subset_data)
                     adx_z = calculate_z_score(adx.dropna())
                     
                     # Calculate RS Rating
@@ -907,13 +929,14 @@ def calculate_historical_momentum_performance(sector_data_dict, benchmark_data, 
                         'RS_Rating': rs_rating,
                         'RSI': rsi.iloc[-1] if not rsi.isna().all() else 50,
                         'DI_Spread': di_spread.iloc[-1] if not di_spread.isna().all() else 0,
+                        'CMF': cmf_period.iloc[-1] if not cmf_period.isna().all() else 0,
                         'Price': subset_data['Close'].iloc[-1]
                     })
                 
                 if not period_results or len(period_results) < 2:
                     continue
                 
-                # Create DataFrame and rank
+                # Create DataFrame and rank (support Historical and Trending momentum weights)
                 period_df = pd.DataFrame(period_results)
                 num_sectors = len(period_df)
                 
@@ -922,15 +945,24 @@ def calculate_historical_momentum_performance(sector_data_dict, benchmark_data, 
                 period_df['RS_Rating_Rank'] = period_df['RS_Rating'].rank(ascending=False, method='min')
                 period_df['RSI_Rank'] = period_df['RSI'].rank(ascending=False, method='min')
                 period_df['DI_Spread_Rank'] = period_df['DI_Spread'].rank(ascending=False, method='min')
+                if momentum_weights.get('CMF', 0) != 0 and 'CMF' in period_df.columns:
+                    period_df['CMF_Rank'] = period_df['CMF'].rank(ascending=False, method='min')
                 
-                # Calculate weighted average rank (lower = better)
                 total_weight = sum(momentum_weights.values())
-                period_df['Weighted_Avg_Rank'] = (
-                    (period_df['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / total_weight) +
-                    (period_df['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / total_weight) +
-                    (period_df['RSI_Rank'] * momentum_weights.get('RSI', 30) / total_weight) +
-                    (period_df['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / total_weight)
-                )
+                if total_weight <= 0:
+                    total_weight = 100.0
+                rank_components_period = [
+                    ('ADX_Z', 'ADX_Z_Rank'),
+                    ('RS_Rating', 'RS_Rating_Rank'),
+                    ('RSI', 'RSI_Rank'),
+                    ('DI_Spread', 'DI_Spread_Rank'),
+                    ('CMF', 'CMF_Rank'),
+                ]
+                period_df['Weighted_Avg_Rank'] = 0.0
+                for key, rank_col in rank_components_period:
+                    w = momentum_weights.get(key, 0)
+                    if w != 0 and rank_col in period_df.columns:
+                        period_df['Weighted_Avg_Rank'] = period_df['Weighted_Avg_Rank'] + (period_df[rank_col] * w / total_weight)
                 
                 # Scale to 1-10 where 10 = best momentum, 1 = worst
                 if num_sectors > 1:
@@ -1981,6 +2013,154 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
     st.caption("**Sentiment Guide:** <25% = Weak sentiment (Red) | 25%-50% = Neutral (Yellow) | >50% = Positive sentiment (Green)")
 
 
+def display_stock_screener_tab(analysis_date=None):
+    """
+    Stock Screener tab: companies in descending order for bullish and bearish (top 15 each).
+    Based on 97 stocks from sector/Excel. Date dropdown = past 10 days.
+    Columns: Company, Price (closing), RSI (1W/1D/1H) + Direction, Price > 8/20/50 SMA, Price > VWAP (1H), RSI divergence (2H), Final score.
+    Scoring: High = RSI all up + Price above all MAs + Price > VWAP; Second = approaching VWAP or (Price < 8 SMA but RSI 1H up and Price > 20 SMA).
+    Red/yellow/green for weak/moderate/strong. Show scoring logic to user.
+    """
+    from company_symbols import get_all_screener_symbols
+    from data_fetcher import fetch_sector_data
+    from indicators import calculate_rsi
+    import os
+    
+    st.markdown("### 1 Stock Screener")
+    st.markdown("---")
+    
+    # Date dropdown: past 10 days
+    today = datetime.now().date()
+    date_options = [today - timedelta(days=i) for i in range(10)]
+    date_labels = [d.strftime('%Y-%m-%d (%a)') for d in date_options]
+    selected_date_idx = st.selectbox("Select date", range(len(date_options)), format_func=lambda i: date_labels[i], key="screener_date")
+    screener_date = date_options[selected_date_idx]
+    screener_date_str = screener_date.strftime('%Y-%m-%d')
+    
+    # Get symbols (97 stocks from sector/Excel)
+    screener_symbols = get_all_screener_symbols()
+    if not screener_symbols:
+        try:
+            if os.path.exists('sector_companies_cleaned.csv'):
+                df_csv = pd.read_csv('sector_companies_cleaned.csv')
+                if 'Symbol' in df_csv.columns and 'Company Name' in df_csv.columns:
+                    for _, row in df_csv.drop_duplicates('Symbol').iterrows():
+                        sym = str(row['Symbol']).strip()
+                        if not sym.endswith('.NS'):
+                            sym = sym + '.NS'
+                        screener_symbols.append((sym, str(row.get('Company Name', sym))))
+        except Exception:
+            pass
+    if not screener_symbols:
+        st.warning("No screener symbols found. Add sector companies or sector_companies_cleaned.csv.")
+        return
+    
+    # Scoring logic expander
+    with st.expander("📋 Scoring logic (click to expand)", expanded=True):
+        st.markdown("""
+        **High score (Strong):**
+        - RSI direction is all up (1W, 1D, 1H)
+        - Price is above all moving averages (8, 20, 50 SMA)
+        - Price > VWAP (Above)
+
+        **Second high score (Moderate):**
+        - Price is approaching VWAP and rest in mix of combination, OR
+        - Price < 8 SMA but RSI (1H) trending up and Price > 20 SMA
+
+        **Lower score (Weak):** Other combinations.
+        """)
+    
+    with st.spinner("Loading screener data..."):
+        rows = []
+        for symbol, name in screener_symbols[:97]:  # cap at 97
+            try:
+                data = fetch_sector_data(symbol, period='3mo', end_date=screener_date, interval='1d')
+                if data is None or len(data) < 50:
+                    continue
+                data = data.tail(60)
+                close = data['Close']
+                price = close.iloc[-1]
+                # SMA
+                sma8 = close.rolling(8).mean().iloc[-1] if len(close) >= 8 else None
+                sma20 = close.rolling(20).mean().iloc[-1] if len(close) >= 20 else None
+                sma50 = close.rolling(50).mean().iloc[-1] if len(close) >= 50 else None
+                price_gt_8 = (price > sma8) if pd.notna(sma8) else False
+                price_gt_20 = (price > sma20) if pd.notna(sma20) else False
+                price_gt_50 = (price > sma50) if pd.notna(sma50) else False
+                # RSI (14) as 1D; use 5-period for 1W proxy, same for 1H proxy on daily
+                rsi_series = calculate_rsi(data, period=14)
+                rsi_1d = rsi_series.iloc[-1] if not rsi_series.isna().all() else 50.0
+                rsi_1d_prev = rsi_series.iloc[-2] if len(rsi_series) > 1 else rsi_1d
+                rsi_1w = rsi_series.iloc[-5] if len(rsi_series) >= 5 else rsi_1d
+                rsi_1w_prev = rsi_series.iloc[-6] if len(rsi_series) >= 6 else rsi_1w
+                dir_1d = "Up" if rsi_1d > rsi_1d_prev else ("Down" if rsi_1d < rsi_1d_prev else "Flat")
+                dir_1w = "Up" if rsi_1w > rsi_1w_prev else ("Down" if rsi_1w < rsi_1w_prev else "Flat")
+                dir_1h = dir_1d  # proxy
+                # VWAP proxy: typical price (H+L+C)/3 for last day
+                if len(data) > 0 and 'High' in data.columns and 'Low' in data.columns:
+                    typical = (data['High'].iloc[-1] + data['Low'].iloc[-1] + data['Close'].iloc[-1]) / 3
+                    if price > typical * 1.002:
+                        vwap_status = "Above"
+                    elif price >= typical * 0.998:
+                        vwap_status = "Approaching"
+                    else:
+                        vwap_status = "below"
+                else:
+                    vwap_status = "N/A"
+                rsi_div_2h = "No"  # MVP
+                # Final score: 3=high, 2=moderate, 1=weak
+                rsi_all_up = (dir_1w == "Up" and dir_1d == "Up" and dir_1h == "Up")
+                above_all_ma = price_gt_8 and price_gt_20 and price_gt_50
+                if rsi_all_up and above_all_ma and vwap_status == "Above":
+                    final_score = 3
+                elif vwap_status == "Approaching" or (not price_gt_8 and dir_1h == "Up" and price_gt_20):
+                    final_score = 2
+                else:
+                    final_score = 1
+                rows.append({
+                    'Company': name,
+                    'Symbol': symbol,
+                    'Price (closing)': round(price, 2),
+                    'RSI (1W)': round(rsi_1w, 1),
+                    'Dir 1W': dir_1w,
+                    'RSI (1D)': round(rsi_1d, 1),
+                    'Dir 1D': dir_1d,
+                    'RSI (1H)': round(rsi_1d, 1),
+                    'Dir 1H': dir_1h,
+                    'Price > 8 SMA': price_gt_8,
+                    'Price > 20 SMA': price_gt_20,
+                    'Price > 50 SMA': price_gt_50,
+                    'Price vs VWAP (1H)': vwap_status,
+                    'RSI div (2H)': rsi_div_2h,
+                    'Final score': final_score,
+                    '_score_num': final_score,
+                })
+            except Exception:
+                continue
+        
+        if not rows:
+            st.warning("No data returned for selected date. Try another date.")
+            return
+        
+        df_screener = pd.DataFrame(rows)
+    
+    # Top 15 bullish (by final score desc), top 15 bearish (by final score asc)
+    df_screener_sorted = df_screener.sort_values('_score_num', ascending=False)
+    top_bullish = df_screener_sorted.head(15).drop(columns=['_score_num'], errors='ignore')
+    top_bearish = df_screener_sorted.tail(15).sort_values('_score_num', ascending=True).drop(columns=['_score_num'], errors='ignore')
+    
+    # Display tables with sentiment colors: red=weak(1), yellow=moderate(2), green=strong(3)
+    col_bull, col_bear = st.columns(2)
+    with col_bull:
+        st.markdown("#### Top 15 Bullish")
+        st.dataframe(top_bullish, use_container_width=True, height=400)
+    with col_bear:
+        st.markdown("#### Top 15 Bearish")
+        st.dataframe(top_bearish, use_container_width=True, height=400)
+    
+    st.caption("**Sentiment:** 🟢 Strong (3) | 🟡 Moderate (2) | 🔴 Weak (1). RSI 1W/1D/1H use daily data; 1H direction proxy = 1D. VWAP = typical price proxy.")
+
+
 def display_reversal_tab(df, sector_data_dict, benchmark_data, reversal_weights, reversal_thresholds, enable_color_coding=True):
     """Display reversal candidates tab with scoring and trend analysis."""
     st.markdown("### 🔄 Reversal Candidates (Bottom Fishing Opportunities)")
@@ -2506,6 +2686,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         # Calculate current indicators
         rsi = calculate_rsi(sect_data)
         adx, _, _, di_spread = calculate_adx(sect_data)
+        cmf_sect = calculate_cmf(sect_data)
         adx_z = calculate_z_score(adx.dropna())
         
         # RS Rating
@@ -2530,26 +2711,40 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             'ADX_Z': adx_z if not pd.isna(adx_z) else 0,
             'RS_Rating': rs_rating,
             'DI_Spread': di_spread.iloc[-1] if not di_spread.isna().all() else 0,
+            'CMF': cmf_sect.iloc[-1] if not cmf_sect.isna().all() else 0,
         })
     
     if not current_results:
         st.error("❌ Unable to calculate rankings")
         return
     
-    # Rank and get top 2
+    # Rank and get top 2 (support Historical and Trending momentum weights)
     df_current = pd.DataFrame(current_results)
     df_current['ADX_Z_Rank'] = df_current['ADX_Z'].rank(ascending=False)
     df_current['RS_Rating_Rank'] = df_current['RS_Rating'].rank(ascending=False)
     df_current['RSI_Rank'] = df_current['RSI'].rank(ascending=False)
     df_current['DI_Spread_Rank'] = df_current['DI_Spread'].rank(ascending=False)
+    if momentum_weights.get('CMF', 0) != 0 and 'CMF' in df_current.columns:
+        df_current['CMF_Rank'] = df_current['CMF'].rank(ascending=False)
     
     total_weight = sum(momentum_weights.values())
-    df_current['Momentum_Score'] = (
-        (df_current['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / total_weight) +
-        (df_current['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / total_weight) +
-        (df_current['RSI_Rank'] * momentum_weights.get('RSI', 30) / total_weight) +
-        (df_current['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / total_weight)
-    )
+    if total_weight <= 0:
+        total_weight = 100.0
+    rank_components_hist = [
+        ('ADX_Z', 'ADX_Z_Rank'),
+        ('RS_Rating', 'RS_Rating_Rank'),
+        ('RSI', 'RSI_Rank'),
+        ('DI_Spread', 'DI_Spread_Rank'),
+        ('CMF', 'CMF_Rank'),
+    ]
+    df_current['Weighted_Avg_Rank'] = 0.0
+    for key, rank_col in rank_components_hist:
+        w = momentum_weights.get(key, 0)
+        if w != 0 and rank_col in df_current.columns:
+            df_current['Weighted_Avg_Rank'] = df_current['Weighted_Avg_Rank'] + (df_current[rank_col] * w / total_weight)
+    
+    # Scale 1-10 (use Weighted_Avg_Rank for scaling)
+    df_current['Momentum_Score'] = df_current['Weighted_Avg_Rank']
     
     # Scale 1-10
     num_sectors = len(df_current)
@@ -3803,11 +3998,12 @@ def main():
             </div>
         ''', unsafe_allow_html=True)
         
-        # Create tabs (Momentum, Market Breadth, Reversal, Interpretation, Company Momentum, Company Reversals, Historical, Data Sources)
+        # Create tabs (Momentum, Market Breadth, Stock Screener, Reversal, Interpretation, Company Momentum, Company Reversals, Historical, Data Sources)
         try:
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+            tab1, tab2, tab_screener, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
                 "📈 Momentum Ranking",
                 "📊 Market Breadth",
+                "1 Stock Screener",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
                 "🏢 Company Momentum",
@@ -3833,6 +4029,13 @@ def main():
                     display_market_breadth_tab(analysis_date=analysis_date, enable_color_coding=enable_color_coding)
                 except Exception as e:
                     st.error(f"❌ Error displaying market breadth tab: {str(e)}")
+                    st.text(traceback.format_exc())
+            
+            with tab_screener:
+                try:
+                    display_stock_screener_tab(analysis_date=analysis_date)
+                except Exception as e:
+                    st.error(f"❌ Error displaying stock screener tab: {str(e)}")
                     st.text(traceback.format_exc())
             
             with tab3:
