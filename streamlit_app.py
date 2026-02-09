@@ -2047,7 +2047,7 @@ def display_stock_screener_tab(analysis_date=None):
         default_time_idx = 0
     selected_time = st.selectbox("Time", range(len(time_options)), index=default_time_idx, format_func=lambda i: time_options[i], key="screener_time")
     screener_time_label = time_options[selected_time]
-    st.caption("Analysis uses price as of selected time; daily close is used as proxy when intraday data is not available.")
+    st.caption("**Prior date:** When you select a prior date, all data and analysis are as of that date. **Price shown** is the **daily closing price** for that date (not 2:15 PM; 2:15 PM would require intraday data). Price and Price > SMA use **daily** close; for 1H timeframe intraday data would be required.")
     
     # Get symbols (97 stocks from sector/Excel)
     screener_symbols = get_all_screener_symbols()
@@ -2172,12 +2172,12 @@ def display_stock_screener_tab(analysis_date=None):
                 row_dict = {
                     'Company': name,
                     'Symbol': symbol,
-                    'Price (closing)': round(price, 2),
-                    'RSI (1W)': round(rsi_1w, 1),
+                    'Price (closing)': int(round(price, 0)),
+                    'RSI (1W)': int(round(rsi_1w, 0)),
                     'Dir 1W': dir_1w,
-                    'RSI (1D)': round(rsi_1d, 1),
+                    'RSI (1D)': int(round(rsi_1d, 0)),
                     'Dir 1D': dir_1d,
-                    'RSI (1H)': round(rsi_1d, 1),
+                    'RSI (1H)': int(round(rsi_1d, 0)),
                     'Dir 1H': dir_1h,
                     'Price > 8 SMA': price_gt_8,
                     'Price > 20 SMA': price_gt_20,
@@ -2252,7 +2252,7 @@ def display_stock_screener_tab(analysis_date=None):
     st.caption("Bearish: Price below VWAP and Price &lt; 8 SMA, &lt; 20 SMA, &lt; 50 SMA.")
     st.dataframe(style_sentiment_column(top_bearish), use_container_width=True, height=400)
     
-    st.caption("**Sentiment (colored):** 🟢 Strong (3) | 🟡 Moderate (2) | 🔴 Weak (1). Next 1D/2D return % shown only for prior dates. RSI 1W/1D/1H use daily data; VWAP = typical price proxy.")
+    st.caption("**Sentiment (colored):** 🟢 Strong (3) | 🟡 Moderate (2) | 🔴 Weak (1). **Next 1 day return %** = (next trading day close − selected date close) / selected date close × 100 (actual close-to-close). **Next 2 day return %** = same for 2 trading days ahead. Shown only for prior dates. **Price, Price > SMA, VWAP:** based on **daily** close; 1H would require intraday data.")
 
 
 def display_reversal_tab(df, sector_data_dict, benchmark_data, reversal_weights, reversal_thresholds, enable_color_coding=True):
