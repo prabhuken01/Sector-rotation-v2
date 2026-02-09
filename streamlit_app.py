@@ -2099,41 +2099,37 @@ def display_stock_screener_tab(analysis_date=None):
             return "Down"
         return "Flat"
     
-    with st.spinner("Loading screener data (1h for date+time)..."):
+    with st.spinner("Loading screener data (1h for current date; daily for prior dates)..."):
         rows = []
         for symbol, name in screener_symbols[:97]:
             try:
-                # Prefer 1h data so price/RSI/SMA are as of selected date and time (on or before cutoff)
-                data_1h = fetch_sector_data(symbol, period='60d', end_date=end_date_for_fetch, interval='1h')
+                # For current date: try 1h so price/RSI/SMA are as of selected time; for prior dates: skip intraday and use daily closes
+                use_1h = False
+                data_1h = None
                 data_as_of = None
-                if data_1h is not None and len(data_1h) >= 50:
-                    try:
-                        idx = data_1h.index
-                        if hasattr(idx, 'tz_localize') and idx.tz is None:
-                            pass
-                        dt_date = pd.Series(idx).dt.date
-                        dt_hour = pd.Series(idx).dt.hour
-                        mask = (dt_date < screener_date) | ((dt_date == screener_date) & (dt_hour <= time_cutoff_hour))
-                        data_as_of = data_1h.loc[mask].sort_index().tail(60)
-                    except Exception:
-                        pass
-                if data_as_of is None or len(data_as_of) < 14:
-                    use_1h = False
-                else:
-                    last_bar_date = pd.Series(data_as_of.index).dt.date.iloc[-1]
-                    if last_bar_date != screener_date:
-                        use_1h = False
-                        data_as_of = None
-                    else:
-                        use_1h = True
+                if not is_prior_date:
+                    data_1h = fetch_sector_data(symbol, period='60d', end_date=end_date_for_fetch, interval='1h')
+                    if data_1h is not None and len(data_1h) >= 50:
+                        try:
+                            idx = data_1h.index
+                            dt_date = pd.Series(idx).dt.date
+                            dt_hour = pd.Series(idx).dt.hour
+                            mask = (dt_date < screener_date) | ((dt_date == screener_date) & (dt_hour <= time_cutoff_hour))
+                            data_as_of = data_1h.loc[mask].sort_index().tail(60)
+                        except Exception:
+                            data_as_of = None
+                    if data_as_of is not None and len(data_as_of) >= 14:
+                        last_bar_date = pd.Series(data_as_of.index).dt.date.iloc[-1]
+                        if last_bar_date == screener_date:
+                            use_1h = True
                 if not use_1h:
-                    # Fallback: daily data as of selected date
+                    # Daily data as of selected date (used for all prior dates and as fallback for today)
                     data_full = fetch_sector_data(symbol, period='3mo', end_date=end_date_for_fetch, interval='1d')
                     if data_full is None or len(data_full) < 50:
                         continue
                     mask_on_or_before = pd.Series(data_full.index).dt.date <= screener_date
                     data = data_full.loc[mask_on_or_before].tail(60)
-                    if len(data) < 50:
+                    if len(data) < 20:
                         continue
                     close = data['Close']
                     price = float(close.iloc[-1])
