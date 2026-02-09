@@ -2125,11 +2125,16 @@ def display_stock_screener_tab(analysis_date=None):
                 if not use_1h:
                     # Daily data as of selected date (used for all prior dates and as fallback for today)
                     data_full = fetch_sector_data(symbol, period='3mo', end_date=end_date_for_fetch, interval='1d')
-                    if data_full is None or len(data_full) < 50:
+                    if data_full is None or len(data_full) < 14:
                         continue
-                    mask_on_or_before = pd.Series(data_full.index).dt.date <= screener_date
-                    data = data_full.loc[mask_on_or_before].tail(60)
-                    if len(data) < 20:
+                    # Date comparison: get calendar date from index (works with tz-aware or naive)
+                    idx_dates = pd.Series(data_full.index).dt.date
+                    mask_on_or_before = (idx_dates <= screener_date).values
+                    data = data_full.iloc[mask_on_or_before].tail(60)
+                    # If no rows on or before screener_date (e.g. timezone), use last 60 rows
+                    if len(data) < 14:
+                        data = data_full.tail(60)
+                    if len(data) < 14:
                         continue
                     close = data['Close']
                     price = float(close.iloc[-1])
