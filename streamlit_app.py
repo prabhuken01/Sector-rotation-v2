@@ -2015,18 +2015,16 @@ def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
 
 def display_stock_screener_tab(analysis_date=None):
     """
-    Stock Screener tab: companies in descending order for bullish and bearish (top 15 each).
-    Based on 97 stocks from sector/Excel. Date dropdown = past 10 days.
-    Columns: Company, Price (closing), RSI (1W/1D/1H) + Direction, Price > 8/20/50 SMA, Price > VWAP (1H), RSI divergence (2H), Final score.
-    Scoring: High = RSI all up + Price above all MAs + Price > VWAP; Second = approaching VWAP or (Price < 8 SMA but RSI 1H up and Price > 20 SMA).
-    Red/yellow/green for weak/moderate/strong. Show scoring logic to user.
+    Stock Screener tab: top 15 bullish and top 15 bearish (bearish = price below VWAP and price < 8/20/50 SMA).
+    Date + time (10:15 AM, 12:15 PM, 2:15 PM). Analysis price as of selected date; daily close as proxy.
+    Columns: ... Final score, Sentiment (Strong/Moderate/Weak with red/yellow/green), Next 1 day return %, Next 2 day return % (prior dates only).
     """
     from company_symbols import get_all_screener_symbols
     from data_fetcher import fetch_sector_data
     from indicators import calculate_rsi
     import os
     
-    st.markdown("### 1 Stock Screener")
+    st.markdown("### Stock Screener")
     st.markdown("---")
     
     # Date dropdown: past 10 days
@@ -2036,6 +2034,20 @@ def display_stock_screener_tab(analysis_date=None):
     selected_date_idx = st.selectbox("Select date", range(len(date_options)), format_func=lambda i: date_labels[i], key="screener_date")
     screener_date = date_options[selected_date_idx]
     screener_date_str = screener_date.strftime('%Y-%m-%d')
+    
+    # Time option: 10:15 AM, 12:15 PM, 2:15 PM. Default = latest option that has passed (prevailing time).
+    time_options = ["10:15 AM", "12:15 PM", "2:15 PM"]
+    now = datetime.now()
+    now_minutes = now.hour * 60 + now.minute
+    if now_minutes >= 14 * 60 + 15:   # 2:15 PM
+        default_time_idx = 2
+    elif now_minutes >= 12 * 60 + 15:  # 12:15 PM
+        default_time_idx = 1
+    else:
+        default_time_idx = 0
+    selected_time = st.selectbox("Time", range(len(time_options)), index=default_time_idx, format_func=lambda i: time_options[i], key="screener_time")
+    screener_time_label = time_options[selected_time]
+    st.caption("Analysis uses price as of selected time; daily close is used as proxy when intraday data is not available.")
     
     # Get symbols (97 stocks from sector/Excel)
     screener_symbols = get_all_screener_symbols()
@@ -2070,16 +2082,49 @@ def display_stock_screener_tab(analysis_date=None):
         **Lower score (Weak):** Other combinations.
         """)
     
+    is_prior_date = screener_date < today
+    end_date_for_fetch = (screener_date + timedelta(days=5)) if is_prior_date else screener_date
+    
     with st.spinner("Loading screener data..."):
         rows = []
         for symbol, name in screener_symbols[:97]:  # cap at 97
             try:
-                data = fetch_sector_data(symbol, period='3mo', end_date=screener_date, interval='1d')
-                if data is None or len(data) < 50:
+                data_full = fetch_sector_data(symbol, period='3mo', end_date=end_date_for_fetch, interval='1d')
+                if data_full is None or len(data_full) < 50:
                     continue
-                data = data.tail(60)
+                # For prior dates: use data as of screener_date for price/indicators; keep full for next-day returns
+                if is_prior_date:
+                    try:
+                        mask_on_or_before = pd.Series(data_full.index).dt.date <= screener_date
+                        data = data_full.loc[mask_on_or_before].tail(60)
+                    except Exception:
+                        data = data_full.tail(60)
+                else:
+                    data = data_full.tail(65)
+                if len(data) < 50:
+                    continue
                 close = data['Close']
-                price = close.iloc[-1]
+                price = float(close.iloc[-1])
+                # Next 1D and 2D return % (only for prior dates, not current date)
+                next_1d_pct = None
+                next_2d_pct = None
+                if is_prior_date and len(data_full) > 0:
+                    try:
+                        dates_arr = pd.Series(data_full.index).dt.date
+                        idx_sel = None
+                        for i in range(len(data_full) - 1, -1, -1):
+                            if dates_arr.iloc[i] <= screener_date:
+                                idx_sel = i
+                                break
+                        if idx_sel is not None and idx_sel + 2 < len(data_full):
+                            close_sel = float(data_full['Close'].iloc[idx_sel])
+                            close_1d = float(data_full['Close'].iloc[idx_sel + 1])
+                            close_2d = float(data_full['Close'].iloc[idx_sel + 2])
+                            if close_sel > 0:
+                                next_1d_pct = round((close_1d - close_sel) / close_sel * 100, 2)
+                                next_2d_pct = round((close_2d - close_sel) / close_sel * 100, 2)
+                    except Exception:
+                        pass
                 # SMA
                 sma8 = close.rolling(8).mean().iloc[-1] if len(close) >= 8 else None
                 sma20 = close.rolling(20).mean().iloc[-1] if len(close) >= 20 else None
@@ -2087,7 +2132,10 @@ def display_stock_screener_tab(analysis_date=None):
                 price_gt_8 = (price > sma8) if pd.notna(sma8) else False
                 price_gt_20 = (price > sma20) if pd.notna(sma20) else False
                 price_gt_50 = (price > sma50) if pd.notna(sma50) else False
-                # RSI (14) as 1D; use 5-period for 1W proxy, same for 1H proxy on daily
+                price_lt_8 = (price < sma8) if pd.notna(sma8) else False
+                price_lt_20 = (price < sma20) if pd.notna(sma20) else False
+                price_lt_50 = (price < sma50) if pd.notna(sma50) else False
+                # RSI (14) as 1D; use 5-period for 1W proxy
                 rsi_series = calculate_rsi(data, period=14)
                 rsi_1d = rsi_series.iloc[-1] if not rsi_series.isna().all() else 50.0
                 rsi_1d_prev = rsi_series.iloc[-2] if len(rsi_series) > 1 else rsi_1d
@@ -2107,6 +2155,7 @@ def display_stock_screener_tab(analysis_date=None):
                         vwap_status = "below"
                 else:
                     vwap_status = "N/A"
+                price_below_vwap = (vwap_status == "below")
                 rsi_div_2h = "No"  # MVP
                 # Final score: 3=high, 2=moderate, 1=weak
                 rsi_all_up = (dir_1w == "Up" and dir_1d == "Up" and dir_1h == "Up")
@@ -2117,7 +2166,10 @@ def display_stock_screener_tab(analysis_date=None):
                     final_score = 2
                 else:
                     final_score = 1
-                rows.append({
+                # Bearish score: price below VWAP + price < 8/20/50 SMA (higher = more bearish)
+                bearish_score = (1 if price_below_vwap else 0) + (1 if price_lt_8 else 0) + (1 if price_lt_20 else 0) + (1 if price_lt_50 else 0)
+                sentiment_label = "Strong" if final_score == 3 else ("Moderate" if final_score == 2 else "Weak")
+                row_dict = {
                     'Company': name,
                     'Symbol': symbol,
                     'Price (closing)': round(price, 2),
@@ -2133,8 +2185,14 @@ def display_stock_screener_tab(analysis_date=None):
                     'Price vs VWAP (1H)': vwap_status,
                     'RSI div (2H)': rsi_div_2h,
                     'Final score': final_score,
+                    'Sentiment': sentiment_label,
                     '_score_num': final_score,
-                })
+                    '_bearish_score': bearish_score,
+                }
+                if is_prior_date:
+                    row_dict['Next 1 day return %'] = next_1d_pct if next_1d_pct is not None else ""
+                    row_dict['Next 2 day return %'] = next_2d_pct if next_2d_pct is not None else ""
+                rows.append(row_dict)
             except Exception:
                 continue
         
@@ -2144,21 +2202,57 @@ def display_stock_screener_tab(analysis_date=None):
         
         df_screener = pd.DataFrame(rows)
     
-    # Top 15 bullish (by final score desc), top 15 bearish (by final score asc)
-    df_screener_sorted = df_screener.sort_values('_score_num', ascending=False)
-    top_bullish = df_screener_sorted.head(15).drop(columns=['_score_num'], errors='ignore')
-    top_bearish = df_screener_sorted.tail(15).sort_values('_score_num', ascending=True).drop(columns=['_score_num'], errors='ignore')
+    # Top 15 bullish: by final score desc
+    df_screener_sorted_bull = df_screener.sort_values('_score_num', ascending=False)
+    top_bullish = df_screener_sorted_bull.head(15).copy()
+    # Top 15 bearish: price below VWAP and price < 8 SMA, < 20 SMA, < 50 SMA; rank by bearish score desc
+    top_bearish = df_screener.sort_values('_bearish_score', ascending=False).head(15).copy()
     
-    # Display tables with sentiment colors: red=weak(1), yellow=moderate(2), green=strong(3)
-    col_bull, col_bear = st.columns(2)
-    with col_bull:
-        st.markdown("#### Top 15 Bullish")
-        st.dataframe(top_bullish, use_container_width=True, height=400)
-    with col_bear:
-        st.markdown("#### Top 15 Bearish")
-        st.dataframe(top_bearish, use_container_width=True, height=400)
+    # Drop internal columns; order: ... Final score, Sentiment, [Next 1 day return %, Next 2 day return %] if prior date
+    internal_cols = ['_score_num', '_bearish_score']
+    top_bullish = top_bullish.drop(columns=internal_cols, errors='ignore')
+    top_bearish = top_bearish.drop(columns=internal_cols, errors='ignore')
     
-    st.caption("**Sentiment:** 🟢 Strong (3) | 🟡 Moderate (2) | 🔴 Weak (1). RSI 1W/1D/1H use daily data; 1H direction proxy = 1D. VWAP = typical price proxy.")
+    def _order_cols(df_table):
+        cols = [c for c in df_table.columns if c in df_table.columns]
+        base = [c for c in cols if c not in ('Sentiment', 'Next 1 day return %', 'Next 2 day return %')]
+        idx_fs = base.index('Final score') + 1 if 'Final score' in base else len(base)
+        out = base[:idx_fs] + ['Sentiment']
+        if 'Next 1 day return %' in cols and 'Next 2 day return %' in cols:
+            out += ['Next 1 day return %', 'Next 2 day return %']
+        out += [c for c in base[idx_fs:] if c != 'Sentiment']
+        return [c for c in out if c in df_table.columns]
+    
+    top_bullish = top_bullish[_order_cols(top_bullish)]
+    top_bearish = top_bearish[_order_cols(top_bearish)]
+    
+    def style_sentiment_column(df_table):
+        if 'Sentiment' not in df_table.columns:
+            return df_table.style
+        def color_sentiment(row):
+            n = len(row)
+            try:
+                idx = list(row.index).index('Sentiment')
+            except ValueError:
+                return [''] * n
+            if row['Sentiment'] == 'Strong':
+                style = 'background-color: #27AE60; color: white; font-weight: bold'
+            elif row['Sentiment'] == 'Moderate':
+                style = 'background-color: #F1C40F; color: black; font-weight: bold'
+            else:
+                style = 'background-color: #E74C3C; color: white; font-weight: bold'
+            return [''] * idx + [style] + [''] * (n - idx - 1)
+        return df_table.style.apply(color_sentiment, axis=1)
+    
+    # Display: Bullish first, then Bearish below (vertical stack)
+    st.markdown("#### Top 15 Bullish")
+    st.dataframe(style_sentiment_column(top_bullish), use_container_width=True, height=400)
+    
+    st.markdown("#### Top 15 Bearish")
+    st.caption("Bearish: Price below VWAP and Price &lt; 8 SMA, &lt; 20 SMA, &lt; 50 SMA.")
+    st.dataframe(style_sentiment_column(top_bearish), use_container_width=True, height=400)
+    
+    st.caption("**Sentiment (colored):** 🟢 Strong (3) | 🟡 Moderate (2) | 🔴 Weak (1). Next 1D/2D return % shown only for prior dates. RSI 1W/1D/1H use daily data; VWAP = typical price proxy.")
 
 
 def display_reversal_tab(df, sector_data_dict, benchmark_data, reversal_weights, reversal_thresholds, enable_color_coding=True):
@@ -4003,7 +4097,7 @@ def main():
             tab1, tab2, tab_screener, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
                 "📈 Momentum Ranking",
                 "📊 Market Breadth",
-                "1 Stock Screener",
+                "Stock Screener",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
                 "🏢 Company Momentum",
