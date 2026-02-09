@@ -2047,7 +2047,9 @@ def display_stock_screener_tab(analysis_date=None):
         default_time_idx = 0
     selected_time = st.selectbox("Time", range(len(time_options)), index=default_time_idx, format_func=lambda i: time_options[i], key="screener_time")
     screener_time_label = time_options[selected_time]
-    st.caption("**Prior date:** When you select a prior date, all data and analysis are as of that date. **Price shown** is the **daily closing price** for that date (not 2:15 PM; 2:15 PM would require intraday data). Price and Price > SMA use **daily** close; for 1H timeframe intraday data would be required.")
+    # Map time to cutoff hour (last 1h bar on or before this time): 10:15→10, 12:15→12, 2:15→14
+    time_cutoff_hour = (10, 12, 14)[selected_time]
+    st.caption("Analysis and **Price (closing)** are as of the selected date and time (on or before the chosen time), using 1h data. RSI and Price > SMA use the same 1h snapshot.")
     
     # Get symbols (97 stocks from sector/Excel)
     screener_symbols = get_all_screener_symbols()
@@ -2083,49 +2085,64 @@ def display_stock_screener_tab(analysis_date=None):
         """)
     
     is_prior_date = screener_date < today
-    end_date_for_fetch = (screener_date + timedelta(days=5)) if is_prior_date else screener_date
+    end_date_for_fetch = (screener_date + timedelta(days=5)) if is_prior_date else (screener_date + timedelta(days=1))
     
-    with st.spinner("Loading screener data..."):
+    def _rsi_direction_slope3(rsi_series):
+        """Direction from slope over last 3 sessions: Up if slope > 0, Down if < 0, else Flat."""
+        if rsi_series is None or len(rsi_series) < 3:
+            return "Flat"
+        last3 = rsi_series.iloc[-3:].values
+        slope = (float(last3[-1]) - float(last3[0])) / 2.0
+        if slope > 0:
+            return "Up"
+        if slope < 0:
+            return "Down"
+        return "Flat"
+    
+    with st.spinner("Loading screener data (1h for date+time)..."):
         rows = []
-        for symbol, name in screener_symbols[:97]:  # cap at 97
+        for symbol, name in screener_symbols[:97]:
             try:
-                data_full = fetch_sector_data(symbol, period='3mo', end_date=end_date_for_fetch, interval='1d')
-                if data_full is None or len(data_full) < 50:
-                    continue
-                # For prior dates: use data as of screener_date for price/indicators; keep full for next-day returns
-                if is_prior_date:
+                # Prefer 1h data so price/RSI/SMA are as of selected date and time (on or before cutoff)
+                data_1h = fetch_sector_data(symbol, period='60d', end_date=end_date_for_fetch, interval='1h')
+                data_as_of = None
+                if data_1h is not None and len(data_1h) >= 50:
                     try:
-                        mask_on_or_before = pd.Series(data_full.index).dt.date <= screener_date
-                        data = data_full.loc[mask_on_or_before].tail(60)
-                    except Exception:
-                        data = data_full.tail(60)
-                else:
-                    data = data_full.tail(65)
-                if len(data) < 50:
-                    continue
-                close = data['Close']
-                price = float(close.iloc[-1])
-                # Next 1D and 2D return % (only for prior dates, not current date)
-                next_1d_pct = None
-                next_2d_pct = None
-                if is_prior_date and len(data_full) > 0:
-                    try:
-                        dates_arr = pd.Series(data_full.index).dt.date
-                        idx_sel = None
-                        for i in range(len(data_full) - 1, -1, -1):
-                            if dates_arr.iloc[i] <= screener_date:
-                                idx_sel = i
-                                break
-                        if idx_sel is not None and idx_sel + 2 < len(data_full):
-                            close_sel = float(data_full['Close'].iloc[idx_sel])
-                            close_1d = float(data_full['Close'].iloc[idx_sel + 1])
-                            close_2d = float(data_full['Close'].iloc[idx_sel + 2])
-                            if close_sel > 0:
-                                next_1d_pct = round((close_1d - close_sel) / close_sel * 100, 2)
-                                next_2d_pct = round((close_2d - close_sel) / close_sel * 100, 2)
+                        idx = data_1h.index
+                        if hasattr(idx, 'tz_localize') and idx.tz is None:
+                            pass
+                        dt_date = pd.Series(idx).dt.date
+                        dt_hour = pd.Series(idx).dt.hour
+                        mask = (dt_date < screener_date) | ((dt_date == screener_date) & (dt_hour <= time_cutoff_hour))
+                        data_as_of = data_1h.loc[mask].sort_index().tail(60)
                     except Exception:
                         pass
-                # SMA
+                if data_as_of is None or len(data_as_of) < 14:
+                    use_1h = False
+                else:
+                    last_bar_date = pd.Series(data_as_of.index).dt.date.iloc[-1]
+                    if last_bar_date != screener_date:
+                        use_1h = False
+                        data_as_of = None
+                    else:
+                        use_1h = True
+                if not use_1h:
+                    # Fallback: daily data as of selected date
+                    data_full = fetch_sector_data(symbol, period='3mo', end_date=end_date_for_fetch, interval='1d')
+                    if data_full is None or len(data_full) < 50:
+                        continue
+                    mask_on_or_before = pd.Series(data_full.index).dt.date <= screener_date
+                    data = data_full.loc[mask_on_or_before].tail(60)
+                    if len(data) < 50:
+                        continue
+                    close = data['Close']
+                    price = float(close.iloc[-1])
+                else:
+                    close = data_as_of['Close']
+                    price = float(close.iloc[-1])
+                    data = data_as_of
+                
+                # SMA (8/20/50) on same series (1h or daily)
                 sma8 = close.rolling(8).mean().iloc[-1] if len(close) >= 8 else None
                 sma20 = close.rolling(20).mean().iloc[-1] if len(close) >= 20 else None
                 sma50 = close.rolling(50).mean().iloc[-1] if len(close) >= 50 else None
@@ -2135,16 +2152,53 @@ def display_stock_screener_tab(analysis_date=None):
                 price_lt_8 = (price < sma8) if pd.notna(sma8) else False
                 price_lt_20 = (price < sma20) if pd.notna(sma20) else False
                 price_lt_50 = (price < sma50) if pd.notna(sma50) else False
-                # RSI (14) as 1D; use 5-period for 1W proxy
+                
+                # RSI and direction: slope over 3 sessions (respective timeframe)
                 rsi_series = calculate_rsi(data, period=14)
-                rsi_1d = rsi_series.iloc[-1] if not rsi_series.isna().all() else 50.0
-                rsi_1d_prev = rsi_series.iloc[-2] if len(rsi_series) > 1 else rsi_1d
-                rsi_1w = rsi_series.iloc[-5] if len(rsi_series) >= 5 else rsi_1d
-                rsi_1w_prev = rsi_series.iloc[-6] if len(rsi_series) >= 6 else rsi_1w
-                dir_1d = "Up" if rsi_1d > rsi_1d_prev else ("Down" if rsi_1d < rsi_1d_prev else "Flat")
-                dir_1w = "Up" if rsi_1w > rsi_1w_prev else ("Down" if rsi_1w < rsi_1w_prev else "Flat")
-                dir_1h = dir_1d  # proxy
-                # VWAP proxy: typical price (H+L+C)/3 for last day
+                rsi_1h = rsi_series.iloc[-1] if not rsi_series.isna().all() else 50.0
+                dir_1h = _rsi_direction_slope3(rsi_series)
+                if use_1h and len(data_1h) >= 14:
+                    # 1D: resample 1h to daily (last bar per day), then RSI and slope over last 3 days
+                    try:
+                        daily_close = data_1h.groupby(pd.Series(data_1h.index).dt.date)['Close'].last()
+                        daily_close = daily_close.sort_index()
+                        mask_d = daily_close.index <= screener_date
+                        daily_as_of = daily_close.loc[mask_d].tail(60)
+                        if len(daily_as_of) >= 14:
+                            rsi_daily = calculate_rsi(pd.DataFrame({'Close': daily_as_of}), period=14)
+                            rsi_1d = float(rsi_daily.iloc[-1]) if not rsi_daily.isna().all() else rsi_1h
+                            dir_1d = _rsi_direction_slope3(rsi_daily)
+                        else:
+                            rsi_1d = rsi_1h
+                            dir_1d = dir_1h
+                        # 1W: resample to weekly (last bar per week)
+                        try:
+                            weekly_close = data_1h.groupby(data_1h.index.to_period('W'))['Close'].last()
+                            weekly_close = weekly_close.sort_index()
+                            week_end_dates = pd.Series(weekly_close.index.to_timestamp(how='end')).dt.date
+                            mask_w = (week_end_dates <= screener_date).values
+                            weekly_as_of = weekly_close.iloc[mask_w].tail(60)
+                        except Exception:
+                            weekly_as_of = pd.Series(dtype=float)
+                        if len(weekly_as_of) >= 14:
+                            rsi_weekly = calculate_rsi(pd.DataFrame({'Close': weekly_as_of}), period=14)
+                            rsi_1w = float(rsi_weekly.iloc[-1]) if not rsi_weekly.isna().all() else rsi_1d
+                            dir_1w = _rsi_direction_slope3(rsi_weekly)
+                        else:
+                            rsi_1w = rsi_1d
+                            dir_1w = dir_1d
+                    except Exception:
+                        rsi_1d = rsi_1h
+                        rsi_1w = rsi_1h
+                        dir_1d = dir_1h
+                        dir_1w = dir_1h
+                else:
+                    rsi_1d = rsi_series.iloc[-1] if not rsi_series.isna().all() else 50.0
+                    rsi_1w = rsi_series.iloc[-5] if len(rsi_series) >= 5 else rsi_1d
+                    dir_1d = _rsi_direction_slope3(rsi_series)
+                    dir_1w = _rsi_direction_slope3(rsi_series.iloc[:-2]) if len(rsi_series) >= 5 else dir_1d
+                
+                # VWAP proxy: typical price (H+L+C)/3 for last bar
                 if len(data) > 0 and 'High' in data.columns and 'Low' in data.columns:
                     typical = (data['High'].iloc[-1] + data['Low'].iloc[-1] + data['Close'].iloc[-1]) / 3
                     if price > typical * 1.002:
@@ -2156,8 +2210,7 @@ def display_stock_screener_tab(analysis_date=None):
                 else:
                     vwap_status = "N/A"
                 price_below_vwap = (vwap_status == "below")
-                rsi_div_2h = "No"  # MVP
-                # Final score: 3=high, 2=moderate, 1=weak
+                rsi_div_2h = "No"
                 rsi_all_up = (dir_1w == "Up" and dir_1d == "Up" and dir_1h == "Up")
                 above_all_ma = price_gt_8 and price_gt_20 and price_gt_50
                 if rsi_all_up and above_all_ma and vwap_status == "Above":
@@ -2166,9 +2219,44 @@ def display_stock_screener_tab(analysis_date=None):
                     final_score = 2
                 else:
                     final_score = 1
-                # Bearish score: price below VWAP + price < 8/20/50 SMA (higher = more bearish)
                 bearish_score = (1 if price_below_vwap else 0) + (1 if price_lt_8 else 0) + (1 if price_lt_20 else 0) + (1 if price_lt_50 else 0)
                 sentiment_label = "Strong" if final_score == 3 else ("Moderate" if final_score == 2 else "Weak")
+                
+                # Next 1D and 2D return % (prior dates only); 1 decimal; actual close-to-close
+                next_1d_pct = None
+                next_2d_pct = None
+                if is_prior_date:
+                    try:
+                        if use_1h and data_1h is not None and len(data_1h) > 0:
+                            daily_closes = data_1h.groupby(pd.Series(data_1h.index).dt.date)['Close'].last().sort_index()
+                            dates_list = list(daily_closes.index)
+                            # close_sel = our price (at selected time on selected date)
+                            next_day_idx = next((i for i, d in enumerate(dates_list) if d > screener_date), None)
+                            if next_day_idx is not None and price > 0:
+                                close_1d = float(daily_closes.iloc[next_day_idx])
+                                next_1d_pct = round((close_1d - price) / price * 100, 1)
+                                if next_day_idx + 1 < len(dates_list):
+                                    close_2d = float(daily_closes.iloc[next_day_idx + 1])
+                                    next_2d_pct = round((close_2d - price) / price * 100, 1)
+                        else:
+                            data_full = fetch_sector_data(symbol, period='3mo', end_date=end_date_for_fetch, interval='1d')
+                            if data_full is not None and len(data_full) > 0:
+                                dates_arr = pd.Series(data_full.index).dt.date
+                                idx_sel = None
+                                for i in range(len(data_full) - 1, -1, -1):
+                                    if dates_arr.iloc[i] <= screener_date:
+                                        idx_sel = i
+                                        break
+                                if idx_sel is not None and idx_sel + 2 < len(data_full):
+                                    close_sel = float(data_full['Close'].iloc[idx_sel])
+                                    close_1d = float(data_full['Close'].iloc[idx_sel + 1])
+                                    close_2d = float(data_full['Close'].iloc[idx_sel + 2])
+                                    if close_sel > 0:
+                                        next_1d_pct = round((close_1d - close_sel) / close_sel * 100, 1)
+                                        next_2d_pct = round((close_2d - close_sel) / close_sel * 100, 1)
+                    except Exception:
+                        pass
+                
                 row_dict = {
                     'Company': name,
                     'Symbol': symbol,
@@ -2177,7 +2265,7 @@ def display_stock_screener_tab(analysis_date=None):
                     'Dir 1W': dir_1w,
                     'RSI (1D)': int(round(rsi_1d, 0)),
                     'Dir 1D': dir_1d,
-                    'RSI (1H)': int(round(rsi_1d, 0)),
+                    'RSI (1H)': int(round(rsi_1h, 0)),
                     'Dir 1H': dir_1h,
                     'Price > 8 SMA': price_gt_8,
                     'Price > 20 SMA': price_gt_20,
@@ -2190,8 +2278,8 @@ def display_stock_screener_tab(analysis_date=None):
                     '_bearish_score': bearish_score,
                 }
                 if is_prior_date:
-                    row_dict['Next 1 day return %'] = next_1d_pct if next_1d_pct is not None else ""
-                    row_dict['Next 2 day return %'] = next_2d_pct if next_2d_pct is not None else ""
+                    row_dict['Next 1 day return %'] = f"{next_1d_pct:.1f}" if next_1d_pct is not None else ""
+                    row_dict['Next 2 day return %'] = f"{next_2d_pct:.1f}" if next_2d_pct is not None else ""
                 rows.append(row_dict)
             except Exception:
                 continue
@@ -2252,7 +2340,7 @@ def display_stock_screener_tab(analysis_date=None):
     st.caption("Bearish: Price below VWAP and Price &lt; 8 SMA, &lt; 20 SMA, &lt; 50 SMA.")
     st.dataframe(style_sentiment_column(top_bearish), use_container_width=True, height=400)
     
-    st.caption("**Sentiment (colored):** 🟢 Strong (3) | 🟡 Moderate (2) | 🔴 Weak (1). **Next 1 day return %** = (next trading day close − selected date close) / selected date close × 100 (actual close-to-close). **Next 2 day return %** = same for 2 trading days ahead. Shown only for prior dates. **Price, Price > SMA, VWAP:** based on **daily** close; 1H would require intraday data.")
+    st.caption("**Sentiment (colored):** 🟢 Strong (3) | 🟡 Moderate (2) | 🔴 Weak (1). **Next 1D/2D return %** = actual (next trading day close − price at selected time) / price × 100; 1 decimal. **RSI direction** = slope over last 3 sessions (3h / 3d / 3w). Price &amp; analysis as of selected date and time (1h data when available).")
 
 
 def display_reversal_tab(df, sector_data_dict, benchmark_data, reversal_weights, reversal_thresholds, enable_color_coding=True):
