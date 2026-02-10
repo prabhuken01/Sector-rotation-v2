@@ -247,21 +247,31 @@ def analyze_all_sectors(sector_data_dict, benchmark_data, momentum_weights=None,
     
     # Calculate ranking-based momentum score
     # Rank each indicator: Higher raw value = better = gets rank 1 (ascending=False)
-    # This means sectors with stronger indicators get lower rank numbers (1 = best)
+    # Historical: ADX_Z, RS_Rating, RSI, DI_Spread (CMF weight 0). Trending: CMF + RSI only.
     num_sectors = len(df)
     df['ADX_Z_Rank'] = df['ADX_Z'].rank(ascending=False, method='min')  # Higher ADX_Z = stronger trend = rank 1
     df['RS_Rating_Rank'] = df['RS_Rating'].rank(ascending=False, method='min')  # Higher RS = outperforming = rank 1
     df['RSI_Rank'] = df['RSI'].rank(ascending=False, method='min')  # Higher RSI = stronger momentum = rank 1
     df['DI_Spread_Rank'] = df['DI_Spread'].rank(ascending=False, method='min')  # Higher DI spread = bullish = rank 1
+    if momentum_weights.get('CMF', 0) != 0 and 'CMF' in df.columns:
+        df['CMF_Rank'] = df['CMF'].rank(ascending=False, method='min')  # Higher CMF = money flow in = rank 1
     
-    # Calculate weighted average rank (lower = better)
+    # Calculate weighted average rank (lower = better); only include keys with non-zero weight
     total_weight = sum(momentum_weights.values())
-    df['Weighted_Avg_Rank'] = (
-        (df['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20.0) / total_weight) +
-        (df['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40.0) / total_weight) +
-        (df['RSI_Rank'] * momentum_weights.get('RSI', 30.0) / total_weight) +
-        (df['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10.0) / total_weight)
-    )
+    if total_weight <= 0:
+        total_weight = 100.0
+    rank_components = [
+        ('ADX_Z', 'ADX_Z_Rank'),
+        ('RS_Rating', 'RS_Rating_Rank'),
+        ('RSI', 'RSI_Rank'),
+        ('DI_Spread', 'DI_Spread_Rank'),
+        ('CMF', 'CMF_Rank'),
+    ]
+    df['Weighted_Avg_Rank'] = 0.0
+    for key, rank_col in rank_components:
+        w = momentum_weights.get(key, 0)
+        if w != 0 and rank_col in df.columns:
+            df['Weighted_Avg_Rank'] = df['Weighted_Avg_Rank'] + (df[rank_col] * w / total_weight)
     
     # Scale to 1-10 where 10 = best momentum (lowest weighted rank), 1 = worst momentum (highest weighted rank)
     # Formula: Score = 10 - ((weighted_rank - 1) / (num_sectors - 1)) * 9

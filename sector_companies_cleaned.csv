@@ -35,7 +35,11 @@ Fin Services,PB Fintech (Policybazaar),POLICYBZR.NS,3.66
 Fin Services,MCX India Ltd.,MCX.NS,3.34
 Fin Services,PNB Housing,PNBHOUSING.NS,1.9
 Fin Services,HDFC Asset Management,HDFCAMC.NS,1.3
+<<<<<<< HEAD
+Fin Services,Manappuram Finance,MANAPPURAM.NS,1
+=======
 Fin Services,Manappuram Finance,MANAPPURAM.NS,1.0
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
 FMCG,ITC Limited,ITC.NS,22.3
 FMCG,Nestle India,NESTLEIND.NS,18.9
 FMCG,Hindustan Unilever,HINDUNILVR.NS,17.5
@@ -90,9 +94,17 @@ Pvt Bank,IDFC First Bank,IDFCFIRSTB.NS,7.8
 Pvt Bank,IndusInd Bank,INDUSINDBK.NS,4.2
 Realty,DLF Limited,DLF.NS,22.5
 Realty,Sunteck Realty,SUNTECK.NS,18.3
+<<<<<<< HEAD
+Realty,Oberoi Realty,OBEROIRLTY.NS,14
+Realty,Prestige Estates,PRESTIGE.NS,11.8
+Realty,Lodha Group,LODHA.NS,10.2
+Realty,Indiabulls Real Estate,IBREALEST.NS,8.6
+Realty,Brigade Enterprises,BRIGADE.NS,8
+=======
 Realty,Oberoi Realty,OBEROIRLTY.NS,14.0
 Realty,Prestige Estates,PRESTIGE.NS,11.8
 Realty,Lodha Group,LODHA.NS,10.2
 Realty,Indiabulls Real Estate,IBREALEST.NS,8.6
 Realty,Brigade Enterprises,BRIGADE.NS,8.0
+>>>>>>> f96939e231688036a33f4f48de0a6e3fd2208400
 Realty,Godrej Properties,GODREJPROP.NS,6.7

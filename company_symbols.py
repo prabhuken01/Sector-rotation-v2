@@ -4,7 +4,11 @@ Static mapping of top 8-10 companies by weight in each sector/ETF
 Weights are approximate based on latest index compositions
 """
 
-__all__ = ['SECTOR_COMPANIES', 'get_company_symbol_list', 'load_sector_companies_from_excel']
+__all__ = [
+    'SECTOR_COMPANIES', 'get_company_symbol_list', 'load_sector_companies_from_excel',
+    'load_part_b_from_excel', 'save_part_b_to_excel'
+]
+PART_B_SHEET_NAME = 'Part B'
 
 # Top companies by weight in each sector/ETF
 SECTOR_COMPANIES = {
@@ -182,6 +186,19 @@ def get_company_symbol_list(sector_name):
     return list(companies.keys())
 
 
+def get_all_screener_symbols():
+    """Get unique (symbol, name) pairs across all sectors for Stock Screener. Based on 97 stocks in excel."""
+    seen = set()
+    result = []
+    for sector_name, companies in SECTOR_COMPANIES.items():
+        for symbol, info in companies.items():
+            if symbol not in seen:
+                seen.add(symbol)
+                name = info.get('name', symbol) if isinstance(info, dict) else symbol
+                result.append((symbol, name))
+    return result
+
+
 def load_sector_companies_from_excel(excel_file='Sector-Company.xlsx'):
     """
     Load sector-company mappings from Excel file.
@@ -197,7 +214,8 @@ def load_sector_companies_from_excel(excel_file='Sector-Company.xlsx'):
         if not os.path.exists(excel_file):
             return None
         
-        df = pd.read_excel(excel_file)
+        # First sheet only (sector list for momentum/reversal); Part B is a separate sheet
+        df = pd.read_excel(excel_file, sheet_name=0)
         
         # Group by Sector and build the dictionary
         result = {}
@@ -216,6 +234,60 @@ def load_sector_companies_from_excel(excel_file='Sector-Company.xlsx'):
     except Exception as e:
         print(f"Could not load Excel file: {e}")
         return None
+
+
+def load_part_b_from_excel(excel_file='Sector-Company.xlsx'):
+    """
+    Load Part B symbols from the 'Part B' sheet in the same Excel file.
+    Part B = large/mid/micro Nifty universe for market breadth (not sectoral analysis).
+    Returns list of symbols (e.g. ['RELIANCE.NS', ...]) or empty list.
+    """
+    try:
+        import pandas as pd
+        import os
+        if not os.path.exists(excel_file):
+            return []
+        xl = pd.ExcelFile(excel_file)
+        if PART_B_SHEET_NAME not in xl.sheet_names:
+            return []
+        df = pd.read_excel(excel_file, sheet_name=PART_B_SHEET_NAME)
+        if df.empty or 'Symbol' not in df.columns:
+            return []
+        symbols = df['Symbol'].drop_duplicates().dropna().astype(str).str.strip().tolist()
+        symbols = [s if s.endswith('.NS') else s + '.NS' for s in symbols if s and len(s) > 1]
+        return symbols
+    except Exception:
+        return []
+
+
+def save_part_b_to_excel(excel_file='Sector-Company.xlsx', symbols=None):
+    """
+    Write Part B symbols to the 'Part B' sheet in the same Excel file.
+    Preserves the first sheet (sector list). Creates 'Part B' sheet if missing.
+    """
+    if not symbols:
+        return
+    try:
+        import os
+        import openpyxl
+        if not os.path.exists(excel_file):
+            # Create new workbook with Part B only (no sector sheet yet)
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = PART_B_SHEET_NAME
+        else:
+            wb = openpyxl.load_workbook(excel_file)
+            if PART_B_SHEET_NAME in wb.sheetnames:
+                ws = wb[PART_B_SHEET_NAME]
+            else:
+                ws = wb.create_sheet(PART_B_SHEET_NAME)
+        ws.delete_rows(1, ws.max_row)
+        ws.append(['Symbol'])
+        for s in symbols:
+            ws.append([s])
+        wb.save(excel_file)
+    except Exception:
+        pass
 
 
 # Try to load updated weights from Excel file on module import

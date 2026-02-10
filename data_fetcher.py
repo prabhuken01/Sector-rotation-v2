@@ -253,3 +253,204 @@ def fetch_all_sectors_parallel(sectors_dict, alternates_dict=None, period='1y', 
                     progress_callback(sector_name, False, completed[0], total)
     
     return sector_data, failed_sectors
+
+
+def fetch_nifty_broad_universe(min_stocks=750, use_cache=True):
+    """
+    Fetch a broad NSE universe for Part B (market breadth).
+    
+    Source order:
+    1) NSE India CSV (Nifty 500 + Midcap 150 + Smallcap 250 + Microcap 250).
+       Theoretical max ~900-1150 unique symbols. Often returns 0 if NSE blocks (403).
+    2) Local fallback CSV: data_cache/part_b_fallback.csv or part_b_fallback.csv in project root.
+       Place a file with 'Symbol' column (e.g. from NSE manual download, EODData, or any list).
+    3) Returns empty list so caller can fall back to Nifty 50.
+    
+    Note: yfinance and Google Finance do not provide NSE index constituent lists; they are
+    used only for price data. NSE is the only automatic source for a large symbol list.
+    
+    Returns:
+        List of Yahoo Finance symbols (e.g. RELIANCE.NS).
+    """
+    import io
+    import os
+    try:
+        import requests
+        import pandas as pd
+    except ImportError:
+        return _load_part_b_fallback_csv()
+
+    if use_cache:
+        try:
+            cached = getattr(fetch_nifty_broad_universe, '_nifty_broad_cache', None)
+            if cached is not None and len(cached) > 0:
+                return cached
+        except Exception:
+            pass
+
+    base_url = "https://www.nseindia.com"
+    csv_urls = [
+        ("https://www.nseindia.com/content/indices/ind_nifty500list.csv", "Symbol"),
+        ("https://www.nseindia.com/content/indices/ind_niftymidcap150list.csv", "Symbol"),
+        ("https://www.nseindia.com/content/indices/ind_niftysmallcap250list.csv", "Symbol"),
+        ("https://www.nseindia.com/content/indices/ind_niftymicrocap250list.csv", "Symbol"),
+    ]
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/csv,application/csv,*/*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": base_url + "/",
+    }
+    all_symbols = set()
+    session = requests.Session()
+    session.headers.update(headers)
+    try:
+        session.get(base_url, timeout=10)
+        for url, symbol_col in csv_urls:
+            try:
+                r = session.get(url, timeout=15)
+                if r.status_code != 200:
+                    continue
+                try:
+                    df = pd.read_csv(io.StringIO(r.text))
+                except Exception:
+                    continue
+                col = None
+                for c in ("Symbol", "Company Symbol", symbol_col):
+                    if c in df.columns:
+                        col = c
+                        break
+                if col is None and len(df.columns) > 0:
+                    col = df.columns[0]
+                for s in df[col].dropna().astype(str).str.strip():
+                    if not s or s.upper() in ("SYMBOL", "NAN", ""):
+                        continue
+                    s = s.strip().upper()
+                    if not s.endswith(".NS"):
+                        s = s + ".NS"
+                    all_symbols.add(s)
+                if len(all_symbols) >= min_stocks:
+                    break
+            except Exception:
+                continue
+    except Exception:
+        pass
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+    result = sorted(all_symbols)
+    if len(result) > 0:
+        try:
+            fetch_nifty_broad_universe._nifty_broad_cache = result
+        except Exception:
+            pass
+        return result
+
+    # NSE failed: try local fallback CSV (user can drop Nifty 500/1000 list from NSE or elsewhere)
+    return _load_part_b_fallback_csv()
+
+
+def _load_part_b_fallback_csv():
+    """Load Part B symbols from local CSV when NSE is blocked. Looks for Symbol column."""
+    try:
+        import pandas as pd
+        import os
+        base = os.path.dirname(__file__)
+        for path in [
+            os.path.join(base, "data_cache", "part_b_fallback.csv"),
+            os.path.join(base, "part_b_fallback.csv"),
+        ]:
+            if os.path.exists(path):
+                df = pd.read_csv(path)
+                if 'Symbol' not in df.columns and len(df.columns) > 0:
+                    df.columns = [c.strip() for c in df.columns]
+                if 'Symbol' not in df.columns:
+                    continue
+                syms = df['Symbol'].drop_duplicates().dropna().astype(str).str.strip().tolist()
+                syms = [s if s.endswith('.NS') else s + '.NS' for s in syms if s and len(s) > 1]
+                return sorted(syms)
+    except Exception:
+        pass
+    return []
+
+
+# ---------- Market breadth history (persist Advance/Decline etc. to avoid re-fetch and iteration) ----------
+BREADTH_HISTORY_FILENAME = "market_breadth_history.csv"
+BREADTH_HISTORY_COLUMNS = [
+    "Date", "Day", "Advances", "Declines", "Advance/Total (%)",
+    "Up 4% (Daily)", "Down 4% (Daily)",
+    "% Above 10 DMA", "% Above 20 DMA", "% Above 40 DMA", "% Above 50 DMA",
+    "Nifty", "Nifty Chg %", "VIX"
+]
+
+
+def load_breadth_history(filepath=None):
+    """
+    Load persisted market breadth rows from CSV.
+    Returns dict: date_str (YYYY-MM-DD) -> row dict (same keys as breadth_data items).
+    """
+    import os
+    try:
+        import pandas as pd
+    except ImportError:
+        return {}
+    if filepath is None:
+        filepath = os.path.join(os.path.dirname(__file__), "data_cache", BREADTH_HISTORY_FILENAME)
+    if not os.path.exists(filepath):
+        return {}
+    try:
+        df = pd.read_csv(filepath)
+        if "Date" not in df.columns or df.empty:
+            return {}
+        out = {}
+        for _, row in df.iterrows():
+            d = row.get("Date")
+            if pd.isna(d):
+                continue
+            d = str(d).strip()
+            if len(d) >= 10:
+                d = d[:10]
+            out[d] = row.to_dict()
+        return out
+    except Exception:
+        return {}
+
+
+def save_breadth_rows(filepath=None, rows=None):
+    """
+    Append/merge breadth rows into the history CSV (by Date). rows: list of dicts with Date key.
+    """
+    import os
+    try:
+        import pandas as pd
+    except ImportError:
+        return
+    if filepath is None:
+        filepath = os.path.join(os.path.dirname(__file__), "data_cache", BREADTH_HISTORY_FILENAME)
+    if not rows:
+        return
+    try:
+        os.makedirs(os.path.dirname(filepath) or ".", exist_ok=True)
+    except Exception:
+        pass
+    try:
+        existing = load_breadth_history(filepath)
+        for r in rows:
+            d = r.get("Date")
+            if d in ("Current day", ""):
+                from datetime import datetime
+                d = datetime.now().strftime("%Y-%m-%d")
+            if isinstance(d, str) and len(d) >= 10:
+                d = d[:10]
+            else:
+                continue
+            existing[d] = {k: r.get(k) for k in BREADTH_HISTORY_COLUMNS if k in r}
+        df = pd.DataFrame(list(existing.values()))
+        if not df.empty and "Date" in df.columns:
+            df = df.sort_values("Date", ascending=False)
+        df.to_csv(filepath, index=False)
+    except Exception:
+        pass

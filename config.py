@@ -78,11 +78,18 @@ MOMENTUM_SCORE_PERCENTILE_THRESHOLD = 70  # Top 30% of sectors
 
 # Default Scoring Weights (user-configurable)
 # Momentum weights are percentages that sum to 100%
+# Historical mode: RS_Rating, ADX_Z, RSI, DI_Spread (CMF = 0%)
 DEFAULT_MOMENTUM_WEIGHTS = {
     'ADX_Z': 20.0,
     'RS_Rating': 40.0,
     'RSI': 30.0,
-    'DI_Spread': 10.0
+    'DI_Spread': 10.0,
+    'CMF': 0.0
+}
+# Trending mode: composite score 50% CMF + 50% RSI (default mode)
+DEFAULT_MOMENTUM_WEIGHTS_TRENDING = {
+    'CMF': 50.0,
+    'RSI': 50.0
 }
 
 DEFAULT_REVERSAL_WEIGHTS = {

@@ -92,7 +92,7 @@ def calculate_company_trend(company_symbol, company_data, benchmark_data, all_co
             return None
         
         if momentum_weights is None:
-            momentum_weights = {'ADX_Z': 20, 'RS_Rating': 40, 'RSI': 30, 'DI_Spread': 10}
+            momentum_weights = {'ADX_Z': 20, 'RS_Rating': 40, 'RSI': 30, 'DI_Spread': 10, 'CMF': 0}
         
         trend_data = []
         
@@ -161,6 +161,7 @@ def calculate_company_trend(company_symbol, company_data, benchmark_data, all_co
                         # Calculate indicators for other company
                         o_rsi = calculate_rsi(other_subset)
                         o_adx, _, _, o_di_spread = calculate_adx(other_subset)
+                        o_cmf = calculate_cmf(other_subset)
                         o_adx_z = calculate_z_score(o_adx.dropna())
                         
                         # Calculate RS Rating for other company
@@ -183,11 +184,12 @@ def calculate_company_trend(company_symbol, company_data, benchmark_data, all_co
                             'ADX_Z': o_adx_z if not pd.isna(o_adx_z) else 0,
                             'RS_Rating': o_rs_rating,
                             'DI_Spread': o_di_spread.iloc[-1] if not o_di_spread.isna().all() else 0,
+                            'CMF': o_cmf.iloc[-1] if not o_cmf.isna().all() else 0,
                         })
                     except:
                         continue
                 
-                # Calculate rank using SAME method as main table
+                # Calculate rank using SAME method as main table (support Historical and Trending weights)
                 rank = 1
                 if all_company_raw_data:
                     df_raw = pd.DataFrame(all_company_raw_data)
@@ -198,15 +200,24 @@ def calculate_company_trend(company_symbol, company_data, benchmark_data, all_co
                     df_raw['RS_Rating_Rank'] = df_raw['RS_Rating'].rank(ascending=False, method='min')
                     df_raw['RSI_Rank'] = df_raw['RSI'].rank(ascending=False, method='min')
                     df_raw['DI_Spread_Rank'] = df_raw['DI_Spread'].rank(ascending=False, method='min')
+                    if momentum_weights.get('CMF', 0) != 0 and 'CMF' in df_raw.columns:
+                        df_raw['CMF_Rank'] = df_raw['CMF'].rank(ascending=False, method='min')
                     
-                    # Calculate weighted average rank
                     total_weight = sum(momentum_weights.values())
-                    df_raw['Weighted_Avg_Rank'] = (
-                        (df_raw['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / total_weight) +
-                        (df_raw['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / total_weight) +
-                        (df_raw['RSI_Rank'] * momentum_weights.get('RSI', 30) / total_weight) +
-                        (df_raw['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / total_weight)
-                    )
+                    if total_weight <= 0:
+                        total_weight = 100.0
+                    rank_components_trend = [
+                        ('ADX_Z', 'ADX_Z_Rank'),
+                        ('RS_Rating', 'RS_Rating_Rank'),
+                        ('RSI', 'RSI_Rank'),
+                        ('DI_Spread', 'DI_Spread_Rank'),
+                        ('CMF', 'CMF_Rank'),
+                    ]
+                    df_raw['Weighted_Avg_Rank'] = 0.0
+                    for key, rank_col in rank_components_trend:
+                        w = momentum_weights.get(key, 0)
+                        if w != 0 and rank_col in df_raw.columns:
+                            df_raw['Weighted_Avg_Rank'] = df_raw['Weighted_Avg_Rank'] + (df_raw[rank_col] * w / total_weight)
                     
                     # Scale to 1-10 (lower weighted avg rank = higher momentum score)
                     if num_companies > 1:
@@ -514,9 +525,9 @@ def display_company_momentum_tab(time_interval='Daily', momentum_weights=None, a
     
     st.markdown("### 📈 Company Momentum Analysis")
     st.markdown("---")
-    st.info("🔍 **Drill down into individual companies** within a sector. Same momentum scoring as sectors, benchmarked against Nifty 50.")
+    st.info("🔍 **Company momentum is based exclusively on #1 ranked sector stocks.** The default sector is the top-ranked sector from the Momentum Ranking tab. You can switch to other sectors below.")
     
-    # Sector selector with rank #1 as default
+    # Sector selector with rank #1 as default (Company momentum based on #1 ranked sector)
     sector_list = list(SECTOR_COMPANIES.keys())
     default_idx = 0
     if default_sector and default_sector in sector_list:
@@ -528,6 +539,8 @@ def display_company_momentum_tab(time_interval='Daily', momentum_weights=None, a
         st.warning("Please select a sector")
         return
     
+    if default_sector and selected_sector == default_sector:
+        st.caption("📌 Showing companies from **#1 ranked sector** (default).")
     st.markdown(f"**Analysis:** {selected_sector} | Top companies by index weight")
     
     # Fetch company data using cached function with correct interval and date
@@ -611,20 +624,30 @@ def display_company_momentum_tab(time_interval='Daily', momentum_weights=None, a
     
     if num_companies > 0:
         # Calculate ranks: Higher values = better = rank 1 (ascending=False)
-        # Using method='average' to differentiate ties properly
+        # Historical: ADX_Z, RS_Rating, RSI, DI_Spread (CMF 0). Trending: CMF + RSI only.
         df_raw['ADX_Z_Rank'] = df_raw['ADX_Z'].rank(ascending=False, method='average')
         df_raw['RS_Rating_Rank'] = df_raw['RS_Rating'].rank(ascending=False, method='average')
         df_raw['RSI_Rank'] = df_raw['RSI'].rank(ascending=False, method='average')
         df_raw['DI_Spread_Rank'] = df_raw['DI_Spread'].rank(ascending=False, method='average')
+        if momentum_weights.get('CMF', 0) != 0 and 'CMF' in df_raw.columns:
+            df_raw['CMF_Rank'] = df_raw['CMF'].rank(ascending=False, method='average')
         
-        # Calculate weighted average rank using configurable weights (same logic as sectors)
+        # Calculate weighted average rank using configurable weights; only non-zero weights
         total_weight = sum(momentum_weights.values())
-        df_raw['Weighted_Avg_Rank'] = (
-            (df_raw['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20.0) / total_weight) +
-            (df_raw['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40.0) / total_weight) +
-            (df_raw['RSI_Rank'] * momentum_weights.get('RSI', 30.0) / total_weight) +
-            (df_raw['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10.0) / total_weight)
-        )
+        if total_weight <= 0:
+            total_weight = 100.0
+        rank_components = [
+            ('ADX_Z', 'ADX_Z_Rank'),
+            ('RS_Rating', 'RS_Rating_Rank'),
+            ('RSI', 'RSI_Rank'),
+            ('DI_Spread', 'DI_Spread_Rank'),
+            ('CMF', 'CMF_Rank'),
+        ]
+        df_raw['Weighted_Avg_Rank'] = 0.0
+        for key, rank_col in rank_components:
+            w = momentum_weights.get(key, 0)
+            if w != 0 and rank_col in df_raw.columns:
+                df_raw['Weighted_Avg_Rank'] = df_raw['Weighted_Avg_Rank'] + (df_raw[rank_col] * w / total_weight)
         
         # Scale to 1-10 where 10 = best momentum, 1 = worst
         if num_companies > 1:
