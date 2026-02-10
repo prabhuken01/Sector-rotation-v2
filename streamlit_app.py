@@ -13,12 +13,28 @@ import traceback
 warnings.filterwarnings('ignore')
 
 try:
-    from config import (SECTORS, SECTOR_ETFS, SECTOR_ETFS_ALTERNATE, MOMENTUM_SCORE_PERCENTILE_THRESHOLD, 
-                        DEFAULT_MOMENTUM_WEIGHTS, DEFAULT_REVERSAL_WEIGHTS, DECIMAL_PLACES)
-    from data_fetcher import fetch_sector_data, fetch_sector_data_with_alternate, fetch_all_sectors_parallel, clear_data_cache
+    from config import (
+        SECTORS,
+        SECTOR_ETFS,
+        SECTOR_ETFS_ALTERNATE,
+        MOMENTUM_SCORE_PERCENTILE_THRESHOLD,
+        DEFAULT_MOMENTUM_WEIGHTS,
+        DEFAULT_REVERSAL_WEIGHTS,
+        DECIMAL_PLACES,
+    )
+    from data_fetcher import (
+        fetch_sector_data,
+        fetch_sector_data_with_alternate,
+        fetch_all_sectors_parallel,
+        clear_data_cache,
+    )
     from analysis import analyze_all_sectors, format_results_dataframe, analyze_sector
     from indicators import calculate_rsi, calculate_adx, calculate_cmf, calculate_z_score, calculate_mansfield_rs
-    from company_analysis import display_company_momentum_tab, display_company_reversal_tab
+    from company_analysis import (
+        display_company_momentum_tab,
+        display_company_reversal_tab,
+        display_fo_watchlist_tab,
+    )
 except ImportError as e:
     st.error(f"❌ Import Error: {str(e)}")
     st.info("Please ensure all required modules are installed: yfinance, pandas, numpy")
@@ -3395,9 +3411,10 @@ def main():
             </div>
         ''', unsafe_allow_html=True)
         
-        # Create tabs (8 total: 4 sector-level + 2 company-level + 1 historical + 1 sector companies + 1 data sources + 1 stock analysis)
+        # Create tabs (9 total: F&O watchlist + 4 sector-level + 2 company-level + 1 historical + 1 data sources + 1 stock analysis)
         try:
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+            tab_fo, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+                "📜 F&O Watchlist",
                 "📈 Momentum Ranking",
                 "📊 Stock Analysis",
                 "🔄 Reversal Candidates",
@@ -3405,13 +3422,21 @@ def main():
                 "🏢 Company Momentum",
                 "🏢 Company Reversals",
                 "📅 Historical Rankings",
-                "🔌 Data Sources"
+                "🔌 Data Sources",
             ])
             
             # Get benchmark data for trend analysis
             data_source = SECTOR_ETFS if use_etf else SECTORS
             benchmark_data = sector_data.get('Nifty 50') if sector_data else None
             
+            with tab_fo:
+                try:
+                    display_fo_watchlist_tab(time_interval=time_interval, momentum_weights=momentum_weights, analysis_date=analysis_date)
+                    display_tooltip_legend()
+                except Exception as e:
+                    st.error(f"❌ Error displaying F&O watchlist tab: {str(e)}")
+                    st.text(traceback.format_exc())
+
             with tab1:
                 try:
                     display_momentum_tab(df, sector_data, benchmark_data, enable_color_coding)

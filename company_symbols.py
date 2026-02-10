@@ -223,3 +223,36 @@ _excel_data = load_sector_companies_from_excel('Sector-Company.xlsx')
 if _excel_data is not None:
     SECTOR_COMPANIES = _excel_data
     print("✅ Loaded sector-company weights from Sector-Company.xlsx")
+
+
+# ---------------------------------------------------------------------------
+# F&O LIST INTEGRATION (NON-DESTRUCTIVE)
+# ---------------------------------------------------------------------------
+# If the user updates the F&O TradingView list, we only ADD new companies
+# into existing sectors based on FO_GROUP_TO_SECTOR mapping. We never
+# remove or overwrite existing mappings.
+try:
+    from fo_watchlist import FO_GROUPS, FO_GROUP_TO_SECTOR
+
+    for group_name, symbols in FO_GROUPS.items():
+        sector_name = FO_GROUP_TO_SECTOR.get(group_name)
+        if not sector_name:
+            continue
+
+        # Ensure sector exists; if not, skip (we do NOT create new sectors here)
+        sector_dict = SECTOR_COMPANIES.get(sector_name)
+        if sector_dict is None:
+            continue
+
+        for fo_symbol in symbols:
+            yf_symbol = fo_symbol.yf_symbol
+            if yf_symbol not in sector_dict:
+                # Add with minimal metadata; user can refine weights via Excel later
+                clean_name = yf_symbol.replace(".NS", "")
+                sector_dict[yf_symbol] = {
+                    'weight': 0.0,
+                    'name': clean_name,
+                }
+except Exception:
+    # F&O integration is best-effort only; never block app startup
+    pass
