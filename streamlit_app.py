@@ -20,6 +20,7 @@ try:
         SECTOR_ETFS_ALTERNATE,
         MOMENTUM_SCORE_PERCENTILE_THRESHOLD,
         DEFAULT_MOMENTUM_WEIGHTS,
+        DEFAULT_MOMENTUM_WEIGHTS_TRENDING,
         DEFAULT_REVERSAL_WEIGHTS,
         DECIMAL_PLACES,
     )
@@ -226,32 +227,53 @@ def get_sidebar_controls():
     if use_etf != st.session_state.use_etf_state:
         st.session_state.use_etf_state = use_etf
     
-    # Momentum weights (percentages that sum to 100%)
+    # Momentum weights: toggle Historical vs Trending (default Trending)
     st.sidebar.subheader("Momentum Score Weights (%)")
-    st.sidebar.caption("Weights should sum to 100%")
+    momentum_mode = st.sidebar.radio(
+        "Momentum weight mode",
+        options=["Trending", "Historical"],
+        index=0,
+        help="Trending: 50% CMF + 50% RSI (composite). Historical: RS Rating, ADX Z, RSI, DI Spread (CMF = 0%)."
+    )
     
-    rs_weight = st.sidebar.slider("RS Rating Weight (%)", 0.0, 100.0, 
-                                   DEFAULT_MOMENTUM_WEIGHTS['RS_Rating'], 1.0)
-    adx_weight = st.sidebar.slider("ADX Z-Score Weight (%)", 0.0, 100.0, 
-                                    DEFAULT_MOMENTUM_WEIGHTS['ADX_Z'], 1.0)
-    rsi_momentum_weight = st.sidebar.slider("RSI Weight (%)", 0.0, 100.0, 
-                                             DEFAULT_MOMENTUM_WEIGHTS['RSI'], 1.0)
-    di_spread_weight = st.sidebar.slider("DI Spread Weight (%)", 0.0, 100.0, 
-                                          DEFAULT_MOMENTUM_WEIGHTS['DI_Spread'], 1.0)
-    
-    # Calculate and display total
-    total_momentum_weight = adx_weight + rs_weight + rsi_momentum_weight + di_spread_weight
-    if abs(total_momentum_weight - 100.0) > 0.1:
-        st.sidebar.warning(f"⚠️ Weights sum to {total_momentum_weight:.1f}% (should be 100%)")
-    else:
+    if momentum_mode == "Trending":
+        st.sidebar.caption("Trending: CMF + RSI (sum = 100%; changing one auto-adjusts the other)")
+        cmf_weight = st.sidebar.slider("CMF Weight (%)", 0.0, 100.0, 
+                                       DEFAULT_MOMENTUM_WEIGHTS_TRENDING['CMF'], 1.0, key="momentum_cmf")
+        rsi_trending_weight = 100.0 - cmf_weight
+        st.sidebar.caption(f"RSI Weight: **{rsi_trending_weight:.1f}%** (auto)")
+        momentum_weights = {
+            'CMF': cmf_weight,
+            'RSI': rsi_trending_weight,
+            'ADX_Z': 0.0,
+            'RS_Rating': 0.0,
+            'DI_Spread': 0.0
+        }
+        total_momentum_weight = 100.0
         st.sidebar.success(f"✅ Weights sum to {total_momentum_weight:.1f}%")
-    
-    momentum_weights = {
-        'ADX_Z': adx_weight,
-        'RS_Rating': rs_weight,
-        'RSI': rsi_momentum_weight,
-        'DI_Spread': di_spread_weight
-    }
+    else:
+        st.sidebar.caption("Historical: RS Rating, ADX Z, RSI, DI Spread. CMF = 0%.")
+        rs_weight = st.sidebar.slider("RS Rating Weight (%)", 0.0, 100.0, 
+                                       DEFAULT_MOMENTUM_WEIGHTS['RS_Rating'], 1.0, key="momentum_rs")
+        adx_weight = st.sidebar.slider("ADX Z-Score Weight (%)", 0.0, 100.0, 
+                                        DEFAULT_MOMENTUM_WEIGHTS['ADX_Z'], 1.0, key="momentum_adx")
+        rsi_momentum_weight = st.sidebar.slider("RSI Weight (%)", 0.0, 100.0, 
+                                                 DEFAULT_MOMENTUM_WEIGHTS['RSI'], 1.0, key="momentum_rsi")
+        di_spread_weight = st.sidebar.slider("DI Spread Weight (%)", 0.0, 100.0, 
+                                              DEFAULT_MOMENTUM_WEIGHTS['DI_Spread'], 1.0, key="momentum_di")
+        st.sidebar.caption("CMF Weight: **0%** (fixed in Historical)")
+        total_momentum_weight = adx_weight + rs_weight + rsi_momentum_weight + di_spread_weight
+        if abs(total_momentum_weight - 100.0) > 0.1:
+            st.sidebar.warning(f"⚠️ Weights sum to {total_momentum_weight:.1f}% (should be 100%)")
+        else:
+            st.sidebar.success(f"✅ Weights sum to {total_momentum_weight:.1f}%")
+        momentum_weights = {
+            'ADX_Z': adx_weight,
+            'RS_Rating': rs_weight,
+            'RSI': rsi_momentum_weight,
+            'DI_Spread': di_spread_weight,
+            'CMF': 0.0
+        }
     
     # Reversal filter thresholds (moved before weights)
     st.sidebar.subheader("Reversal Filters")
