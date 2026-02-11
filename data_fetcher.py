@@ -18,13 +18,13 @@ from config import MIN_DATA_POINTS
 try:
     from local_cache import get_cached_data, cache_data, should_update_cache, initialize_cache
     LOCAL_CACHE_AVAILABLE = True
-    print("✅ Local cache module loaded successfully")
+    print("[OK] Local cache module loaded successfully")
 except ImportError as e:
     LOCAL_CACHE_AVAILABLE = False
-    print(f"⚠️ Local cache not available: {e}")
+    print(f"[WARN] Local cache not available: {e}")
 except Exception as e:
     LOCAL_CACHE_AVAILABLE = False
-    print(f"⚠️ Error loading local cache: {e}")
+    print(f"[WARN] Error loading local cache: {e}")
 
 # Simple in-memory cache for data fetching
 _data_cache = {}
@@ -112,7 +112,7 @@ def fetch_sector_data(symbol, period='1y', min_data_points=MIN_DATA_POINTS, end_
                     return data
             except Exception as cache_err:
                 # Cache read failed, fall back to yfinance
-                print(f"⚠️ Cache read failed for {symbol}: {cache_err}")
+                print(f"[WARN] Cache read failed for {symbol}: {cache_err}")
                 data = None
         
         # Cache miss or non-daily: fetch from yfinance
@@ -131,7 +131,7 @@ def fetch_sector_data(symbol, period='1y', min_data_points=MIN_DATA_POINTS, end_
             try:
                 cache_data(symbol, data, source='yfinance')
             except Exception as cache_err:
-                print(f"⚠️ Cache write failed for {symbol}: {cache_err}")
+                print(f"[WARN] Cache write failed for {symbol}: {cache_err}")
         
         # Store in memory cache
         _data_cache[cache_key] = {'data': data, 'timestamp': datetime.now().timestamp()}

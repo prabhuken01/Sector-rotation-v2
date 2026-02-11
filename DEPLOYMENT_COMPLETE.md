@@ -7,8 +7,7 @@ All updated files have been copied to:
 
 ### Files Updated:
 - ✅ `streamlit_app.py` - Main application with new Stock Analysis tab
-- ✅ `sector_companies_20260204.csv` - Stock list (97 unique stocks)
-- ✅ `sector_companies_cleaned.csv` - Cleaned backup
+- ✅ `sector_company.csv` - Sector/company/symbol/weight list used by all tabs (single source)
 - ✅ `.streamlit/config.toml` - Streamlit configuration
 - ✅ `DEPLOY_INSTRUCTIONS.md` - Deployment guide
 - ✅ `DEPLOY_NOW_STEPS.md` - Quick deploy steps

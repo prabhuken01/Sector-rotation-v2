@@ -2110,7 +2110,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     """
     Display historical rankings.
     
-    Primary content: date-wise table for the last 20 trading days with:
+    Primary content: date-wise table for the last 10 trading days with:
     - Market breadth: Advance/Total %
     - Stocks % above 10 DMA (Nifty 50)
     - Momentum Ranked #1 Sector
@@ -2118,7 +2118,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     
     Secondary content: existing Momentum and Reversal evolution sub-tabs (T-7 to T).
     """
-    st.markdown("### 📅 Historical Rankings (Last 20 Trading Days)")
+    st.markdown("### 📅 Historical Rankings (Last 10 Trading Days)")
     st.markdown("---")
     
     if sector_data_dict is None or benchmark_data is None:
@@ -2128,8 +2128,8 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     from indicators import calculate_rsi, calculate_adx, calculate_z_score, calculate_cmf, calculate_mansfield_rs
     from company_symbols import SECTOR_COMPANIES
     
-    # --- Primary content: date-wise table (last 20 days) ---
-    st.markdown("#### 📋 Primary: Date-wise summary (last 20 trading days)")
+    # --- Primary content: date-wise table (last 10 days) ---
+    st.markdown("#### 📋 Primary: Date-wise summary (last 10 trading days)")
     
     NIFTY50_SYMBOLS = [
         'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
@@ -2146,7 +2146,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     
     # Need at least 22 bars for 20 days + next 2d
     if len(benchmark_data) < 22:
-        st.warning("⚠️ Need at least 22 trading days of data for the 20-day table.")
+        st.warning("⚠️ Need at least 22 trading days of data for the 10-day table.")
     else:
         # Use 10 days for performance (user preference: 7–10 days)
         lookback_days = min(10, len(benchmark_data) - 2)
@@ -2169,7 +2169,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             except Exception:
                 pass
 
-        with st.spinner("Building 20-day historical table (Advance/Total %, sectors, bullish/bearish stocks)..."):
+        with st.spinner("Building 10-day historical table (Advance/Total %, sectors, bullish/bearish stocks)..."):
             progress_bar = st.progress(0)
             status_text = st.empty()
 
@@ -2424,6 +2424,23 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             cols_existing = [c for c in display_cols if c in df_primary.columns]
             df_show = df_primary[cols_existing] if cols_existing else df_primary
 
+            # Ensure all percentage/return columns are numeric and rounded to 1 decimal
+            percent_cols = [
+                'Advance/Total %',
+                'Stocks % above 10 DMA',
+                'Bullish #1 Next 1D %',
+                'Bullish #1 Next 2D %',
+                'Bullish #2 Next 1D %',
+                'Bullish #2 Next 2D %',
+                'Bearish #1 Next 1D %',
+                'Bearish #1 Next 2D %',
+                'Bearish #2 Next 1D %',
+                'Bearish #2 Next 2D %',
+            ]
+            for c in percent_cols:
+                if c in df_show.columns:
+                    df_show[c] = pd.to_numeric(df_show[c], errors='coerce').round(1)
+
             # Color coding similar to Market Breadth tab for breadth columns
             def style_row(row):
                 res = [''] * len(row)
@@ -2449,10 +2466,14 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                         pass
                 return res
 
-            df_show_styled = df_show.style.apply(style_row, axis=1)
+            df_show_styled = (
+                df_show.style
+                .apply(style_row, axis=1)
+                .format({c: "{:.1f}" for c in percent_cols if c in df_show.columns})
+            )
             st.dataframe(df_show_styled, use_container_width=True, hide_index=True)
         else:
-            st.info("No rows computed for the 20-day table.")
+            st.info("No rows computed for the 10-day table.")
     
     st.markdown("---")
     st.markdown("#### 📈 Secondary: Sector evolution (Momentum & Reversal)")
@@ -2872,6 +2893,30 @@ def display_data_sources_tab():
     
     st.markdown("---")
     st.caption(f"⏰ Test completed at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    # Sector / Company / Symbol / Weight (%) table so user knows the data source
+    st.markdown("### 📋 Sector–Company data (used by all tabs)")
+    try:
+        from company_symbols import get_sector_company_table
+        table_rows = get_sector_company_table()
+        if table_rows:
+            df_sc = pd.DataFrame(table_rows)
+            st.dataframe(
+                df_sc,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "Sector": st.column_config.TextColumn("Sector", width="medium"),
+                    "Company Name": st.column_config.TextColumn("Company Name", width="large"),
+                    "Symbol": st.column_config.TextColumn("Symbol", width="small"),
+                    "Weight (%)": st.column_config.NumberColumn("Weight (%)", width="small", format="%.1f"),
+                },
+            )
+            st.caption("This list is loaded from sector_company.csv (or Sector-Company.xlsx if CSV is missing). No company appears in more than one sector.")
+        else:
+            st.info("No sector–company data loaded.")
+    except Exception as e:
+        st.warning(f"Could not load sector–company table: {e}")
 
 
 def calculate_fibonacci_levels(high, low):

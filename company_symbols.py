@@ -4,11 +4,7 @@ Static mapping of top 8-10 companies by weight in each sector/ETF
 Weights are approximate based on latest index compositions
 """
 
-__all__ = [
-    'SECTOR_COMPANIES', 'get_company_symbol_list', 'load_sector_companies_from_excel',
-    'load_part_b_from_excel', 'save_part_b_to_excel'
-]
-PART_B_SHEET_NAME = 'Part B'
+__all__ = ['SECTOR_COMPANIES', 'get_company_symbol_list', 'load_sector_companies_from_excel', 'load_sector_companies_from_csv', 'get_sector_company_table']
 
 # Top companies by weight in each sector/ETF
 SECTOR_COMPANIES = {
@@ -186,112 +182,144 @@ def get_company_symbol_list(sector_name):
     return list(companies.keys())
 
 
-def get_all_screener_symbols():
-    """Get unique (symbol, name) pairs across all sectors for Stock Screener. Based on 97 stocks in excel."""
-    seen = set()
-    result = []
-    for sector_name, companies in SECTOR_COMPANIES.items():
-        for symbol, info in companies.items():
-            if symbol not in seen:
-                seen.add(symbol)
-                name = info.get('name', symbol) if isinstance(info, dict) else symbol
-                result.append((symbol, name))
-    return result
+def get_sector_company_table():
+    """
+    Return sector/company data as a list of dicts for display.
+    Keys: Sector, Company Name, Symbol, Weight (%).
+    """
+    rows = []
+    for sector in sorted(SECTOR_COMPANIES.keys()):
+        for symbol, info in SECTOR_COMPANIES[sector].items():
+            rows.append({
+                'Sector': sector,
+                'Company Name': info.get('name', symbol),
+                'Symbol': symbol,
+                'Weight (%)': info.get('weight', 0),
+            })
+    return rows
+
+
+def _build_sector_companies_from_df(df):
+    """
+    Build SECTOR_COMPANIES-style dict from a DataFrame with columns:
+    Sector, Company Name, Symbol, Weight (%).
+    Skips rows with blank Symbol. Uses 0 for blank Weight.
+    Ensures no company (Symbol) appears in two sectors; first occurrence wins.
+    """
+    import pandas as pd
+    result = {}
+    seen_symbols = {}  # symbol -> (sector, name) for duplicate check
+    for _, row in df.iterrows():
+        sector = row.get('Sector')
+        name = row.get('Company Name', '')
+        symbol = row.get('Symbol')
+        weight = row.get('Weight (%)', 0)
+        if pd.isna(symbol) or (isinstance(symbol, str) and not str(symbol).strip()):
+            continue
+        symbol = str(symbol).strip()
+        if sector not in result:
+            result[sector] = {}
+        if symbol in seen_symbols:
+            prev_sector, prev_name = seen_symbols[symbol]
+            print(f"[WARN] Symbol {symbol} appears in both '{prev_sector}' and '{sector}'; keeping first only.")
+            continue
+        seen_symbols[symbol] = (sector, name)
+        try:
+            w = float(weight) if not (pd.isna(weight) or (isinstance(weight, str) and not str(weight).strip())) else 0.0
+        except (TypeError, ValueError):
+            w = 0.0
+        result[sector][symbol] = {'name': str(name) if not pd.isna(name) else symbol, 'weight': w}
+    return result if result else None
+
+
+def load_sector_companies_from_csv(csv_file='sector_company.csv'):
+    """
+    Load sector-company mappings from CSV.
+    Columns: Sector, Company Name, Symbol, Weight (%).
+    Returns dict matching SECTOR_COMPANIES format, or None if file doesn't exist.
+    """
+    try:
+        import pandas as pd
+        import os
+        if not os.path.exists(csv_file):
+            return None
+        df = pd.read_csv(csv_file)
+        for col in ['Sector', 'Company Name', 'Symbol', 'Weight (%)']:
+            if col not in df.columns:
+                print(f"[WARN] CSV missing column '{col}'; skipping load.")
+                return None
+        return _build_sector_companies_from_df(df)
+    except Exception as e:
+        print(f"Could not load CSV file {csv_file}: {e}")
+        return None
 
 
 def load_sector_companies_from_excel(excel_file='Sector-Company.xlsx'):
     """
     Load sector-company mappings from Excel file.
     Excel format: Sector | Company Name | Symbol | Weight(%)
-    
-    Returns:
-        Dictionary matching SECTOR_COMPANIES format, or None if file doesn't exist
+    Blank Symbol rows are skipped; blank Weight treated as 0.
+    Returns dict matching SECTOR_COMPANIES format, or None if file doesn't exist.
     """
     try:
         import pandas as pd
         import os
-        
         if not os.path.exists(excel_file):
             return None
-        
-        # First sheet only (sector list for momentum/reversal); Part B is a separate sheet
-        df = pd.read_excel(excel_file, sheet_name=0)
-        
-        # Group by Sector and build the dictionary
-        result = {}
-        for sector in df['Sector'].unique():
-            sector_data = df[df['Sector'] == sector]
-            result[sector] = {}
-            
-            for _, row in sector_data.iterrows():
-                symbol = row['Symbol']
-                result[sector][symbol] = {
-                    'name': row['Company Name'],
-                    'weight': float(row['Weight (%)'])
-                }
-        
-        return result
+        df = pd.read_excel(excel_file)
+        for col in ['Sector', 'Company Name', 'Symbol', 'Weight (%)']:
+            if col not in df.columns:
+                print(f"[WARN] Excel missing column '{col}'; skipping load.")
+                return None
+        return _build_sector_companies_from_df(df)
     except Exception as e:
         print(f"Could not load Excel file: {e}")
         return None
 
 
-def load_part_b_from_excel(excel_file='Sector-Company.xlsx'):
-    """
-    Load Part B symbols from the 'Part B' sheet in the same Excel file.
-    Part B = large/mid/micro Nifty universe for market breadth (not sectoral analysis).
-    Returns list of symbols (e.g. ['RELIANCE.NS', ...]) or empty list.
-    """
-    try:
-        import pandas as pd
-        import os
-        if not os.path.exists(excel_file):
-            return []
-        xl = pd.ExcelFile(excel_file)
-        if PART_B_SHEET_NAME not in xl.sheet_names:
-            return []
-        df = pd.read_excel(excel_file, sheet_name=PART_B_SHEET_NAME)
-        if df.empty or 'Symbol' not in df.columns:
-            return []
-        symbols = df['Symbol'].drop_duplicates().dropna().astype(str).str.strip().tolist()
-        symbols = [s if s.endswith('.NS') else s + '.NS' for s in symbols if s and len(s) > 1]
-        return symbols
-    except Exception:
-        return []
+# Load order: sector_company.csv first, then Sector-Company.xlsx, then built-in
+_loaded_source = None
+_csv_data = load_sector_companies_from_csv('sector_company.csv')
+if _csv_data is not None:
+    SECTOR_COMPANIES = _csv_data
+    _loaded_source = 'sector_company.csv'
+    print("[OK] Loaded sector-company data from sector_company.csv")
+else:
+    _excel_data = load_sector_companies_from_excel('Sector-Company.xlsx')
+    if _excel_data is not None:
+        SECTOR_COMPANIES = _excel_data
+        _loaded_source = 'Sector-Company.xlsx'
+        print("[OK] Loaded sector-company data from Sector-Company.xlsx")
 
 
-def save_part_b_to_excel(excel_file='Sector-Company.xlsx', symbols=None):
-    """
-    Write Part B symbols to the 'Part B' sheet in the same Excel file.
-    Preserves the first sheet (sector list). Creates 'Part B' sheet if missing.
-    """
-    if not symbols:
-        return
-    try:
-        import os
-        import openpyxl
-        if not os.path.exists(excel_file):
-            # Create new workbook with Part B only (no sector sheet yet)
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = PART_B_SHEET_NAME
-        else:
-            wb = openpyxl.load_workbook(excel_file)
-            if PART_B_SHEET_NAME in wb.sheetnames:
-                ws = wb[PART_B_SHEET_NAME]
-            else:
-                ws = wb.create_sheet(PART_B_SHEET_NAME)
-        ws.delete_rows(1, ws.max_row)
-        ws.append(['Symbol'])
-        for s in symbols:
-            ws.append([s])
-        wb.save(excel_file)
-    except Exception:
-        pass
+# ---------------------------------------------------------------------------
+# F&O LIST INTEGRATION (NON-DESTRUCTIVE)
+# ---------------------------------------------------------------------------
+# If the user updates the F&O TradingView list, we only ADD new companies
+# into existing sectors based on FO_GROUP_TO_SECTOR mapping. We never
+# remove or overwrite existing mappings.
+try:
+    from fo_watchlist import FO_GROUPS, FO_GROUP_TO_SECTOR
 
+    for group_name, symbols in FO_GROUPS.items():
+        sector_name = FO_GROUP_TO_SECTOR.get(group_name)
+        if not sector_name:
+            continue
 
-# Try to load updated weights from Excel file on module import
-_excel_data = load_sector_companies_from_excel('Sector-Company.xlsx')
-if _excel_data is not None:
-    SECTOR_COMPANIES = _excel_data
-    print("✅ Loaded sector-company weights from Sector-Company.xlsx")
+        # Ensure sector exists; if not, skip (we do NOT create new sectors here)
+        sector_dict = SECTOR_COMPANIES.get(sector_name)
+        if sector_dict is None:
+            continue
+
+        for fo_symbol in symbols:
+            yf_symbol = fo_symbol.yf_symbol
+            if yf_symbol not in sector_dict:
+                # Add with minimal metadata; user can refine weights via Excel later
+                clean_name = yf_symbol.replace(".NS", "")
+                sector_dict[yf_symbol] = {
+                    'weight': 0.0,
+                    'name': clean_name,
+                }
+except Exception:
+    # F&O integration is best-effort only; never block app startup
+    pass

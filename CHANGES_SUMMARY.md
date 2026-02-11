@@ -101,3 +101,30 @@
 2. Deploy to Streamlit Cloud following `DEPLOYMENT.md`
 3. Share the deployed URL with users
 4. Monitor performance and user feedback
+
+---
+
+### 4. ✅ Feb 2026 – Nifty display, Historical Rankings, Stock Screener, caching
+
+- **File**: `streamlit_app.py`
+- **Changes**:
+  - **Nifty display (header block & Market breadth tab)**:
+    - Switched the displayed Nifty value to use the actual index symbol `^NSEI` (Yahoo Finance) instead of the benchmark/ETF proxy.
+    - Shows Nifty as an integer with thousands separator (no decimals) in both the always-visible Market Breadth block and the 20-day Market breadth tab.
+  - **Stock Screener (tab 3)**:
+    - Formatted `RSI (1W)`, `RSI (1D)`, and `RSI (1H)` as integers (no decimal places) for cleaner presentation while keeping all underlying calculations unchanged.
+  - **Historical Rankings (tab 8)**:
+    - Renamed columns from sector-focused labels to stock-focused labels: `Bullish #1/2 Stock` and `Bearish #1/2 Stock`.
+    - The table now shows the stock name for each bullish/bearish slot instead of the sector.
+    - Standardised all breadth/return percentages in the primary historical table to **one decimal place**, and ensured they are treated as numeric columns so they render right‑aligned in the UI.
+  - **Historical Rankings cache**:
+    - Added a lightweight CSV cache at `data_cache/historical_rankings_cache.csv` to persist the primary date-wise table.
+    - On each run, the app reuses cached rows for previously computed dates and only recomputes missing dates (typically the latest trading days), then refreshes the cache.
+  - **Legacy market overview block**:
+    - Wrapped an old, unused “market overview + Fibonacci + Excel export” block in an `if False:` guard so it no longer executes, fixing an `IndentationError` while preserving the code for future reference.
+
+- **Impact**:
+  - Consistent Nifty values across the app (index-based, not ETF-based).
+  - Cleaner and more consistent display conventions (RSI as integers, all key percentages at one decimal and right-aligned).
+  - Faster subsequent loads of the Historical Rankings tab thanks to on-disk caching.
+  - Eliminated a startup `IndentationError` without changing any active analysis logic.
