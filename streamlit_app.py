@@ -10,37 +10,15 @@ import pandas as pd
 from datetime import datetime, timedelta
 import warnings
 import traceback
-
-warnings.filterwarnings("ignore")
+warnings.filterwarnings('ignore')
 
 try:
-    from config import (
-        SECTORS,
-        SECTOR_ETFS,
-        SECTOR_ETFS_ALTERNATE,
-        MOMENTUM_SCORE_PERCENTILE_THRESHOLD,
-        DEFAULT_MOMENTUM_WEIGHTS,
-        DEFAULT_REVERSAL_WEIGHTS,
-        DECIMAL_PLACES,
-    )
-    from data_fetcher import (
-        fetch_sector_data,
-        fetch_sector_data_with_alternate,
-        fetch_all_sectors_parallel,
-        clear_data_cache,
-    )
+    from config import (SECTORS, SECTOR_ETFS, SECTOR_ETFS_ALTERNATE, MOMENTUM_SCORE_PERCENTILE_THRESHOLD, 
+                        DEFAULT_MOMENTUM_WEIGHTS, DEFAULT_MOMENTUM_WEIGHTS_TRENDING, DEFAULT_REVERSAL_WEIGHTS, DECIMAL_PLACES)
+    from data_fetcher import fetch_sector_data, fetch_sector_data_with_alternate, fetch_all_sectors_parallel, clear_data_cache
     from analysis import analyze_all_sectors, format_results_dataframe, analyze_sector
-    from indicators import (
-        calculate_rsi,
-        calculate_adx,
-        calculate_cmf,
-        calculate_z_score,
-        calculate_mansfield_rs,
-    )
-    from company_analysis import (
-        display_company_momentum_tab,
-        display_company_reversal_tab,
-    )
+    from indicators import calculate_rsi, calculate_adx, calculate_cmf, calculate_z_score, calculate_mansfield_rs
+    from company_analysis import display_company_momentum_tab, display_company_reversal_tab
 except ImportError as e:
     st.error(f"❌ Import Error: {str(e)}")
     st.info("Please ensure all required modules are installed: yfinance, pandas, numpy")
@@ -226,32 +204,53 @@ def get_sidebar_controls():
     if use_etf != st.session_state.use_etf_state:
         st.session_state.use_etf_state = use_etf
     
-    # Momentum weights (percentages that sum to 100%)
+    # Momentum weights: toggle Historical vs Trending (default Trending)
     st.sidebar.subheader("Momentum Score Weights (%)")
-    st.sidebar.caption("Weights should sum to 100%")
+    momentum_mode = st.sidebar.radio(
+        "Momentum weight mode",
+        options=["Trending", "Historical"],
+        index=0,
+        help="Trending: 50% CMF + 50% RSI (composite). Historical: RS Rating, ADX Z, RSI, DI Spread (CMF = 0%)."
+    )
     
-    rs_weight = st.sidebar.slider("RS Rating Weight (%)", 0.0, 100.0, 
-                                   DEFAULT_MOMENTUM_WEIGHTS['RS_Rating'], 1.0)
-    adx_weight = st.sidebar.slider("ADX Z-Score Weight (%)", 0.0, 100.0, 
-                                    DEFAULT_MOMENTUM_WEIGHTS['ADX_Z'], 1.0)
-    rsi_momentum_weight = st.sidebar.slider("RSI Weight (%)", 0.0, 100.0, 
-                                             DEFAULT_MOMENTUM_WEIGHTS['RSI'], 1.0)
-    di_spread_weight = st.sidebar.slider("DI Spread Weight (%)", 0.0, 100.0, 
-                                          DEFAULT_MOMENTUM_WEIGHTS['DI_Spread'], 1.0)
-    
-    # Calculate and display total
-    total_momentum_weight = adx_weight + rs_weight + rsi_momentum_weight + di_spread_weight
-    if abs(total_momentum_weight - 100.0) > 0.1:
-        st.sidebar.warning(f"⚠️ Weights sum to {total_momentum_weight:.1f}% (should be 100%)")
-    else:
+    if momentum_mode == "Trending":
+        st.sidebar.caption("Trending: CMF + RSI (sum = 100%; changing one auto-adjusts the other)")
+        cmf_weight = st.sidebar.slider("CMF Weight (%)", 0.0, 100.0, 
+                                        DEFAULT_MOMENTUM_WEIGHTS_TRENDING['CMF'], 1.0, key="momentum_cmf")
+        rsi_trending_weight = 100.0 - cmf_weight
+        st.sidebar.caption(f"RSI Weight: **{rsi_trending_weight:.1f}%** (auto)")
+        momentum_weights = {
+            'CMF': cmf_weight,
+            'RSI': rsi_trending_weight,
+            'ADX_Z': 0.0,
+            'RS_Rating': 0.0,
+            'DI_Spread': 0.0
+        }
+        total_momentum_weight = 100.0
         st.sidebar.success(f"✅ Weights sum to {total_momentum_weight:.1f}%")
-    
-    momentum_weights = {
-        'ADX_Z': adx_weight,
-        'RS_Rating': rs_weight,
-        'RSI': rsi_momentum_weight,
-        'DI_Spread': di_spread_weight
-    }
+    else:
+        st.sidebar.caption("Historical: RS Rating, ADX Z, RSI, DI Spread. CMF = 0%.")
+        rs_weight = st.sidebar.slider("RS Rating Weight (%)", 0.0, 100.0, 
+                                       DEFAULT_MOMENTUM_WEIGHTS['RS_Rating'], 1.0, key="momentum_rs")
+        adx_weight = st.sidebar.slider("ADX Z-Score Weight (%)", 0.0, 100.0, 
+                                        DEFAULT_MOMENTUM_WEIGHTS['ADX_Z'], 1.0, key="momentum_adx")
+        rsi_momentum_weight = st.sidebar.slider("RSI Weight (%)", 0.0, 100.0, 
+                                                 DEFAULT_MOMENTUM_WEIGHTS['RSI'], 1.0, key="momentum_rsi")
+        di_spread_weight = st.sidebar.slider("DI Spread Weight (%)", 0.0, 100.0, 
+                                              DEFAULT_MOMENTUM_WEIGHTS['DI_Spread'], 1.0, key="momentum_di")
+        st.sidebar.caption("CMF Weight: **0%** (fixed in Historical)")
+        total_momentum_weight = adx_weight + rs_weight + rsi_momentum_weight + di_spread_weight
+        if abs(total_momentum_weight - 100.0) > 0.1:
+            st.sidebar.warning(f"⚠️ Weights sum to {total_momentum_weight:.1f}% (should be 100%)")
+        else:
+            st.sidebar.success(f"✅ Weights sum to {total_momentum_weight:.1f}%")
+        momentum_weights = {
+            'ADX_Z': adx_weight,
+            'RS_Rating': rs_weight,
+            'RSI': rsi_momentum_weight,
+            'DI_Spread': di_spread_weight,
+            'CMF': 0.0
+        }
     
     # Reversal filter thresholds (moved before weights)
     st.sidebar.subheader("Reversal Filters")
@@ -893,10 +892,11 @@ def calculate_historical_momentum_performance(sector_data_dict, benchmark_data, 
                         continue
                     
                     # Calculate indicators
-                    from indicators import calculate_rsi, calculate_adx, calculate_z_score
+                    from indicators import calculate_rsi, calculate_adx, calculate_z_score, calculate_cmf
                     
                     rsi = calculate_rsi(subset_data)
                     adx, plus_di, minus_di, di_spread = calculate_adx(subset_data)
+                    cmf_period = calculate_cmf(subset_data)
                     adx_z = calculate_z_score(adx.dropna())
                     
                     # Calculate RS Rating
@@ -929,13 +929,14 @@ def calculate_historical_momentum_performance(sector_data_dict, benchmark_data, 
                         'RS_Rating': rs_rating,
                         'RSI': rsi.iloc[-1] if not rsi.isna().all() else 50,
                         'DI_Spread': di_spread.iloc[-1] if not di_spread.isna().all() else 0,
+                        'CMF': cmf_period.iloc[-1] if not cmf_period.isna().all() else 0,
                         'Price': subset_data['Close'].iloc[-1]
                     })
                 
                 if not period_results or len(period_results) < 2:
                     continue
                 
-                # Create DataFrame and rank
+                # Create DataFrame and rank (support Historical and Trending momentum weights)
                 period_df = pd.DataFrame(period_results)
                 num_sectors = len(period_df)
                 
@@ -944,15 +945,24 @@ def calculate_historical_momentum_performance(sector_data_dict, benchmark_data, 
                 period_df['RS_Rating_Rank'] = period_df['RS_Rating'].rank(ascending=False, method='min')
                 period_df['RSI_Rank'] = period_df['RSI'].rank(ascending=False, method='min')
                 period_df['DI_Spread_Rank'] = period_df['DI_Spread'].rank(ascending=False, method='min')
+                if momentum_weights.get('CMF', 0) != 0 and 'CMF' in period_df.columns:
+                    period_df['CMF_Rank'] = period_df['CMF'].rank(ascending=False, method='min')
                 
-                # Calculate weighted average rank (lower = better)
                 total_weight = sum(momentum_weights.values())
-                period_df['Weighted_Avg_Rank'] = (
-                    (period_df['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / total_weight) +
-                    (period_df['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / total_weight) +
-                    (period_df['RSI_Rank'] * momentum_weights.get('RSI', 30) / total_weight) +
-                    (period_df['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / total_weight)
-                )
+                if total_weight <= 0:
+                    total_weight = 100.0
+                rank_components_period = [
+                    ('ADX_Z', 'ADX_Z_Rank'),
+                    ('RS_Rating', 'RS_Rating_Rank'),
+                    ('RSI', 'RSI_Rank'),
+                    ('DI_Spread', 'DI_Spread_Rank'),
+                    ('CMF', 'CMF_Rank'),
+                ]
+                period_df['Weighted_Avg_Rank'] = 0.0
+                for key, rank_col in rank_components_period:
+                    w = momentum_weights.get(key, 0)
+                    if w != 0 and rank_col in period_df.columns:
+                        period_df['Weighted_Avg_Rank'] = period_df['Weighted_Avg_Rank'] + (period_df[rank_col] * w / total_weight)
                 
                 # Scale to 1-10 where 10 = best momentum, 1 = worst
                 if num_sectors > 1:
@@ -1594,6 +1604,746 @@ def display_momentum_tab(df, sector_data_dict, benchmark_data, enable_color_codi
     )
 
 
+def display_market_breadth_tab(analysis_date=None, enable_color_coding=True):
+    """
+    Display Market Breadth tab with advance/decline and DMA percentage data.
+    
+    Uses Nifty Total Market: NSE Nifty 500 + Midcap 150 + Smallcap 250 (750+ stocks) when available; else sector CSV or Nifty 50 fallback.
+    Shows data for last ~20 trading days with:
+    - Date, Day, Advances, Declines, Advance/Total (%), % Above 20 DMA, % Above 50 DMA, Nifty, Nifty Chg %
+    - India VIX displayed alongside.
+    - Color coding: red (<20%), yellow (20-50%), green (>50%)
+    - Summary row for last 20 days aggregate
+    
+    Args:
+        analysis_date: Date for analysis (defaults to today)
+        enable_color_coding: Whether to apply color coding
+    """
+    from data_fetcher import fetch_sector_data, fetch_nifty_broad_universe, load_breadth_history, save_breadth_rows
+    from company_symbols import load_part_b_from_excel, save_part_b_to_excel
+    import time
+    import os
+    
+    st.markdown("### 📊 Market Breadth")
+    st.markdown("---")
+    
+    # ── Toggle: Sectoral stocks vs Universal stocks ─────────────────
+    excel_file = 'Sector-Company.xlsx'
+    
+    # Load both lists
+    # Sectoral = 97 stocks from first sheet of Sector-Company.xlsx (same as momentum/reversal)
+    sectoral_stocks = []
+    for csv_path in ['sector_companies_cleaned.csv', 'sector_companies_20260204.csv']:
+        if os.path.exists(csv_path):
+            try:
+                df_csv = pd.read_csv(csv_path)
+                if 'Symbol' in df_csv.columns:
+                    sectoral_stocks = df_csv['Symbol'].drop_duplicates().dropna().astype(str).str.strip().tolist()
+                    sectoral_stocks = [s if s.endswith('.NS') else s + '.NS' for s in sectoral_stocks if s and len(s) > 1]
+                    break
+            except Exception:
+                continue
+    if not sectoral_stocks:
+        sectoral_stocks = [
+            'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
+            'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
+            'LT.NS', 'AXISBANK.NS', 'ASIANPAINT.NS', 'MARUTI.NS', 'TITAN.NS',
+            'NESTLEIND.NS', 'ULTRACEMCO.NS', 'WIPRO.NS', 'SUNPHARMA.NS', 'TATAMOTORS.NS',
+            'TECHM.NS', 'HCLTECH.NS', 'BAJFINANCE.NS', 'JSWSTEEL.NS', 'TATASTEEL.NS',
+            'POWERGRID.NS', 'NTPC.NS', 'ONGC.NS', 'COALINDIA.NS', 'ADANIENT.NS',
+            'ADANIPORTS.NS', 'GRASIM.NS', 'DIVISLAB.NS', 'CIPLA.NS', 'DRREDDY.NS',
+            'BAJAJFINSV.NS', 'M&M.NS', 'HEROMOTOCO.NS', 'EICHERMOT.NS', 'MARICO.NS',
+            'GODREJCP.NS', 'DABUR.NS', 'BRITANNIA.NS', 'HDFCLIFE.NS', 'SBILIFE.NS',
+            'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
+        ]
+    
+    # Universal = Part B from Sector-Company.xlsx sheet "Part B" (large/mid/micro Nifty universe)
+    universal_stocks = load_part_b_from_excel(excel_file)
+    if not universal_stocks:
+        try:
+            universal_stocks = fetch_nifty_broad_universe(min_stocks=1000, use_cache=True) or []
+            if universal_stocks:
+                save_part_b_to_excel(excel_file, universal_stocks)
+        except Exception:
+            pass
+    
+    # Toggle
+    universe_choice = st.radio(
+        "Select stock universe for breadth analysis:",
+        ["Sectoral stocks", "Universal stocks"],
+        horizontal=True,
+        key="breadth_universe_toggle",
+        help="Sectoral = same stocks used for Momentum/Reversal ranking. "
+             "Universal = broader NSE large/mid/micro universe from 'Part B' sheet."
+    )
+    
+    if universe_choice == "Sectoral stocks":
+        breadth_stocks = sectoral_stocks
+        breadth_source = f"Sectoral ({len(sectoral_stocks)} stocks)"
+    else:
+        if universal_stocks:
+            breadth_stocks = universal_stocks
+            breadth_source = f"Universal / Part B ({len(universal_stocks)} stocks)"
+        else:
+            breadth_stocks = sectoral_stocks
+            breadth_source = f"Sectoral (fallback, Part B empty — {len(sectoral_stocks)} stocks)"
+    
+    num_stocks_considered = len(breadth_stocks)
+    
+    # Fetch India VIX for display alongside
+    vix_value = None
+    vix_symbols = ['^INDIAVIX', 'INDIAVIX.NS', 'INDIAVIX']
+    for vix_sym in vix_symbols:
+        try:
+            vix_data = fetch_sector_data(vix_sym, end_date=analysis_date, interval='1d')
+            if vix_data is not None and len(vix_data) > 0:
+                vix_value = vix_data['Close'].iloc[-1]
+                break
+        except Exception:
+            continue
+    
+    # Header
+    col_market, col_vix = st.columns([2, 1])
+    with col_market:
+        st.markdown(f"**Market Breadth** — *Stocks: **{num_stocks_considered}** ({breadth_source})*")
+    with col_vix:
+        st.metric("India VIX", f"{vix_value:.2f}" if vix_value is not None else "N/A")
+    
+    # Instructions and refresh button
+    col_info, col_refresh = st.columns([3, 1])
+    with col_info:
+        st.info("📋 **Note:** Click 'Refresh Current Day' to update Advance/Decline and % DMA data for the current day. Other data is for prior days.")
+    with col_refresh:
+        if st.button("🔄 Refresh Current Day", use_container_width=True):
+            if 'market_breadth_cache' in st.session_state:
+                del st.session_state['market_breadth_cache']
+            st.rerun()
+    
+    if analysis_date is None:
+        analysis_date = datetime.now().date()
+    
+    # Fetch Nifty 50 index data for historical dates (for Nifty column and Nifty Chg %)
+    nifty_data = fetch_sector_data('^NSEI', end_date=analysis_date, interval='1d')
+    if nifty_data is None or len(nifty_data) == 0:
+        st.error("❌ Unable to fetch Nifty 50 data")
+        return
+    
+    # Get last 20 trading days (or available days)
+    trading_dates = nifty_data.index.sort_values(ascending=False)[:20]
+    current_date = trading_dates[0] if len(trading_dates) > 0 else None
+    
+    # Load persisted breadth history (past Advance/Decline etc.) to avoid NSE fetch and iteration
+    breadth_history = load_breadth_history()
+    
+    # Fetch India VIX history for each date (for VIX column)
+    vix_data = None
+    for vix_sym in ['^INDIAVIX', 'INDIAVIX.NS', 'INDIAVIX']:
+        try:
+            vix_data = fetch_sector_data(vix_sym, end_date=analysis_date, interval='1d')
+            if vix_data is not None and len(vix_data) > 0:
+                break
+        except Exception:
+            continue
+    
+    refresh_key = f"market_breadth_refresh_{current_date}"
+    if refresh_key not in st.session_state:
+        st.session_state[refresh_key] = 0
+    current_time = time.time()
+    last_refresh_time = st.session_state.get(f"{refresh_key}_time", 0)
+    should_refresh = (current_time - last_refresh_time) > 300
+    if should_refresh:
+        st.session_state[f"{refresh_key}_time"] = current_time
+    
+    # Build list of dates we must compute (not in history, or current day for refresh)
+    dates_to_compute = []
+    for date in trading_dates:
+        date_str = date.strftime('%Y-%m-%d')
+        in_history = date_str in breadth_history
+        is_current = (date == current_date)
+        if not in_history or (is_current and should_refresh):
+            dates_to_compute.append(date)
+    
+    cache_key = f"market_breadth_data_{analysis_date}_{universe_choice}"
+    breadth_data = []
+    
+    if not dates_to_compute and breadth_history:
+        # All 20 days from stored history — no NSE fetch, no iteration
+        for date in trading_dates:
+            date_str = date.strftime('%Y-%m-%d')
+            row = breadth_history.get(date_str)
+            if row is not None:
+                r = dict(row)
+                r['Date'] = 'Current day' if date == current_date else date_str
+                breadth_data.append(r)
+        if breadth_data:
+            st.session_state[cache_key] = breadth_data
+    elif cache_key in st.session_state and not should_refresh and dates_to_compute == []:
+        breadth_data = st.session_state[cache_key]
+    else:
+        with st.spinner("Calculating market breadth data..."):
+            progress_bar = st.progress(0)
+            total_days = len(trading_dates)
+            stock_data_cache = {}
+            latest_date = trading_dates[0]
+            latest_date_obj = latest_date.date() if hasattr(latest_date, 'date') else latest_date
+            
+            for symbol in breadth_stocks:
+                try:
+                    stock_data = fetch_sector_data(symbol, end_date=latest_date_obj, interval='1d')
+                    if stock_data is not None and len(stock_data) >= 2:
+                        stock_data_cache[symbol] = stock_data
+                except Exception:
+                    continue
+            
+            computed_rows_to_save = []
+            for idx, date in enumerate(trading_dates):
+                progress_bar.progress((idx + 1) / total_days)
+                date_str = date.strftime('%Y-%m-%d')
+                date_obj = date.date() if hasattr(date, 'date') else date
+                is_current_day = (date == current_date)
+                
+                # Use stored row if we have it and this date was not marked for recompute
+                if date_str in breadth_history and date not in dates_to_compute:
+                    row = dict(breadth_history[date_str])
+                    row['Date'] = 'Current day' if is_current_day else date_str
+                    breadth_data.append(row)
+                    continue
+                
+                # Compute this date
+                day_name = date.strftime('%A')
+                nifty_close = nifty_data.loc[date, 'Close']
+                nifty_prev_close = None
+                if idx < len(trading_dates) - 1:
+                    prev_date = trading_dates[idx + 1]
+                    nifty_prev_close = nifty_data.loc[prev_date, 'Close']
+                nifty_chg_pct = ((nifty_close - nifty_prev_close) / nifty_prev_close * 100) if nifty_prev_close else 0.0
+                
+                advances = 0
+                declines = 0
+                up_4_daily = 0
+                down_4_daily = 0
+                above_10dma = 0
+                above_20dma = 0
+                above_40dma = 0
+                above_50dma = 0
+                total_stocks = 0
+                
+                for symbol, stock_data in stock_data_cache.items():
+                    try:
+                        date_in_data = None
+                        for idx_date in stock_data.index:
+                            if idx_date.date() == date_obj:
+                                date_in_data = idx_date
+                                break
+                        
+                        if date_in_data is not None:
+                            current_price = stock_data.loc[date_in_data, 'Close']
+                            date_idx = stock_data.index.get_loc(date_in_data)
+                            
+                            if date_idx > 0:
+                                prev_price = stock_data.iloc[date_idx - 1]['Close']
+                                if current_price > prev_price:
+                                    advances += 1
+                                elif current_price < prev_price:
+                                    declines += 1
+                                daily_chg_pct = (current_price - prev_price) / prev_price * 100
+                                if daily_chg_pct >= 4:
+                                    up_4_daily += 1
+                                elif daily_chg_pct <= -4:
+                                    down_4_daily += 1
+                            
+                            if len(stock_data) >= 50:
+                                dma_10 = stock_data['Close'].rolling(10).mean().loc[date_in_data]
+                                dma_20 = stock_data['Close'].rolling(20).mean().loc[date_in_data]
+                                dma_40 = stock_data['Close'].rolling(40).mean().loc[date_in_data]
+                                dma_50 = stock_data['Close'].rolling(50).mean().loc[date_in_data]
+                                if not pd.isna(dma_10) and current_price > dma_10:
+                                    above_10dma += 1
+                                if not pd.isna(dma_20) and current_price > dma_20:
+                                    above_20dma += 1
+                                if not pd.isna(dma_40) and current_price > dma_40:
+                                    above_40dma += 1
+                                if not pd.isna(dma_50) and current_price > dma_50:
+                                    above_50dma += 1
+                            
+                            total_stocks += 1
+                    except Exception:
+                        continue
+                
+                advance_total_pct = (advances / (advances + declines) * 100) if (advances + declines) > 0 else 0.0
+                pct_above_10dma = (above_10dma / total_stocks * 100) if total_stocks > 0 else 0.0
+                pct_above_20dma = (above_20dma / total_stocks * 100) if total_stocks > 0 else 0.0
+                pct_above_40dma = (above_40dma / total_stocks * 100) if total_stocks > 0 else 0.0
+                
+                # VIX for this date
+                vix_close = None
+                if vix_data is not None and len(vix_data) > 0:
+                    try:
+                        if date in vix_data.index:
+                            vix_close = float(vix_data.loc[date, 'Close'])
+                        else:
+                            for idx_v in vix_data.index:
+                                if hasattr(idx_v, 'date') and idx_v.date() == date_obj:
+                                    vix_close = float(vix_data.loc[idx_v, 'Close'])
+                                    break
+                    except Exception:
+                        pass
+                
+                row = {
+                    'Date': 'Current day' if is_current_day else date_str,
+                    'Day': day_name,
+                    'Advances': advances,
+                    'Declines': declines,
+                    'Advance/Total (%)': round(advance_total_pct, 1),
+                    'Up 4% (Daily)': up_4_daily,
+                    'Down 4% (Daily)': down_4_daily,
+                    '% Above 10 DMA': round(pct_above_10dma, 1),
+                    '% Above 20 DMA': round(pct_above_20dma, 1),
+                    '% Above 40 DMA': round(pct_above_40dma, 1),
+                    '% Above 50 DMA': round((above_50dma / total_stocks * 100) if total_stocks > 0 else 0.0, 1),
+                    'Nifty': int(round(nifty_close)),
+                    'Nifty Chg %': round(nifty_chg_pct, 1),
+                    'VIX': round(vix_close, 2) if vix_close is not None else None
+                }
+                breadth_data.append(row)
+                # Persist so next time we don't need NSE fetch or iteration for this date
+                computed_rows_to_save.append({**row, 'Date': date_str})
+            
+            progress_bar.empty()
+            if computed_rows_to_save:
+                save_breadth_rows(rows=computed_rows_to_save)
+            st.session_state[cache_key] = breadth_data
+    
+    # Create DataFrame
+    df_breadth = pd.DataFrame(breadth_data)
+    
+    # Summary row for last 20 days
+    if len(df_breadth) > 0:
+        summary_row = {
+            'Date': 'upto last 20 days',
+            'Day': '',
+            'Advances': '',
+            'Declines': '',
+            'Advance/Total (%)': round(df_breadth['Advance/Total (%)'].mean(), 1),
+            'Up 4% (Daily)': '',
+            'Down 4% (Daily)': '',
+            '% Above 10 DMA': round(df_breadth['% Above 10 DMA'].mean(), 1),
+            '% Above 20 DMA': round(df_breadth['% Above 20 DMA'].mean(), 1),
+            '% Above 40 DMA': round(df_breadth['% Above 40 DMA'].mean(), 1),
+            '% Above 50 DMA': round(df_breadth['% Above 50 DMA'].mean(), 1),
+            'Nifty': '',
+            'Nifty Chg %': round(df_breadth['Nifty Chg %'].mean(), 1),
+            'VIX': round(df_breadth['VIX'].mean(), 2) if df_breadth['VIX'].notna().any() else ''
+        }
+        
+        # Add summary row
+        df_summary = pd.DataFrame([summary_row])
+        df_breadth = pd.concat([df_breadth, df_summary], ignore_index=True)
+    
+    # Apply color coding
+    if enable_color_coding:
+        def style_breadth_row(row):
+            """Apply color coding based on percentage values."""
+            result = [''] * len(row)
+            
+            # Color coding: <25% = weak (red), 25-50% = yellow, >50% = green
+            def get_color_for_pct(pct_val):
+                try:
+                    pct = float(pct_val)
+                    if pct < 25:
+                        return 'background-color: #E74C3C; color: #fff; font-weight: bold'  # Red
+                    elif pct <= 50:
+                        return 'background-color: #F39C12; color: #fff; font-weight: bold'  # Yellow
+                    else:
+                        return 'background-color: #27AE60; color: #fff; font-weight: bold'  # Green
+                except:
+                    return ''
+            
+            # Color Advance/Total (%) and % DMA columns
+            for col in ['Advance/Total (%)', '% Above 10 DMA', '% Above 20 DMA', '% Above 40 DMA', '% Above 50 DMA']:
+                if col in row.index:
+                    idx = list(row.index).index(col)
+                    result[idx] = get_color_for_pct(row[col])
+            
+            # Color Nifty Chg % (positive = green, negative = red)
+            if 'Nifty Chg %' in row.index:
+                idx = list(row.index).index('Nifty Chg %')
+                try:
+                    chg = float(row['Nifty Chg %'])
+                    if chg > 0:
+                        result[idx] = 'background-color: #27AE60; color: #fff; font-weight: bold'
+                    elif chg < 0:
+                        result[idx] = 'background-color: #E74C3C; color: #fff; font-weight: bold'
+                    else:
+                        result[idx] = 'background-color: #F39C12; color: #fff; font-weight: bold'
+                except:
+                    pass
+            
+            return result
+        
+        df_breadth_styled = df_breadth.style.apply(style_breadth_row, axis=1)
+    else:
+        df_breadth_styled = df_breadth.style
+    
+    # Display the dataframe
+    st.dataframe(
+        df_breadth_styled,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Date": st.column_config.TextColumn("Date"),
+            "Day": st.column_config.TextColumn("Day"),
+            "Advances": st.column_config.NumberColumn("Advances", format="%d"),
+            "Declines": st.column_config.NumberColumn("Declines", format="%d"),
+            "Advance/Total (%)": st.column_config.NumberColumn("Advance/Total (%)", format="%.1f%%"),
+            "Up 4% (Daily)": st.column_config.NumberColumn("Up 4% (Daily)", format="%d"),
+            "Down 4% (Daily)": st.column_config.NumberColumn("Down 4% (Daily)", format="%d"),
+            "% Above 10 DMA": st.column_config.NumberColumn("% Above 10 DMA", format="%.1f%%"),
+            "% Above 20 DMA": st.column_config.NumberColumn("% Above 20 DMA", format="%.1f%%"),
+            "% Above 40 DMA": st.column_config.NumberColumn("% Above 40 DMA", format="%.1f%%"),
+            "% Above 50 DMA": st.column_config.NumberColumn("% Above 50 DMA", format="%.1f%%"),
+            "Nifty": st.column_config.NumberColumn("Nifty", format="%d"),
+            "Nifty Chg %": st.column_config.NumberColumn("Nifty Chg %", format="%.1f%%"),
+            "VIX": st.column_config.NumberColumn("VIX", format="%.2f")
+        }
+    )
+    
+    # Sentiment guide
+    st.markdown("---")
+    st.caption("**Sentiment Guide:** <25% = Weak sentiment (Red) | 25%-50% = Neutral (Yellow) | >50% = Positive sentiment (Green)")
+
+
+def display_stock_screener_tab(analysis_date=None):
+    """
+    Stock Screener tab: top 15 bullish and top 15 bearish (bearish = price below VWAP and price < 8/20/50 SMA).
+    Date + time (10:15 AM, 12:15 PM, 2:15 PM). Analysis price as of selected date; daily close as proxy.
+    Columns: ... Final score, Sentiment (Strong/Moderate/Weak with red/yellow/green), Next 1 day return %, Next 2 day return % (prior dates only).
+    """
+    from company_symbols import get_all_screener_symbols
+    from data_fetcher import fetch_sector_data
+    from indicators import calculate_rsi
+    import os
+    
+    st.markdown("### Stock Screener")
+    st.markdown("---")
+    
+    # Date dropdown: past 10 days
+    today = datetime.now().date()
+    date_options = [today - timedelta(days=i) for i in range(10)]
+    date_labels = [d.strftime('%Y-%m-%d (%a)') for d in date_options]
+    selected_date_idx = st.selectbox("Select date", range(len(date_options)), format_func=lambda i: date_labels[i], key="screener_date")
+    screener_date = date_options[selected_date_idx]
+    screener_date_str = screener_date.strftime('%Y-%m-%d')
+    
+    # Time option: 10:15 AM, 12:15 PM, 2:15 PM. Default = latest option that has passed (prevailing time).
+    time_options = ["10:15 AM", "12:15 PM", "2:15 PM"]
+    now = datetime.now()
+    now_minutes = now.hour * 60 + now.minute
+    if now_minutes >= 14 * 60 + 15:   # 2:15 PM
+        default_time_idx = 2
+    elif now_minutes >= 12 * 60 + 15:  # 12:15 PM
+        default_time_idx = 1
+    else:
+        default_time_idx = 0
+    selected_time = st.selectbox("Time", range(len(time_options)), index=default_time_idx, format_func=lambda i: time_options[i], key="screener_time")
+    screener_time_label = time_options[selected_time]
+    # Map time to cutoff hour (last 1h bar on or before this time): 10:15→10, 12:15→12, 2:15→14
+    time_cutoff_hour = (10, 12, 14)[selected_time]
+    st.caption("Analysis and **Price (closing)** are as of the selected date and time (on or before the chosen time), using 1h data. RSI and Price > SMA use the same 1h snapshot.")
+    
+    # Get symbols (97 stocks from sector/Excel)
+    screener_symbols = get_all_screener_symbols()
+    if not screener_symbols:
+        try:
+            if os.path.exists('sector_companies_cleaned.csv'):
+                df_csv = pd.read_csv('sector_companies_cleaned.csv')
+                if 'Symbol' in df_csv.columns and 'Company Name' in df_csv.columns:
+                    for _, row in df_csv.drop_duplicates('Symbol').iterrows():
+                        sym = str(row['Symbol']).strip()
+                        if not sym.endswith('.NS'):
+                            sym = sym + '.NS'
+                        screener_symbols.append((sym, str(row.get('Company Name', sym))))
+        except Exception:
+            pass
+    if not screener_symbols:
+        st.warning("No screener symbols found. Add sector companies or sector_companies_cleaned.csv.")
+        return
+    
+    # Scoring logic expander
+    with st.expander("📋 Scoring logic (click to expand)", expanded=True):
+        st.markdown("""
+        **High score (Strong):**
+        - RSI direction is all up (1W, 1D, 1H)
+        - Price is above all moving averages (8, 20, 50 SMA)
+        - Price > VWAP (Above)
+
+        **Second high score (Moderate):**
+        - Price is approaching VWAP and rest in mix of combination, OR
+        - Price < 8 SMA but RSI (1H) trending up and Price > 20 SMA
+
+        **Lower score (Weak):** Other combinations.
+        """)
+    
+    is_prior_date = screener_date < today
+    end_date_for_fetch = (screener_date + timedelta(days=5)) if is_prior_date else (screener_date + timedelta(days=1))
+    
+    def _rsi_direction_slope3(rsi_series):
+        """Direction from slope over last 3 sessions: Up if slope > 0, Down if < 0, else Flat."""
+        if rsi_series is None or len(rsi_series) < 3:
+            return "Flat"
+        last3 = rsi_series.iloc[-3:].values
+        slope = (float(last3[-1]) - float(last3[0])) / 2.0
+        if slope > 0:
+            return "Up"
+        if slope < 0:
+            return "Down"
+        return "Flat"
+    
+    with st.spinner("Loading screener data (1h for current date; daily for prior dates)..."):
+        rows = []
+        for symbol, name in screener_symbols[:97]:
+            try:
+                # For current date: try 1h so price/RSI/SMA are as of selected time; for prior dates: skip intraday and use daily closes
+                use_1h = False
+                data_1h = None
+                data_as_of = None
+                if not is_prior_date:
+                    data_1h = fetch_sector_data(symbol, period='60d', end_date=end_date_for_fetch, interval='1h')
+                    if data_1h is not None and len(data_1h) >= 50:
+                        try:
+                            idx = data_1h.index
+                            dt_date = pd.Series(idx).dt.date
+                            dt_hour = pd.Series(idx).dt.hour
+                            mask = (dt_date < screener_date) | ((dt_date == screener_date) & (dt_hour <= time_cutoff_hour))
+                            data_as_of = data_1h.loc[mask].sort_index().tail(60)
+                        except Exception:
+                            data_as_of = None
+                    if data_as_of is not None and len(data_as_of) >= 14:
+                        last_bar_date = pd.Series(data_as_of.index).dt.date.iloc[-1]
+                        if last_bar_date == screener_date:
+                            use_1h = True
+                if not use_1h:
+                    # Daily data as of selected date (used for all prior dates and as fallback for today)
+                    data_full = fetch_sector_data(symbol, period='3mo', end_date=end_date_for_fetch, interval='1d')
+                    if data_full is None or len(data_full) < 14:
+                        continue
+                    # Date comparison: get calendar date from index (works with tz-aware or naive)
+                    idx_dates = pd.Series(data_full.index).dt.date
+                    mask_on_or_before = (idx_dates <= screener_date).values
+                    data = data_full.iloc[mask_on_or_before].tail(60)
+                    # If no rows on or before screener_date (e.g. timezone), use last 60 rows
+                    if len(data) < 14:
+                        data = data_full.tail(60)
+                    if len(data) < 14:
+                        continue
+                    close = data['Close']
+                    price = float(close.iloc[-1])
+                else:
+                    close = data_as_of['Close']
+                    price = float(close.iloc[-1])
+                    data = data_as_of
+                
+                # SMA (8/20/50) on same series (1h or daily)
+                sma8 = close.rolling(8).mean().iloc[-1] if len(close) >= 8 else None
+                sma20 = close.rolling(20).mean().iloc[-1] if len(close) >= 20 else None
+                sma50 = close.rolling(50).mean().iloc[-1] if len(close) >= 50 else None
+                price_gt_8 = (price > sma8) if pd.notna(sma8) else False
+                price_gt_20 = (price > sma20) if pd.notna(sma20) else False
+                price_gt_50 = (price > sma50) if pd.notna(sma50) else False
+                price_lt_8 = (price < sma8) if pd.notna(sma8) else False
+                price_lt_20 = (price < sma20) if pd.notna(sma20) else False
+                price_lt_50 = (price < sma50) if pd.notna(sma50) else False
+                
+                # RSI and direction: slope over 3 sessions (respective timeframe)
+                rsi_series = calculate_rsi(data, period=14)
+                rsi_1h = rsi_series.iloc[-1] if not rsi_series.isna().all() else 50.0
+                dir_1h = _rsi_direction_slope3(rsi_series)
+                if use_1h and len(data_1h) >= 14:
+                    # 1D: resample 1h to daily (last bar per day), then RSI and slope over last 3 days
+                    try:
+                        daily_close = data_1h.groupby(pd.Series(data_1h.index).dt.date)['Close'].last()
+                        daily_close = daily_close.sort_index()
+                        mask_d = daily_close.index <= screener_date
+                        daily_as_of = daily_close.loc[mask_d].tail(60)
+                        if len(daily_as_of) >= 14:
+                            rsi_daily = calculate_rsi(pd.DataFrame({'Close': daily_as_of}), period=14)
+                            rsi_1d = float(rsi_daily.iloc[-1]) if not rsi_daily.isna().all() else rsi_1h
+                            dir_1d = _rsi_direction_slope3(rsi_daily)
+                        else:
+                            rsi_1d = rsi_1h
+                            dir_1d = dir_1h
+                        # 1W: resample to weekly (last bar per week)
+                        try:
+                            weekly_close = data_1h.groupby(data_1h.index.to_period('W'))['Close'].last()
+                            weekly_close = weekly_close.sort_index()
+                            week_end_dates = pd.Series(weekly_close.index.to_timestamp(how='end')).dt.date
+                            mask_w = (week_end_dates <= screener_date).values
+                            weekly_as_of = weekly_close.iloc[mask_w].tail(60)
+                        except Exception:
+                            weekly_as_of = pd.Series(dtype=float)
+                        if len(weekly_as_of) >= 14:
+                            rsi_weekly = calculate_rsi(pd.DataFrame({'Close': weekly_as_of}), period=14)
+                            rsi_1w = float(rsi_weekly.iloc[-1]) if not rsi_weekly.isna().all() else rsi_1d
+                            dir_1w = _rsi_direction_slope3(rsi_weekly)
+                        else:
+                            rsi_1w = rsi_1d
+                            dir_1w = dir_1d
+                    except Exception:
+                        rsi_1d = rsi_1h
+                        rsi_1w = rsi_1h
+                        dir_1d = dir_1h
+                        dir_1w = dir_1h
+                else:
+                    rsi_1d = rsi_series.iloc[-1] if not rsi_series.isna().all() else 50.0
+                    rsi_1w = rsi_series.iloc[-5] if len(rsi_series) >= 5 else rsi_1d
+                    dir_1d = _rsi_direction_slope3(rsi_series)
+                    dir_1w = _rsi_direction_slope3(rsi_series.iloc[:-2]) if len(rsi_series) >= 5 else dir_1d
+                
+                # VWAP proxy: typical price (H+L+C)/3 for last bar
+                if len(data) > 0 and 'High' in data.columns and 'Low' in data.columns:
+                    typical = (data['High'].iloc[-1] + data['Low'].iloc[-1] + data['Close'].iloc[-1]) / 3
+                    if price > typical * 1.002:
+                        vwap_status = "Above"
+                    elif price >= typical * 0.998:
+                        vwap_status = "Approaching"
+                    else:
+                        vwap_status = "below"
+                else:
+                    vwap_status = "N/A"
+                price_below_vwap = (vwap_status == "below")
+                rsi_div_2h = "No"
+                rsi_all_up = (dir_1w == "Up" and dir_1d == "Up" and dir_1h == "Up")
+                above_all_ma = price_gt_8 and price_gt_20 and price_gt_50
+                if rsi_all_up and above_all_ma and vwap_status == "Above":
+                    final_score = 3
+                elif vwap_status == "Approaching" or (not price_gt_8 and dir_1h == "Up" and price_gt_20):
+                    final_score = 2
+                else:
+                    final_score = 1
+                bearish_score = (1 if price_below_vwap else 0) + (1 if price_lt_8 else 0) + (1 if price_lt_20 else 0) + (1 if price_lt_50 else 0)
+                sentiment_label = "Strong" if final_score == 3 else ("Moderate" if final_score == 2 else "Weak")
+                
+                # Next 1D and 2D return % (prior dates only); 1 decimal; actual close-to-close
+                next_1d_pct = None
+                next_2d_pct = None
+                if is_prior_date:
+                    try:
+                        if use_1h and data_1h is not None and len(data_1h) > 0:
+                            daily_closes = data_1h.groupby(pd.Series(data_1h.index).dt.date)['Close'].last().sort_index()
+                            dates_list = list(daily_closes.index)
+                            # close_sel = our price (at selected time on selected date)
+                            next_day_idx = next((i for i, d in enumerate(dates_list) if d > screener_date), None)
+                            if next_day_idx is not None and price > 0:
+                                close_1d = float(daily_closes.iloc[next_day_idx])
+                                next_1d_pct = round((close_1d - price) / price * 100, 1)
+                                if next_day_idx + 1 < len(dates_list):
+                                    close_2d = float(daily_closes.iloc[next_day_idx + 1])
+                                    next_2d_pct = round((close_2d - price) / price * 100, 1)
+                        else:
+                            data_full = fetch_sector_data(symbol, period='3mo', end_date=end_date_for_fetch, interval='1d')
+                            if data_full is not None and len(data_full) > 0:
+                                dates_arr = pd.Series(data_full.index).dt.date
+                                idx_sel = None
+                                for i in range(len(data_full) - 1, -1, -1):
+                                    if dates_arr.iloc[i] <= screener_date:
+                                        idx_sel = i
+                                        break
+                                if idx_sel is not None and idx_sel + 2 < len(data_full):
+                                    close_sel = float(data_full['Close'].iloc[idx_sel])
+                                    close_1d = float(data_full['Close'].iloc[idx_sel + 1])
+                                    close_2d = float(data_full['Close'].iloc[idx_sel + 2])
+                                    if close_sel > 0:
+                                        next_1d_pct = round((close_1d - close_sel) / close_sel * 100, 1)
+                                        next_2d_pct = round((close_2d - close_sel) / close_sel * 100, 1)
+                    except Exception:
+                        pass
+                
+                row_dict = {
+                    'Company': name,
+                    'Symbol': symbol,
+                    'Price (closing)': int(round(price, 0)),
+                    'RSI (1W)': int(round(rsi_1w, 0)),
+                    'Dir 1W': dir_1w,
+                    'RSI (1D)': int(round(rsi_1d, 0)),
+                    'Dir 1D': dir_1d,
+                    'RSI (1H)': int(round(rsi_1h, 0)),
+                    'Dir 1H': dir_1h,
+                    'Price > 8 SMA': price_gt_8,
+                    'Price > 20 SMA': price_gt_20,
+                    'Price > 50 SMA': price_gt_50,
+                    'Price vs VWAP (1H)': vwap_status,
+                    'RSI div (2H)': rsi_div_2h,
+                    'Final score': final_score,
+                    'Sentiment': sentiment_label,
+                    '_score_num': final_score,
+                    '_bearish_score': bearish_score,
+                }
+                if is_prior_date:
+                    row_dict['Next 1 day return %'] = f"{next_1d_pct:.1f}" if next_1d_pct is not None else ""
+                    row_dict['Next 2 day return %'] = f"{next_2d_pct:.1f}" if next_2d_pct is not None else ""
+                rows.append(row_dict)
+            except Exception:
+                continue
+        
+        if not rows:
+            st.warning("No data returned for selected date. Try another date.")
+            return
+        
+        df_screener = pd.DataFrame(rows)
+    
+    # Top 15 bullish: by final score desc
+    df_screener_sorted_bull = df_screener.sort_values('_score_num', ascending=False)
+    top_bullish = df_screener_sorted_bull.head(15).copy()
+    # Top 15 bearish: price below VWAP and price < 8 SMA, < 20 SMA, < 50 SMA; rank by bearish score desc
+    top_bearish = df_screener.sort_values('_bearish_score', ascending=False).head(15).copy()
+    
+    # Drop internal columns; order: ... Final score, Sentiment, [Next 1 day return %, Next 2 day return %] if prior date
+    internal_cols = ['_score_num', '_bearish_score']
+    top_bullish = top_bullish.drop(columns=internal_cols, errors='ignore')
+    top_bearish = top_bearish.drop(columns=internal_cols, errors='ignore')
+    
+    def _order_cols(df_table):
+        cols = [c for c in df_table.columns if c in df_table.columns]
+        base = [c for c in cols if c not in ('Sentiment', 'Next 1 day return %', 'Next 2 day return %')]
+        idx_fs = base.index('Final score') + 1 if 'Final score' in base else len(base)
+        out = base[:idx_fs] + ['Sentiment']
+        if 'Next 1 day return %' in cols and 'Next 2 day return %' in cols:
+            out += ['Next 1 day return %', 'Next 2 day return %']
+        out += [c for c in base[idx_fs:] if c != 'Sentiment']
+        return [c for c in out if c in df_table.columns]
+    
+    top_bullish = top_bullish[_order_cols(top_bullish)]
+    top_bearish = top_bearish[_order_cols(top_bearish)]
+    
+    def style_sentiment_column(df_table):
+        if 'Sentiment' not in df_table.columns:
+            return df_table.style
+        def color_sentiment(row):
+            n = len(row)
+            try:
+                idx = list(row.index).index('Sentiment')
+            except ValueError:
+                return [''] * n
+            if row['Sentiment'] == 'Strong':
+                style = 'background-color: #27AE60; color: white; font-weight: bold'
+            elif row['Sentiment'] == 'Moderate':
+                style = 'background-color: #F1C40F; color: black; font-weight: bold'
+            else:
+                style = 'background-color: #E74C3C; color: white; font-weight: bold'
+            return [''] * idx + [style] + [''] * (n - idx - 1)
+        return df_table.style.apply(color_sentiment, axis=1)
+    
+    # Display: Bullish first, then Bearish below (vertical stack)
+    st.markdown("#### Top 15 Bullish")
+    st.dataframe(style_sentiment_column(top_bullish), use_container_width=True, height=400)
+    
+    st.markdown("#### Top 15 Bearish")
+    st.caption("Bearish: Price below VWAP and Price &lt; 8 SMA, &lt; 20 SMA, &lt; 50 SMA.")
+    st.dataframe(style_sentiment_column(top_bearish), use_container_width=True, height=400)
+    
+    st.caption("**Sentiment (colored):** 🟢 Strong (3) | 🟡 Moderate (2) | 🔴 Weak (1). **Next 1D/2D return %** = actual (next trading day close − price at selected time) / price × 100; 1 decimal. **RSI direction** = slope over last 3 sessions (3h / 3d / 3w). Price &amp; analysis as of selected date and time (1h data when available).")
+
+
 def display_reversal_tab(df, sector_data_dict, benchmark_data, reversal_weights, reversal_thresholds, enable_color_coding=True):
     """Display reversal candidates tab with scoring and trend analysis."""
     st.markdown("### 🔄 Reversal Candidates (Bottom Fishing Opportunities)")
@@ -2085,252 +2835,29 @@ def test_symbol_availability():
 
 def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf):
     """
-    Display historical rankings: primary content = date-wise (last 10 days) table with
-    Advance/Total %, Momentum #1/#2 sectors, Bullish Stock #1/#2 and Bearish #1/#2 with next 1d/2d returns.
-    Secondary = existing Momentum and Reversal evolution sub-tabs.
+    Display historical rankings showing how top 2 sectors evolved over past 7 trading days.
+    Shows current top sectors with their historical indicator trends.
+    
+    Args:
+        sector_data_dict: Dictionary of sector name to data DataFrame
+        benchmark_data: Benchmark data DataFrame  
+        momentum_weights: Dict with momentum score weights
+        reversal_weights: Dict with reversal score weights
+        reversal_thresholds: Dict with reversal thresholds
+        use_etf: Whether using ETF or Index data
     """
-    st.markdown("### 📅 Historical Rankings (Last 10 Days)")
+    st.markdown("### 📅 Historical Rankings (T-7 to T)")
     st.markdown("---")
+    
+    st.info("📊 **Track how current top-ranked sectors evolved over the past 7 trading days.**")
     
     if sector_data_dict is None or benchmark_data is None:
         st.error("❌ No data available for historical analysis")
         return
     
     from indicators import calculate_rsi, calculate_adx, calculate_z_score, calculate_cmf, calculate_mansfield_rs
-    from company_symbols import SECTOR_COMPANIES
     
-    # --- Primary content: date-wise table (last 10 days) ---
-    st.markdown("#### 📋 Primary: Date-wise summary (last 10 trading days)")
-    
-    NIFTY50_SYMBOLS = [
-        'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
-        'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
-        'LT.NS', 'AXISBANK.NS', 'ASIANPAINT.NS', 'MARUTI.NS', 'TITAN.NS',
-        'NESTLEIND.NS', 'ULTRACEMCO.NS', 'WIPRO.NS', 'SUNPHARMA.NS', 'TATAMOTORS.NS',
-        'TECHM.NS', 'HCLTECH.NS', 'BAJFINANCE.NS', 'JSWSTEEL.NS', 'TATASTEEL.NS',
-        'POWERGRID.NS', 'NTPC.NS', 'ONGC.NS', 'COALINDIA.NS', 'ADANIENT.NS',
-        'ADANIPORTS.NS', 'GRASIM.NS', 'DIVISLAB.NS', 'CIPLA.NS', 'DRREDDY.NS',
-        'BAJAJFINSV.NS', 'M&M.NS', 'HEROMOTOCO.NS', 'EICHERMOT.NS', 'MARICO.NS',
-        'GODREJCP.NS', 'DABUR.NS', 'BRITANNIA.NS', 'HDFCLIFE.NS', 'SBILIFE.NS',
-        'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
-    ]
-    
-    # Need at least 12 bars for 10 days + next 2d
-    if len(benchmark_data) < 12:
-        st.warning("⚠️ Need at least 12 trading days of data for the 10-day table.")
-    else:
-        dates_10 = benchmark_data.index[-12:-2].tolist()  # 10 dates, each has T+1 and T+2
-        table_rows = []
-        
-        with st.spinner("Building 10-day historical table (Advance/Total %, sectors, bullish/bearish stocks)..."):
-            # 1) Nifty 50 advance/decline: fetch once per symbol (enough history)
-            end_dt = benchmark_data.index[-1]
-            nifty_closes = {}
-            for sym in NIFTY50_SYMBOLS[:50]:
-                try:
-                    d = fetch_sector_data(sym, end_date=end_dt, interval='1d')
-                    if d is not None and len(d) >= 2:
-                        nifty_closes[sym] = d['Close']
-                except Exception:
-                    continue
-            
-            # 2) All companies (sector, symbol, name) for bullish/bearish
-            all_companies = []
-            for sector, syms in SECTOR_COMPANIES.items():
-                if sector == 'Nifty 50':
-                    continue
-                for sym, info in syms.items():
-                    all_companies.append((sector, sym, info.get('name', sym)))
-            
-            company_data = {}
-            for sector, sym, name in all_companies:
-                try:
-                    d = fetch_sector_data(sym, end_date=end_dt, interval='1d')
-                    if d is not None and len(d) >= 14:
-                        company_data[sym] = {'sector': sector, 'name': name, 'data': d}
-                except Exception:
-                    continue
-            
-            for date_t in dates_10:
-                row = {'Date': date_t.strftime('%Y-%m-%d')}
-                
-                # a1) Advance/Total %
-                advances = 0
-                declines = 0
-                for sym, series in nifty_closes.items():
-                    try:
-                        idx = series.index.get_indexer([date_t], method='ffill')[0]
-                        if idx < 0 or idx >= len(series) or idx == 0:
-                            continue
-                        close_t = series.iloc[idx]
-                        close_prev = series.iloc[idx - 1]
-                        if close_t > close_prev:
-                            advances += 1
-                        elif close_t < close_prev:
-                            declines += 1
-                    except Exception:
-                        continue
-                total_ad = advances + declines
-                row['Advance/Total %'] = round((advances / total_ad * 100), 1) if total_ad else None
-                
-                # a2) Momentum #1, b) Momentum #2 sectors (point-in-time)
-                sector_scores = []
-                for sect_name, sect_data in sector_data_dict.items():
-                    if sect_name == 'Nifty 50':
-                        continue
-                    if len(sect_data) < 14:
-                        continue
-                    try:
-                        idx = sect_data.index.get_indexer([date_t], method='ffill')[0]
-                        if idx < 0 or idx < 13:
-                            continue
-                        subset = sect_data.iloc[: idx + 1]
-                        bench_sub = benchmark_data.iloc[: idx + 1]
-                        if len(bench_sub) < 14:
-                            continue
-                        rsi = calculate_rsi(subset)
-                        adx, _, _, di_spread = calculate_adx(subset)
-                        adx_z = calculate_z_score(adx.dropna())
-                        sr = subset['Close'].pct_change().dropna()
-                        br = bench_sub['Close'].pct_change().dropna()
-                        common = sr.index.intersection(br.index)
-                        rs_rating = 5.0
-                        if len(common) > 1:
-                            cr = (1 + sr.loc[common]).prod() - 1
-                            cb = (1 + br.loc[common]).prod() - 1
-                            if not pd.isna(cr) and not pd.isna(cb):
-                                rs_rating = max(0, min(10, 5 + (cr - cb) * 25))
-                        rsi_val = rsi.iloc[-1] if not rsi.isna().all() else 50
-                        di_val = di_spread.iloc[-1] if not di_spread.isna().all() else 0
-                        sector_scores.append({
-                            'sector': sect_name,
-                            'rsi': rsi_val, 'adx_z': adx_z if not pd.isna(adx_z) else 0,
-                            'rs_rating': rs_rating, 'di_spread': di_val
-                        })
-                    except Exception:
-                        continue
-                
-                if sector_scores:
-                    df_sec = pd.DataFrame(sector_scores)
-                    for c in ['ADX_Z', 'RS_Rating', 'RSI', 'DI_Spread']:
-                        col = c.lower().replace('_', ' ').title() if c == 'DI_Spread' else c
-                        if c == 'DI_Spread':
-                            df_sec['DI_Spread'] = df_sec['di_spread']
-                        df_sec[c + '_Rank'] = df_sec[c.lower() if c != 'DI_Spread' else 'di_spread'].rank(ascending=False, method='average')
-                    tw = sum(momentum_weights.values())
-                    df_sec['Score'] = (
-                        df_sec['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / tw +
-                        df_sec['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / tw +
-                        df_sec['RSI_Rank'] * momentum_weights.get('RSI', 30) / tw +
-                        df_sec['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / tw
-                    )
-                    df_sec = df_sec.sort_values('Score', ascending=True)
-                    top2 = df_sec.head(2)['sector'].tolist()
-                    row['Momentum #1 Sector'] = top2[0] if len(top2) >= 1 else ''
-                    row['Momentum #2 Sector'] = top2[1] if len(top2) >= 2 else ''
-                else:
-                    row['Momentum #1 Sector'] = ''
-                    row['Momentum #2 Sector'] = ''
-                
-                # c) d) Bullish #1, #2 and e) f) Bearish #1, #2 with next 1d/2d return %
-                company_scores = []
-                for sym, rec in company_data.items():
-                    try:
-                        d = rec['data']
-                        idx = d.index.get_indexer([date_t], method='ffill')[0]
-                        if idx < 0 or idx < 13 or idx + 2 >= len(d):
-                            continue
-                        subset = d.iloc[: idx + 1]
-                        bench_sub = benchmark_data.iloc[: min(idx + 1, len(benchmark_data))]
-                        if len(bench_sub) < 14:
-                            continue
-                        rsi = calculate_rsi(subset)
-                        adx, _, _, di_spread = calculate_adx(subset)
-                        adx_z = calculate_z_score(adx.dropna())
-                        sr = subset['Close'].pct_change().dropna()
-                        br = bench_sub['Close'].pct_change().dropna()
-                        common = sr.index.intersection(br.index)
-                        rs_rating = 5.0
-                        if len(common) > 1:
-                            cr = (1 + sr.loc[common]).prod() - 1
-                            cb = (1 + br.loc[common]).prod() - 1
-                            if not pd.isna(cr) and not pd.isna(cb):
-                                rs_rating = max(0, min(10, 5 + (cr - cb) * 25))
-                        rsi_val = rsi.iloc[-1] if not rsi.isna().all() else 50
-                        di_val = di_spread.iloc[-1] if not di_spread.isna().all() else 0
-                        company_scores.append({
-                            'symbol': sym, 'sector': rec['sector'], 'name': rec['name'],
-                            'rsi': rsi_val, 'adx_z': adx_z if not pd.isna(adx_z) else 0,
-                            'rs_rating': rs_rating, 'di_spread': di_val,
-                            'data': d, 'idx': idx
-                        })
-                    except Exception:
-                        continue
-                
-                if company_scores:
-                    df_c = pd.DataFrame([{k: v for k, v in x.items() if k != 'data' and k != 'idx'} for x in company_scores])
-                    df_c['ADX_Z_Rank'] = df_c['adx_z'].rank(ascending=False, method='average')
-                    df_c['RS_Rating_Rank'] = df_c['rs_rating'].rank(ascending=False, method='average')
-                    df_c['RSI_Rank'] = df_c['rsi'].rank(ascending=False, method='average')
-                    df_c['DI_Spread_Rank'] = df_c['di_spread'].rank(ascending=False, method='average')
-                    tw = sum(momentum_weights.values())
-                    df_c['Score'] = (
-                        df_c['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / tw +
-                        df_c['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / tw +
-                        df_c['RSI_Rank'] * momentum_weights.get('RSI', 30) / tw +
-                        df_c['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / tw
-                    )
-                    df_c = df_c.sort_values('Score', ascending=True)
-                    bull2 = df_c.head(2)
-                    bear2 = df_c.tail(2)
-                    
-                    def next_returns(rec_list):
-                        out = []
-                        for _, r in rec_list.iterrows():
-                            sym = r['symbol']
-                            idx = next(x['idx'] for x in company_scores if x['symbol'] == sym)
-                            d = next(x['data'] for x in company_scores if x['symbol'] == sym)
-                            sector = r['sector']
-                            name = r['name']
-                            c0 = d['Close'].iloc[idx]
-                            r1 = (d['Close'].iloc[idx + 1] / c0 - 1) * 100 if idx + 1 < len(d) else None
-                            r2 = (d['Close'].iloc[idx + 2] / c0 - 1) * 100 if idx + 2 < len(d) else None
-                            out.append((sector, name, r1, r2))
-                        return out
-                    
-                    b1 = next_returns(bull2)
-                    b2 = next_returns(bear2)
-                    row['Bullish #1 Sector'] = b1[0][0] if len(b1) >= 1 else ''
-                    row['Bullish #1 Next 1D %'] = round(b1[0][2], 2) if len(b1) >= 1 and b1[0][2] is not None else None
-                    row['Bullish #1 Next 2D %'] = round(b1[0][3], 2) if len(b1) >= 1 and b1[0][3] is not None else None
-                    row['Bullish #2 Sector'] = b1[1][0] if len(b1) >= 2 else ''
-                    row['Bullish #2 Next 1D %'] = round(b1[1][2], 2) if len(b1) >= 2 and b1[1][2] is not None else None
-                    row['Bullish #2 Next 2D %'] = round(b1[1][3], 2) if len(b1) >= 2 and b1[1][3] is not None else None
-                    row['Bearish #1 Sector'] = b2[0][0] if len(b2) >= 1 else ''
-                    row['Bearish #1 Next 1D %'] = round(b2[0][2], 2) if len(b2) >= 1 and b2[0][2] is not None else None
-                    row['Bearish #1 Next 2D %'] = round(b2[0][3], 2) if len(b2) >= 1 and b2[0][3] is not None else None
-                    row['Bearish #2 Sector'] = b2[1][0] if len(b2) >= 2 else ''
-                    row['Bearish #2 Next 1D %'] = round(b2[1][2], 2) if len(b2) >= 2 and b2[1][2] is not None else None
-                    row['Bearish #2 Next 2D %'] = round(b2[1][3], 2) if len(b2) >= 2 and b2[1][3] is not None else None
-                else:
-                    for k in ['Bullish #1 Sector', 'Bullish #1 Next 1D %', 'Bullish #1 Next 2D %',
-                              'Bullish #2 Sector', 'Bullish #2 Next 1D %', 'Bullish #2 Next 2D %',
-                              'Bearish #1 Sector', 'Bearish #1 Next 1D %', 'Bearish #1 Next 2D %',
-                              'Bearish #2 Sector', 'Bearish #2 Next 1D %', 'Bearish #2 Next 2D %']:
-                        row[k] = None
-                
-                table_rows.append(row)
-        
-        if table_rows:
-            df_primary = pd.DataFrame(table_rows)
-            st.dataframe(df_primary, use_container_width=True, hide_index=True)
-        else:
-            st.info("No rows computed for the 10-day table.")
-    
-    st.markdown("---")
-    st.markdown("#### 📈 Secondary: Sector evolution (Momentum & Reversal)")
-    
-    # Get current top 2 momentum sectors (for sub-tabs)
+    # Get current top 2 momentum sectors
     current_results = []
     for sect_name, sect_data in sector_data_dict.items():
         if sect_name == 'Nifty 50':
@@ -2342,6 +2869,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         # Calculate current indicators
         rsi = calculate_rsi(sect_data)
         adx, _, _, di_spread = calculate_adx(sect_data)
+        cmf_sect = calculate_cmf(sect_data)
         adx_z = calculate_z_score(adx.dropna())
         
         # RS Rating
@@ -2366,26 +2894,40 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             'ADX_Z': adx_z if not pd.isna(adx_z) else 0,
             'RS_Rating': rs_rating,
             'DI_Spread': di_spread.iloc[-1] if not di_spread.isna().all() else 0,
+            'CMF': cmf_sect.iloc[-1] if not cmf_sect.isna().all() else 0,
         })
     
     if not current_results:
         st.error("❌ Unable to calculate rankings")
         return
     
-    # Rank and get top 2
+    # Rank and get top 2 (support Historical and Trending momentum weights)
     df_current = pd.DataFrame(current_results)
     df_current['ADX_Z_Rank'] = df_current['ADX_Z'].rank(ascending=False)
     df_current['RS_Rating_Rank'] = df_current['RS_Rating'].rank(ascending=False)
     df_current['RSI_Rank'] = df_current['RSI'].rank(ascending=False)
     df_current['DI_Spread_Rank'] = df_current['DI_Spread'].rank(ascending=False)
+    if momentum_weights.get('CMF', 0) != 0 and 'CMF' in df_current.columns:
+        df_current['CMF_Rank'] = df_current['CMF'].rank(ascending=False)
     
     total_weight = sum(momentum_weights.values())
-    df_current['Momentum_Score'] = (
-        (df_current['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / total_weight) +
-        (df_current['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / total_weight) +
-        (df_current['RSI_Rank'] * momentum_weights.get('RSI', 30) / total_weight) +
-        (df_current['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / total_weight)
-    )
+    if total_weight <= 0:
+        total_weight = 100.0
+    rank_components_hist = [
+        ('ADX_Z', 'ADX_Z_Rank'),
+        ('RS_Rating', 'RS_Rating_Rank'),
+        ('RSI', 'RSI_Rank'),
+        ('DI_Spread', 'DI_Spread_Rank'),
+        ('CMF', 'CMF_Rank'),
+    ]
+    df_current['Weighted_Avg_Rank'] = 0.0
+    for key, rank_col in rank_components_hist:
+        w = momentum_weights.get(key, 0)
+        if w != 0 and rank_col in df_current.columns:
+            df_current['Weighted_Avg_Rank'] = df_current['Weighted_Avg_Rank'] + (df_current[rank_col] * w / total_weight)
+    
+    # Scale 1-10 (use Weighted_Avg_Rank for scaling)
+    df_current['Momentum_Score'] = df_current['Weighted_Avg_Rank']
     
     # Scale 1-10
     num_sectors = len(df_current)
@@ -2944,7 +3486,6 @@ def display_stock_analysis_tab(analysis_date=None):
             'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
         ]
         
-        # Calculate current day metrics
         advances = 0
         declines = 0
         total_nifty = 0
@@ -3640,17 +4181,18 @@ def main():
             </div>
         ''', unsafe_allow_html=True)
         
-        # Create tabs (8 total: 4 sector-level + 2 company-level + 1 historical + 1 data sources + 1 stock analysis)
+        # Create tabs (Momentum, Market Breadth, Stock Screener, Reversal, Interpretation, Company Momentum, Company Reversals, Historical, Data Sources)
         try:
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+            tab1, tab2, tab_screener, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
                 "📈 Momentum Ranking",
-                "📊 Stock Analysis",
+                "📊 Market Breadth",
+                "Stock Screener",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
                 "🏢 Company Momentum",
                 "🏢 Company Reversals",
                 "📅 Historical Rankings",
-                "🔌 Data Sources",
+                "🔌 Data Sources"
             ])
             
             # Get benchmark data for trend analysis
@@ -3667,9 +4209,16 @@ def main():
             
             with tab2:
                 try:
-                    display_stock_analysis_tab(analysis_date=analysis_date)
+                    display_market_breadth_tab(analysis_date=analysis_date, enable_color_coding=enable_color_coding)
                 except Exception as e:
-                    st.error(f"❌ Error displaying stock analysis tab: {str(e)}")
+                    st.error(f"❌ Error displaying market breadth tab: {str(e)}")
+                    st.text(traceback.format_exc())
+            
+            with tab_screener:
+                try:
+                    display_stock_screener_tab(analysis_date=analysis_date)
+                except Exception as e:
+                    st.error(f"❌ Error displaying stock screener tab: {str(e)}")
                     st.text(traceback.format_exc())
             
             with tab3:
@@ -3728,7 +4277,7 @@ def main():
                     st.error(f"❌ Error displaying data sources tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            # Note: Sector Companies tab removed to make room for Stock Analysis tab
+            # Note: Stock Analysis tab removed for stability; Market Breadth retained
                     
         except Exception as e:
             st.error(f"❌ Error creating tabs: {str(e)}")
