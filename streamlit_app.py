@@ -3632,6 +3632,9 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
 
     st.caption("High score: RSI directions all up + price above key SMAs + price above/approaching VWAP + RSI divergence (2H).")
 
+    # Legacy experimental market overview / Fibonacci analysis block (disabled)
+    # Kept for reference; does not run.
+    if False:
         # Get list of Nifty 50 stocks
         nifty_stocks = [
             'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
