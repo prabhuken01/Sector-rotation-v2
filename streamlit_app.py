@@ -2147,7 +2147,8 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     if len(benchmark_data) < 22:
         st.warning("⚠️ Need at least 22 trading days of data for the 20-day table.")
     else:
-        lookback_days = min(20, len(benchmark_data) - 2)
+        # Use 10 days for performance (user preference: 7–10 days)
+        lookback_days = min(10, len(benchmark_data) - 2)
         dates_10 = benchmark_data.index[-(lookback_days + 2):-2].tolist()  # last N dates, each has T+1 and T+2
         table_rows = []
         
@@ -3023,7 +3024,11 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None):
     universe_symbols = sorted({sym for sector_dict in SECTOR_COMPANIES.values() for sym in sector_dict.keys()})
 
     st.markdown("### 📊 Market breadth")
-    st.caption("Last 20 trading days. Advance/Total %, % Above 20 DMA, % Above 50 DMA, Nifty Chg %: 🔴 <25% weak | 🟡 25–50% neutral | 🟢 >50% positive.")
+    st.caption(
+        "Last 20 trading days on 97-stock universe. "
+        "Advance/Total %, % Above 8/20/50 DMA, Nifty Chg %: "
+        "🔴 <25% weak | 🟡 25–50% neutral | 🟢 >50% positive (breadth columns)."
+    )
     st.markdown("---")
 
     with st.spinner("Building 20-day market breadth table..."):
@@ -3048,9 +3053,11 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None):
 
             advances = 0
             declines = 0
+            above_8 = 0
             above_20 = 0
             above_50 = 0
             total_ad = 0
+            total_8 = 0
             total_20 = 0
             total_50 = 0
 
@@ -3066,6 +3073,12 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None):
                     elif close_t < close_prev:
                         declines += 1
                     total_ad += 1
+                    if idx >= 7:
+                        sma8 = series.rolling(8).mean().iloc[idx]
+                        if not pd.isna(sma8):
+                            total_8 += 1
+                            if close_t > sma8:
+                                above_8 += 1
                     if idx >= 19:
                         sma20 = series.rolling(20).mean().iloc[idx]
                         if not pd.isna(sma20):
@@ -3085,6 +3098,7 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None):
             row['Declines'] = declines
             adv_pct = (advances / total_ad * 100) if total_ad else None
             row['Advance/Total %'] = round(adv_pct, 1) if adv_pct is not None else None
+            row['% Above 8 DMA'] = round((above_8 / total_8 * 100), 1) if total_8 else None
             row['% Above 20 DMA'] = round((above_20 / total_20 * 100), 1) if total_20 else None
             row['% Above 50 DMA'] = round((above_50 / total_50 * 100), 1) if total_50 else None
 
@@ -3113,9 +3127,21 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None):
             return
 
         df = pd.DataFrame(table_rows)
-        display_cols = ['Date', 'Day', 'Advances', 'Declines', 'Advance/Total %', '% Above 20 DMA', '% Above 50 DMA', 'Nifty', 'Nifty Chg %']
+        display_cols = [
+            'Date',
+            'Day',
+            'Advances',
+            'Declines',
+            'Advance/Total %',
+            '% Above 8 DMA',
+            '% Above 20 DMA',
+            '% Above 50 DMA',
+            'Nifty',
+            'Nifty Chg %',
+        ]
         df = df[[c for c in display_cols if c in df.columns]]
 
+        avg_8 = pd.to_numeric(df['% Above 8 DMA'], errors='coerce').mean()
         avg_20 = pd.to_numeric(df['% Above 20 DMA'], errors='coerce').mean()
         avg_50 = pd.to_numeric(df['% Above 50 DMA'], errors='coerce').mean()
         avg_nifty_chg = pd.to_numeric(df['Nifty Chg %'], errors='coerce').mean()
@@ -3125,6 +3151,7 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None):
             'Advances': '',
             'Declines': '',
             'Advance/Total %': '',
+            '% Above 8 DMA': round(avg_8, 1),
             '% Above 20 DMA': round(avg_20, 1),
             '% Above 50 DMA': round(avg_50, 1),
             'Nifty': '',
@@ -3145,16 +3172,55 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None):
             except Exception:
                 return ''
 
+        def _nifty_chg_color(val):
+            """Color for Nifty Chg % based on absolute move (small moves stay neutral)."""
+            if pd.isna(val):
+                return ''
+            try:
+                v = float(val)
+                av = abs(v)
+                if av < 0.3:
+                    return ''
+                if av <= 0.8:
+                    return 'background-color: #F1C40F; color: #000; font-weight: bold'
+                if v > 0:
+                    return 'background-color: #27AE60; color: #fff; font-weight: bold'
+                return 'background-color: #E74C3C; color: #fff; font-weight: bold'
+            except Exception:
+                return ''
+
         def style_breadth_row(row):
             res = [''] * len(row)
-            for col in ['Advance/Total %', '% Above 20 DMA', '% Above 50 DMA', 'Nifty Chg %']:
+            for col in ['Advance/Total %', '% Above 8 DMA', '% Above 20 DMA', '% Above 50 DMA', 'Nifty Chg %']:
                 if col in row.index:
                     idx = list(row.index).index(col)
-                    res[idx] = _breadth_color(row[col])
+                    if col == 'Nifty Chg %':
+                        res[idx] = _nifty_chg_color(row[col])
+                    else:
+                        res[idx] = _breadth_color(row[col])
             return res
 
         df_styled = df.style.apply(style_breadth_row, axis=1)
-        st.dataframe(df_styled, use_container_width=True, hide_index=True)
+
+        col_config = {
+            "Date": st.column_config.TextColumn("Date", width="small"),
+            "Day": st.column_config.TextColumn("Day", width="small"),
+            "Advances": st.column_config.NumberColumn("Advances", width="small", format="%d"),
+            "Declines": st.column_config.NumberColumn("Declines", width="small", format="%d"),
+            "Advance/Total %": st.column_config.NumberColumn("Advance/Total %", width="small", format="%.1f"),
+            "% Above 8 DMA": st.column_config.NumberColumn("% Above 8 DMA", width="small", format="%.1f"),
+            "% Above 20 DMA": st.column_config.NumberColumn("% Above 20 DMA", width="small", format="%.1f"),
+            "% Above 50 DMA": st.column_config.NumberColumn("% Above 50 DMA", width="small", format="%.1f"),
+            "Nifty": st.column_config.NumberColumn("Nifty", width="small", format="%d"),
+            "Nifty Chg %": st.column_config.NumberColumn("Nifty Chg %", width="small", format="%.1f"),
+        }
+
+        st.dataframe(
+            df_styled,
+            use_container_width=True,
+            hide_index=True,
+            column_config=col_config,
+        )
 
 
 def display_stock_analysis_tab(analysis_date=None, benchmark_data=None, momentum_weights=None):
