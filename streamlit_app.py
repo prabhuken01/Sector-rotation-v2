@@ -3007,6 +3007,156 @@ def display_market_breadth_block(benchmark_data, analysis_date=None):
     st.markdown("---")
 
 
+def display_market_breadth_tab(benchmark_data, analysis_date=None):
+    """
+    Market breadth tab: last 20 trading days table.
+    Columns: Date, Day, Advances, Declines, Advance/Total %, % Above 20 DMA, % Above 50 DMA, Nifty, Nifty Chg %
+    Color: Red <25%, Yellow 25-50%, Green >50%. Bottom row = 20-day average for % 20 DMA, % 50 DMA, Nifty Chg %.
+    """
+    if benchmark_data is None or len(benchmark_data) < 22:
+        st.markdown("### 📊 Market breadth")
+        st.warning("⚠️ Need at least 22 trading days of benchmark data for the 20-day table.")
+        return
+
+    # Use the same 97-stock universe as the Excel (Sector-Company.xlsx)
+    from company_symbols import SECTOR_COMPANIES
+    universe_symbols = sorted({sym for sector_dict in SECTOR_COMPANIES.values() for sym in sector_dict.keys()})
+
+    st.markdown("### 📊 Market breadth")
+    st.caption("Last 20 trading days. Advance/Total %, % Above 20 DMA, % Above 50 DMA, Nifty Chg %: 🔴 <25% weak | 🟡 25–50% neutral | 🟢 >50% positive.")
+    st.markdown("---")
+
+    with st.spinner("Building 20-day market breadth table..."):
+        end_dt = benchmark_data.index[-1]
+        symbols_dict = {s: s for s in universe_symbols}
+        nifty_fetched, _ = fetch_all_sectors_parallel(symbols_dict, end_date=end_dt, interval='1d')
+        nifty_closes = {}
+        for sym, d in nifty_fetched.items():
+            if d is not None and len(d) >= 50:
+                nifty_closes[sym] = d['Close']
+
+        dates_20 = list(reversed(benchmark_data.index[-20:].tolist()))
+        table_rows = []
+
+        for i, date_t in enumerate(dates_20):
+            row = {}
+            date_str = date_t.strftime('%Y-%m-%d')
+            row['Date'] = date_str
+            row['Day'] = date_t.strftime('%A')
+            if i == 0:
+                row['Date'] = date_str + " (Current day)"
+
+            advances = 0
+            declines = 0
+            above_20 = 0
+            above_50 = 0
+            total_ad = 0
+            total_20 = 0
+            total_50 = 0
+
+            for sym, series in nifty_closes.items():
+                try:
+                    idx = series.index.get_indexer([date_t], method='ffill')[0]
+                    if idx < 0 or idx >= len(series) or idx == 0:
+                        continue
+                    close_t = series.iloc[idx]
+                    close_prev = series.iloc[idx - 1]
+                    if close_t > close_prev:
+                        advances += 1
+                    elif close_t < close_prev:
+                        declines += 1
+                    total_ad += 1
+                    if idx >= 19:
+                        sma20 = series.rolling(20).mean().iloc[idx]
+                        if not pd.isna(sma20):
+                            total_20 += 1
+                            if close_t > sma20:
+                                above_20 += 1
+                    if idx >= 49:
+                        sma50 = series.rolling(50).mean().iloc[idx]
+                        if not pd.isna(sma50):
+                            total_50 += 1
+                            if close_t > sma50:
+                                above_50 += 1
+                except Exception:
+                    continue
+
+            row['Advances'] = advances
+            row['Declines'] = declines
+            adv_pct = (advances / total_ad * 100) if total_ad else None
+            row['Advance/Total %'] = round(adv_pct, 1) if adv_pct is not None else None
+            row['% Above 20 DMA'] = round((above_20 / total_20 * 100), 1) if total_20 else None
+            row['% Above 50 DMA'] = round((above_50 / total_50 * 100), 1) if total_50 else None
+
+            try:
+                nifty_idx = benchmark_data.index.get_indexer([date_t], method='ffill')[0]
+                if 0 <= nifty_idx < len(benchmark_data):
+                    nifty_close = benchmark_data['Close'].iloc[nifty_idx]
+                    row['Nifty'] = int(round(nifty_close, 0))
+                    if nifty_idx > 0:
+                        nifty_prev = benchmark_data['Close'].iloc[nifty_idx - 1]
+                        chg = (nifty_close / nifty_prev - 1) * 100
+                        row['Nifty Chg %'] = round(chg, 1)
+                    else:
+                        row['Nifty Chg %'] = None
+                else:
+                    row['Nifty'] = None
+                    row['Nifty Chg %'] = None
+            except Exception:
+                row['Nifty'] = None
+                row['Nifty Chg %'] = None
+
+            table_rows.append(row)
+
+        if not table_rows:
+            st.info("No rows computed for market breadth.")
+            return
+
+        df = pd.DataFrame(table_rows)
+        display_cols = ['Date', 'Day', 'Advances', 'Declines', 'Advance/Total %', '% Above 20 DMA', '% Above 50 DMA', 'Nifty', 'Nifty Chg %']
+        df = df[[c for c in display_cols if c in df.columns]]
+
+        avg_20 = pd.to_numeric(df['% Above 20 DMA'], errors='coerce').mean()
+        avg_50 = pd.to_numeric(df['% Above 50 DMA'], errors='coerce').mean()
+        avg_nifty_chg = pd.to_numeric(df['Nifty Chg %'], errors='coerce').mean()
+        summary_row = pd.DataFrame([{
+            'Date': '20-day avg',
+            'Day': '',
+            'Advances': '',
+            'Declines': '',
+            'Advance/Total %': '',
+            '% Above 20 DMA': round(avg_20, 1),
+            '% Above 50 DMA': round(avg_50, 1),
+            'Nifty': '',
+            'Nifty Chg %': round(avg_nifty_chg, 1)
+        }])
+        df = pd.concat([df, summary_row], ignore_index=True)
+
+        def _breadth_color(val):
+            if pd.isna(val):
+                return ''
+            try:
+                v = float(val)
+                if v < 25:
+                    return 'background-color: #E74C3C; color: #fff; font-weight: bold'
+                if v <= 50:
+                    return 'background-color: #F1C40F; color: #000; font-weight: bold'
+                return 'background-color: #27AE60; color: #fff; font-weight: bold'
+            except Exception:
+                return ''
+
+        def style_breadth_row(row):
+            res = [''] * len(row)
+            for col in ['Advance/Total %', '% Above 20 DMA', '% Above 50 DMA', 'Nifty Chg %']:
+                if col in row.index:
+                    idx = list(row.index).index(col)
+                    res[idx] = _breadth_color(row[col])
+            return res
+
+        df_styled = df.style.apply(style_breadth_row, axis=1)
+        st.dataframe(df_styled, use_container_width=True, hide_index=True)
+
+
 def display_stock_analysis_tab(analysis_date=None, benchmark_data=None, momentum_weights=None):
     """
     Stock Screener: Top 15 bullish and Top 15 bearish stocks by momentum score.
@@ -3135,6 +3285,239 @@ def display_stock_analysis_tab(analysis_date=None, benchmark_data=None, momentum
     st.success(f"✅ Screener complete! Analyzed {len(company_scores)} stocks from SECTOR_COMPANIES.")
 
 
+def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
+    """
+    Detailed Stock Screener on 97-stock universe (from Sector-Company.xlsx).
+
+    Columns:
+    - Company
+    - Price (closing at analysis date)
+    - RSI (1W) with direction
+    - RSI (1D) with direction
+    - RSI (1H) with direction
+    - Price > 8 SMA / 20 SMA / 50 SMA (daily)
+    - Price vs VWAP (1H): Above / Approaching / Below
+    - RSI divergence (2H) on same day: Yes / No (simple higher-high / lower-high check)
+    - Final score (higher = stronger bullish setup)
+    """
+    from datetime import datetime as dt
+    from company_symbols import SECTOR_COMPANIES
+
+    st.markdown("### 📊 Stock Screener (97 Stocks)")
+    st.markdown("---")
+
+    # Use last 10 trading days for dropdown (from benchmark if available)
+    if benchmark_data is not None and not benchmark_data.empty:
+        all_dates = list(dict.fromkeys([d.date() for d in benchmark_data.index]))
+        available_dates = all_dates[-10:] if len(all_dates) > 10 else all_dates
+    else:
+        today = datetime.today().date()
+        available_dates = [today]
+
+    default_date = analysis_date or available_dates[-1]
+    selected_date = st.selectbox(
+        "Select analysis date (past 10 days):",
+        options=available_dates,
+        index=available_dates.index(default_date) if default_date in available_dates else len(available_dates) - 1,
+        format_func=lambda d: d.strftime("%Y-%m-%d")
+    )
+
+    end_dt = dt.combine(selected_date, dt.min.time())
+
+    # Universe from SECTOR_COMPANIES (97 stocks)
+    universe = []
+    for sector, syms in SECTOR_COMPANIES.items():
+        for sym, info in syms.items():
+            universe.append((sector, sym, info.get("name", sym)))
+
+    if not universe:
+        st.warning("⚠️ No companies found in Sector-Company universe.")
+        return
+
+    # Scoring controls (simple sliders)
+    with st.expander("⚙️ Scoring weights (optional)", expanded=False):
+        w_rsi_dir = st.slider("Weight: RSI directions (1W/1D/1H all up)", 0.0, 5.0, 3.0, 0.5)
+        w_ma = st.slider("Weight: Price above 8/20/50 SMA", 0.0, 5.0, 2.0, 0.5)
+        w_vwap_above = st.slider("Weight: Price above VWAP (1H)", 0.0, 5.0, 2.0, 0.5)
+        w_vwap_approach = st.slider("Weight: Price approaching VWAP (1H)", 0.0, 5.0, 1.0, 0.5)
+        w_div = st.slider("Weight: RSI divergence (2H)", 0.0, 5.0, 1.0, 0.5)
+
+    results = []
+    progress = st.progress(0.0)
+    status = st.empty()
+
+    total = len(universe)
+    for idx, (sector, symbol, name) in enumerate(universe):
+        status.text(f"Analyzing {name} ({symbol}) [{idx+1}/{total}]...")
+        progress.progress((idx + 1) / total)
+
+        try:
+            # Daily data
+            daily = fetch_sector_data(symbol, end_date=end_dt, interval="1d")
+            if daily is None or len(daily) < 60:
+                continue
+
+            # Hourly data (for RSI 1H, VWAP, 2H divergence)
+            hourly = fetch_sector_data(symbol, end_date=end_dt, interval="1h")
+
+            # --- Price and SMAs (daily) ---
+            price = float(daily["Close"].iloc[-1])
+            sma8 = daily["Close"].rolling(8).mean().iloc[-1]
+            sma20 = daily["Close"].rolling(20).mean().iloc[-1]
+            sma50 = daily["Close"].rolling(50).mean().iloc[-1]
+
+            def yesno(cond):
+                return "Yes" if cond else "No"
+
+            p_gt_8 = yesno(price > sma8) if not pd.isna(sma8) else "N/A"
+            p_gt_20 = yesno(price > sma20) if not pd.isna(sma20) else "N/A"
+            p_gt_50 = yesno(price > sma50) if not pd.isna(sma50) else "N/A"
+
+            # --- RSI 1D (daily) ---
+            rsi_d = calculate_rsi(daily)
+            rsi_1d_val = float(rsi_d.iloc[-1]) if len(rsi_d.dropna()) >= 2 else None
+            rsi_1d_prev = float(rsi_d.iloc[-2]) if len(rsi_d.dropna()) >= 2 else None
+
+            # Weekly from daily resample
+            weekly = daily.resample("W").last()
+            rsi_w = calculate_rsi(weekly)
+            rsi_1w_val = float(rsi_w.iloc[-1]) if len(rsi_w.dropna()) >= 2 else None
+            rsi_1w_prev = float(rsi_w.iloc[-2]) if len(rsi_w.dropna()) >= 2 else None
+
+            # RSI 1H from hourly
+            if hourly is not None and len(hourly) >= 30:
+                rsi_h = calculate_rsi(hourly)
+                rsi_1h_val = float(rsi_h.iloc[-1]) if len(rsi_h.dropna()) >= 2 else None
+                rsi_1h_prev = float(rsi_h.iloc[-2]) if len(rsi_h.dropna()) >= 2 else None
+            else:
+                rsi_1h_val = rsi_1h_prev = None
+
+            def rsi_direction(cur, prev):
+                if cur is None or prev is None:
+                    return "N/A"
+                if cur > prev + 1:
+                    return "Up"
+                if cur < prev - 1:
+                    return "Down"
+                return "Flat"
+
+            rsi_1w_dir = rsi_direction(rsi_1w_val, rsi_1w_prev)
+            rsi_1d_dir = rsi_direction(rsi_1d_val, rsi_1d_prev)
+            rsi_1h_dir = rsi_direction(rsi_1h_val, rsi_1h_prev)
+
+            # --- VWAP & 2H divergence from hourly data ---
+            vwap_relation = "N/A"
+            rsi_div_2h = "No"
+
+            if hourly is not None and len(hourly) > 0:
+                last_day = hourly.index[-1].date()
+                day_mask = hourly.index.date == last_day
+                day_data = hourly[day_mask]
+                if not day_data.empty:
+                    if "Volume" in day_data.columns and day_data["Volume"].sum() > 0:
+                        vwap = (day_data["Close"] * day_data["Volume"]).sum() / day_data["Volume"].sum()
+                    else:
+                        vwap = day_data["Close"].mean()
+                    if vwap:
+                        diff_pct = (price / vwap - 1) * 100
+                        if diff_pct > 0.5:
+                            vwap_relation = "Above"
+                        elif abs(diff_pct) <= 0.5:
+                            vwap_relation = "Approaching"
+                        else:
+                            vwap_relation = "Below"
+
+                # 2H divergence (simple higher-high / lower-high vs RSI)
+                h2 = hourly.resample("2H").last()
+                if len(h2) >= 4:
+                    rsi_2h = calculate_rsi(h2)
+                    if len(rsi_2h.dropna()) >= 3:
+                        close = h2["Close"]
+                        c3, c2, c1 = float(close.iloc[-3]), float(close.iloc[-2]), float(close.iloc[-1])
+                        r3, r2, r1 = float(rsi_2h.iloc[-3]), float(rsi_2h.iloc[-2]), float(rsi_2h.iloc[-1])
+                        bullish_div = c1 < c2 < c3 and r1 > r2 > r3
+                        bearish_div = c1 > c2 > c3 and r1 < r2 < r3
+                        if bullish_div or bearish_div:
+                            rsi_div_2h = "Yes"
+
+            # --- Final score ---
+            score = 0.0
+
+            if rsi_1w_dir == "Up" and rsi_1d_dir == "Up" and rsi_1h_dir == "Up":
+                score += w_rsi_dir
+
+            ma_count = sum(
+                1 for cond in [
+                    (p_gt_8 == "Yes"),
+                    (p_gt_20 == "Yes"),
+                    (p_gt_50 == "Yes"),
+                ] if cond
+            )
+            score += (ma_count / 3.0) * w_ma if ma_count > 0 else 0.0
+
+            if vwap_relation == "Above":
+                score += w_vwap_above
+            elif vwap_relation == "Approaching":
+                score += w_vwap_approach
+
+            if rsi_div_2h == "Yes":
+                score += w_div
+
+            results.append({
+                "Sector": sector,
+                "Symbol": symbol,
+                "Company": name,
+                "Price": round(price, 2),
+                "RSI (1W)": rsi_1w_val,
+                "RSI (1W) Dir": rsi_1w_dir,
+                "RSI (1D)": rsi_1d_val,
+                "RSI (1D) Dir": rsi_1d_dir,
+                "RSI (1H)": rsi_1h_val,
+                "RSI (1H) Dir": rsi_1h_dir,
+                "Price > 8 SMA": p_gt_8,
+                "Price > 20 SMA": p_gt_20,
+                "Price > 50 SMA": p_gt_50,
+                "Price vs VWAP (1H)": vwap_relation,
+                "RSI divergence (2H)": rsi_div_2h,
+                "Final score": round(score, 2),
+            })
+        except Exception:
+            continue
+
+    progress.empty()
+    status.empty()
+
+    if not results:
+        st.warning("⚠️ No stocks could be analyzed for the screener.")
+        return
+
+    df = pd.DataFrame(results)
+    df_sorted = df.sort_values("Final score", ascending=False)
+
+    top_bullish = df_sorted.head(15)
+    top_bearish = df_sorted.tail(15).iloc[::-1]
+
+    def sentiment_color(score):
+        if pd.isna(score):
+            return ""
+        if score < 1.5:
+            return "🔴 Weak"
+        if score < 3.0:
+            return "🟡 Moderate"
+        return "🟢 Strong"
+
+    st.markdown("#### 🟢 Top 15 Bullish")
+    bull = top_bullish.copy()
+    bull["Sentiment"] = bull["Final score"].apply(sentiment_color)
+    st.dataframe(bull, use_container_width=True, hide_index=True)
+
+    st.markdown("#### 🔴 Top 15 Bearish")
+    bear = top_bearish.copy()
+    bear["Sentiment"] = bear["Final score"].apply(sentiment_color)
+    st.dataframe(bear, use_container_width=True, hide_index=True)
+
+    st.caption("High score: RSI directions all up + price above key SMAs + price above/approaching VWAP + RSI divergence (2H).")
+
 def main():
     """Main Streamlit app function."""
     try:
@@ -3206,11 +3589,12 @@ def main():
         benchmark_data = sector_data.get('Nifty 50') if sector_data else None
         display_market_breadth_block(benchmark_data, analysis_date)
         
-        # Create tabs (8 total: 4 sector-level + 2 company-level + 1 historical + 1 data sources + 1 stock analysis)
+        # Create tabs (9 total: Momentum, Market breadth, Stock Analysis, Reversal, Interpretation, Company Momentum, Company Reversals, Historical, Data Sources)
         try:
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
                 "📈 Momentum Ranking",
-                "📊 Stock Analysis",
+                "📊 Market breadth",
+                "📊 Stock Screener",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
                 "🏢 Company Momentum",
@@ -3233,12 +3617,19 @@ def main():
             
             with tab2:
                 try:
-                    display_stock_analysis_tab(analysis_date=analysis_date, benchmark_data=benchmark_data, momentum_weights=momentum_weights)
+                    display_market_breadth_tab(benchmark_data, analysis_date)
                 except Exception as e:
-                    st.error(f"❌ Error displaying stock analysis tab: {str(e)}")
+                    st.error(f"❌ Error displaying market breadth tab: {str(e)}")
                     st.text(traceback.format_exc())
             
             with tab3:
+                try:
+                    display_stock_screener_tab(analysis_date=analysis_date, benchmark_data=benchmark_data)
+                except Exception as e:
+                    st.error(f"❌ Error displaying stock screener tab: {str(e)}")
+                    st.text(traceback.format_exc())
+            
+            with tab4:
                 try:
                     display_reversal_tab(df, sector_data, benchmark_data, reversal_weights, reversal_thresholds, enable_color_coding)
                     display_tooltip_legend()
@@ -3246,14 +3637,14 @@ def main():
                     st.error(f"❌ Error displaying reversal tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab4:
+            with tab5:
                 try:
                     display_interpretation_tab()
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying interpretation tab: {str(e)}")
             
-            with tab5:
+            with tab6:
                 try:
                     # Pass top sector as default for company momentum analysis
                     # Sort by Momentum_Score first to get rank #1
@@ -3265,7 +3656,7 @@ def main():
                     st.error(f"❌ Error displaying company momentum tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab6:
+            with tab7:
                 try:
                     # Get top reversal candidate (if any)
                     top_reversal_sector = None
@@ -3279,7 +3670,7 @@ def main():
                     st.error(f"❌ Error displaying company reversal tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab7:
+            with tab8:
                 try:
                     display_historical_rankings_tab(sector_data, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf)
                     display_tooltip_legend()
@@ -3287,7 +3678,7 @@ def main():
                     st.error(f"❌ Error displaying historical rankings tab: {str(e)}")
                     st.text(traceback.format_exc())
             
-            with tab8:
+            with tab9:
                 try:
                     display_data_sources_tab()
                 except Exception as e:
