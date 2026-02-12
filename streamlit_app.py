@@ -2156,7 +2156,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         # Load historical rankings cache (CSV) so we only compute missing dates
         cache_dir = 'data_cache'
         os.makedirs(cache_dir, exist_ok=True)
-        cache_path = os.path.join(cache_dir, 'historical_rankings_cache.csv')
+        cache_path = os.path.join(cache_dir, 'historical_rankings_cache_v2.csv')
         cache_by_date = {}
         if os.path.isfile(cache_path):
             try:
@@ -2298,74 +2298,38 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     row['Momentum #1 Sector'] = ''
                     row['Momentum #2 Sector'] = ''
                 
-                # c) d) Bullish #1, #2 and e) f) Bearish #1, #2 with next 1d/2d return %
-                company_scores = []
+                # c) d) Bullish #1, #2 and e) f) Bearish #1, #2 — same scoring as Stock Screener
+                company_hourly, _ = fetch_all_sectors_parallel(company_symbols_dict, end_date=date_t, interval='1h')
+                screener_list = []
                 for sym, rec in company_data.items():
                     try:
                         d = rec['data']
                         idx = d.index.get_indexer([date_t], method='ffill')[0]
-                        if idx < 0 or idx < 13 or idx + 2 >= len(d):
+                        if idx < 59 or idx + 2 >= len(d):
                             continue
                         subset = d.iloc[: idx + 1]
-                        bench_sub = benchmark_data.iloc[: min(idx + 1, len(benchmark_data))]
-                        if len(bench_sub) < 14:
-                            continue
-                        rsi = calculate_rsi(subset)
-                        adx, _, _, di_spread = calculate_adx(subset)
-                        adx_z = calculate_z_score(adx.dropna())
-                        sr = subset['Close'].pct_change().dropna()
-                        br = bench_sub['Close'].pct_change().dropna()
-                        common = sr.index.intersection(br.index)
-                        rs_rating = 5.0
-                        if len(common) > 1:
-                            cr = (1 + sr.loc[common]).prod() - 1
-                            cb = (1 + br.loc[common]).prod() - 1
-                            if not pd.isna(cr) and not pd.isna(cb):
-                                rs_rating = max(0, min(10, 5 + (cr - cb) * 25))
-                        rsi_val = rsi.iloc[-1] if not rsi.isna().all() else 50
-                        di_val = di_spread.iloc[-1] if not di_spread.isna().all() else 0
-                        company_scores.append({
-                            'symbol': sym, 'sector': rec['sector'], 'name': rec['name'],
-                            'rsi': rsi_val, 'adx_z': adx_z if not pd.isna(adx_z) else 0,
-                            'rs_rating': rs_rating, 'di_spread': di_val,
-                            'data': d, 'idx': idx
-                        })
+                        hourly = company_hourly.get(sym) if company_hourly else None
+                        score = _compute_screener_score(subset, hourly)
+                        if score is not None:
+                            screener_list.append((sym, rec['sector'], rec['name'], score, d, idx))
                     except Exception:
                         continue
-                
-                if company_scores:
-                    df_c = pd.DataFrame([{k: v for k, v in x.items() if k != 'data' and k != 'idx'} for x in company_scores])
-                    df_c['ADX_Z_Rank'] = df_c['adx_z'].rank(ascending=False, method='average')
-                    df_c['RS_Rating_Rank'] = df_c['rs_rating'].rank(ascending=False, method='average')
-                    df_c['RSI_Rank'] = df_c['rsi'].rank(ascending=False, method='average')
-                    df_c['DI_Spread_Rank'] = df_c['di_spread'].rank(ascending=False, method='average')
-                    tw = sum(momentum_weights.values())
-                    df_c['Score'] = (
-                        df_c['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / tw +
-                        df_c['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / tw +
-                        df_c['RSI_Rank'] * momentum_weights.get('RSI', 30) / tw +
-                        df_c['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / tw
-                    )
-                    df_c = df_c.sort_values('Score', ascending=True)
-                    bull2 = df_c.head(2)
-                    bear2 = df_c.tail(2)
-                    
-                    def next_returns(rec_list):
-                        out = []
-                        for _, r in rec_list.iterrows():
-                            sym = r['symbol']
-                            idx = next(x['idx'] for x in company_scores if x['symbol'] == sym)
-                            d = next(x['data'] for x in company_scores if x['symbol'] == sym)
-                            sector = r['sector']
-                            name = r['name']
-                            c0 = d['Close'].iloc[idx]
-                            r1 = (d['Close'].iloc[idx + 1] / c0 - 1) * 100 if idx + 1 < len(d) else None
-                            r2 = (d['Close'].iloc[idx + 2] / c0 - 1) * 100 if idx + 2 < len(d) else None
-                            out.append((sector, name, r1, r2))
-                        return out
-                    
-                    b1 = next_returns(bull2)
-                    b2 = next_returns(bear2)
+
+                def next_returns_from_list(rec_list):
+                    out = []
+                    for (sym, sector, name, _s, d, idx) in rec_list:
+                        c0 = d['Close'].iloc[idx]
+                        r1 = (d['Close'].iloc[idx + 1] / c0 - 1) * 100 if idx + 1 < len(d) else None
+                        r2 = (d['Close'].iloc[idx + 2] / c0 - 1) * 100 if idx + 2 < len(d) else None
+                        out.append((sector, name, r1, r2))
+                    return out
+
+                if screener_list:
+                    screener_list.sort(key=lambda x: x[3], reverse=True)
+                    bull2_list = screener_list[:2]
+                    bear2_list = screener_list[-2:]
+                    b1 = next_returns_from_list(bull2_list)
+                    b2 = next_returns_from_list(bear2_list)
                     row['Bullish #1 Stock'] = b1[0][1] if len(b1) >= 1 else ''
                     row['Bullish #1 Next 1D %'] = round(b1[0][2], 1) if len(b1) >= 1 and b1[0][2] is not None else None
                     row['Bullish #1 Next 2D %'] = round(b1[0][3], 1) if len(b1) >= 1 and b1[0][3] is not None else None
@@ -2472,6 +2436,11 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                 .format({c: "{:.1f}" for c in percent_cols if c in df_show.columns})
             )
             st.dataframe(df_show_styled, use_container_width=True, hide_index=True)
+            st.caption(
+                "**Scoring logic (same as Stock Screener):** Bullish #1/#2 and Bearish #1/#2 are ranked by the same "
+                "score: RSI direction (1W, 1D, 1H all up), price above 8/20/50 SMA, price vs VWAP (1H), and RSI divergence (2H). "
+                "Higher score = stronger bullish setup; top 2 = Bullish, bottom 2 = Bearish."
+            )
         else:
             st.info("No rows computed for the 10-day table.")
     
@@ -3452,6 +3421,86 @@ def display_stock_analysis_tab(analysis_date=None, benchmark_data=None, momentum
     st.success(f"✅ Screener complete! Analyzed {len(company_scores)} stocks from SECTOR_COMPANIES.")
 
 
+def _compute_screener_score(daily, hourly, w_rsi_dir=3.0, w_ma=2.0, w_vwap_above=2.0, w_vwap_approach=1.0, w_div=1.0):
+    """
+    Same scoring as Stock Screener tab: RSI direction (1W/1D/1H), price vs 8/20/50 SMA,
+    price vs VWAP (1H), RSI divergence (2H). Returns score (higher = more bullish).
+    """
+    if daily is None or len(daily) < 60:
+        return None
+    try:
+        price = float(daily["Close"].iloc[-1])
+        sma8 = daily["Close"].rolling(8).mean().iloc[-1]
+        sma20 = daily["Close"].rolling(20).mean().iloc[-1]
+        sma50 = daily["Close"].rolling(50).mean().iloc[-1]
+        p_gt_8 = "Yes" if not pd.isna(sma8) and price > sma8 else "No"
+        p_gt_20 = "Yes" if not pd.isna(sma20) and price > sma20 else "No"
+        p_gt_50 = "Yes" if not pd.isna(sma50) and price > sma50 else "No"
+        rsi_d = calculate_rsi(daily)
+        rsi_1d_val = float(rsi_d.iloc[-1]) if len(rsi_d.dropna()) >= 2 else None
+        rsi_1d_prev = float(rsi_d.iloc[-2]) if len(rsi_d.dropna()) >= 2 else None
+        weekly = daily.resample("W").last()
+        rsi_w = calculate_rsi(weekly)
+        rsi_1w_val = float(rsi_w.iloc[-1]) if len(rsi_w.dropna()) >= 2 else None
+        rsi_1w_prev = float(rsi_w.iloc[-2]) if len(rsi_w.dropna()) >= 2 else None
+        rsi_1h_val = rsi_1h_prev = None
+        if hourly is not None and len(hourly) >= 30:
+            rsi_h = calculate_rsi(hourly)
+            rsi_1h_val = float(rsi_h.iloc[-1]) if len(rsi_h.dropna()) >= 2 else None
+            rsi_1h_prev = float(rsi_h.iloc[-2]) if len(rsi_h.dropna()) >= 2 else None
+
+        def _dir(cur, prev):
+            if cur is None or prev is None:
+                return "N/A"
+            if cur > prev + 1:
+                return "Up"
+            if cur < prev - 1:
+                return "Down"
+            return "Flat"
+
+        rsi_1w_dir = _dir(rsi_1w_val, rsi_1w_prev)
+        rsi_1d_dir = _dir(rsi_1d_val, rsi_1d_prev)
+        rsi_1h_dir = _dir(rsi_1h_val, rsi_1h_prev)
+        vwap_relation = "N/A"
+        rsi_div_2h = "No"
+        if hourly is not None and len(hourly) > 0:
+            last_day = hourly.index[-1].date()
+            day_mask = hourly.index.date == last_day
+            day_data = hourly[day_mask]
+            if not day_data.empty:
+                if "Volume" in day_data.columns and day_data["Volume"].sum() > 0:
+                    vwap = (day_data["Close"] * day_data["Volume"]).sum() / day_data["Volume"].sum()
+                else:
+                    vwap = day_data["Close"].mean()
+                if vwap:
+                    diff_pct = (price / vwap - 1) * 100
+                    vwap_relation = "Above" if diff_pct > 0.5 else ("Approaching" if abs(diff_pct) <= 0.5 else "Below")
+            h2 = hourly.resample("2H").last()
+            if len(h2) >= 4:
+                rsi_2h = calculate_rsi(h2)
+                if len(rsi_2h.dropna()) >= 3:
+                    close = h2["Close"]
+                    c3, c2, c1 = float(close.iloc[-3]), float(close.iloc[-2]), float(close.iloc[-1])
+                    r3, r2, r1 = float(rsi_2h.iloc[-3]), float(rsi_2h.iloc[-2]), float(rsi_2h.iloc[-1])
+                    if (c1 < c2 < c3 and r1 > r2 > r3) or (c1 > c2 > c3 and r1 < r2 < r3):
+                        rsi_div_2h = "Yes"
+
+        score = 0.0
+        if rsi_1w_dir == "Up" and rsi_1d_dir == "Up" and rsi_1h_dir == "Up":
+            score += w_rsi_dir
+        ma_count = sum(1 for c in [p_gt_8 == "Yes", p_gt_20 == "Yes", p_gt_50 == "Yes"] if c)
+        score += (ma_count / 3.0) * w_ma if ma_count > 0 else 0.0
+        if vwap_relation == "Above":
+            score += w_vwap_above
+        elif vwap_relation == "Approaching":
+            score += w_vwap_approach
+        if rsi_div_2h == "Yes":
+            score += w_div
+        return round(score, 2)
+    except Exception:
+        return None
+
+
 def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
     """
     Detailed Stock Screener on 97-stock universe (from Sector-Company.xlsx).
@@ -3473,19 +3522,20 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
     st.markdown("### 📊 Stock Screener (97 Stocks)")
     st.markdown("---")
 
-    # Use last 10 trading days for dropdown (from benchmark if available)
+    # Use last 10 trading days for dropdown, descending (today/latest first)
     if benchmark_data is not None and not benchmark_data.empty:
         all_dates = list(dict.fromkeys([d.date() for d in benchmark_data.index]))
-        available_dates = all_dates[-10:] if len(all_dates) > 10 else all_dates
+        last_10 = all_dates[-10:] if len(all_dates) > 10 else all_dates
+        available_dates = sorted(last_10, reverse=True)
     else:
         today = datetime.today().date()
         available_dates = [today]
 
-    default_date = analysis_date or available_dates[-1]
+    default_date = analysis_date or (available_dates[0] if available_dates else datetime.today().date())
     selected_date = st.selectbox(
         "Select analysis date (past 10 days):",
         options=available_dates,
-        index=available_dates.index(default_date) if default_date in available_dates else len(available_dates) - 1,
+        index=available_dates.index(default_date) if default_date in available_dates else 0,
         format_func=lambda d: d.strftime("%Y-%m-%d")
     )
 
@@ -3683,7 +3733,10 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
     bear["Sentiment"] = bear["Final score"].apply(sentiment_color)
     st.dataframe(bear, use_container_width=True, hide_index=True)
 
-    st.caption("High score: RSI directions all up + price above key SMAs + price above/approaching VWAP + RSI divergence (2H).")
+    st.caption(
+        "**Scoring logic:** Same as Historical Rankings Bullish/Bearish picks. Score = RSI direction (1W, 1D, 1H all up) "
+        "+ price above 8/20/50 SMA + price vs VWAP (1H) + RSI divergence (2H). Higher score = stronger bullish; top 15 = Bullish, bottom 15 = Bearish."
+    )
 
     # Legacy experimental market overview / Fibonacci analysis block (disabled)
     # Kept for reference; does not run.
