@@ -6,7 +6,7 @@ Version: 2.0.0 - Fixed reversal ranking logic (Jan 2026)
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.3.0"
 
 import os
 import streamlit as st
@@ -237,7 +237,7 @@ def get_sidebar_controls():
         "Momentum weight mode",
         options=["Trending", "Historical"],
         index=0,
-        help="Trending: 50% CMF + 50% RSI (composite). Historical: RS Rating, ADX Z, RSI, DI Spread (CMF = 0%)."
+        help="Trending: 50% Z(RSI) + 50% Z(CMF). Historical: RS Rating, ADX Z, RSI, DI Spread (CMF = 0%)."
     )
     
     if momentum_mode == "Trending":
@@ -2130,10 +2130,14 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     
     from indicators import calculate_rsi, calculate_adx, calculate_z_score, calculate_cmf, calculate_mansfield_rs
     from company_symbols import SECTOR_COMPANIES
+
+    def _is_trending_mode(mw):
+        return (mw.get('CMF', 0) != 0 and mw.get('RSI', 0) != 0 and
+                mw.get('ADX_Z', 0) == 0 and mw.get('RS_Rating', 0) == 0 and mw.get('DI_Spread', 0) == 0)
     
     # --- Primary content: date-wise table (last 10 days) ---
     st.markdown("#### 📋 Primary: Date-wise summary (last 10 trading days)")
-    
+    st.caption("Includes the most recent dates (T, T-1) when available; Next 1D % / Next 2D % may be blank for those rows.")
     NIFTY50_SYMBOLS = [
         'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
         'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
@@ -2460,6 +2464,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         # Calculate current indicators
         rsi = calculate_rsi(sect_data)
         adx, _, _, di_spread = calculate_adx(sect_data)
+        cmf = calculate_cmf(sect_data)
         adx_z = calculate_z_score(adx.dropna())
         
         # RS Rating
@@ -2481,6 +2486,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         current_results.append({
             'Sector': sect_name,
             'RSI': rsi.iloc[-1] if not rsi.isna().all() else 50,
+            'CMF': cmf.iloc[-1] if not cmf.isna().all() else 0,
             'ADX_Z': adx_z if not pd.isna(adx_z) else 0,
             'RS_Rating': rs_rating,
             'DI_Spread': di_spread.iloc[-1] if not di_spread.isna().all() else 0,
@@ -2490,31 +2496,41 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         st.error("❌ Unable to calculate rankings")
         return
     
-    # Rank and get top 2
+    # Rank and get top 2 (Trending: 50% Z(RSI) + 50% Z(CMF); Historical: rank-based)
     df_current = pd.DataFrame(current_results)
-    df_current['ADX_Z_Rank'] = df_current['ADX_Z'].rank(ascending=False)
-    df_current['RS_Rating_Rank'] = df_current['RS_Rating'].rank(ascending=False)
-    df_current['RSI_Rank'] = df_current['RSI'].rank(ascending=False)
-    df_current['DI_Spread_Rank'] = df_current['DI_Spread'].rank(ascending=False)
-    
-    total_weight = sum(momentum_weights.values())
-    df_current['Momentum_Score'] = (
-        (df_current['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / total_weight) +
-        (df_current['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / total_weight) +
-        (df_current['RSI_Rank'] * momentum_weights.get('RSI', 30) / total_weight) +
-        (df_current['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / total_weight)
-    )
-    
-    # Scale 1-10
-    num_sectors = len(df_current)
-    if num_sectors > 1:
-        min_rank = df_current['Momentum_Score'].min()
-        max_rank = df_current['Momentum_Score'].max()
-        if max_rank > min_rank:
-            df_current['Momentum_Score'] = 10 - ((df_current['Momentum_Score'] - min_rank) / (max_rank - min_rank)) * 9
+    if _is_trending_mode(momentum_weights) and len(df_current) > 1:
+        rsi_m, rsi_s = df_current['RSI'].mean(), df_current['RSI'].std()
+        cmf_m, cmf_s = df_current['CMF'].mean(), df_current['CMF'].std()
+        rsi_z = (df_current['RSI'] - rsi_m) / rsi_s if (rsi_s and not pd.isna(rsi_s)) else pd.Series(0.0, index=df_current.index)
+        cmf_z = (df_current['CMF'] - cmf_m) / cmf_s if (cmf_s and not pd.isna(cmf_s)) else pd.Series(0.0, index=df_current.index)
+        rsi_z = rsi_z.fillna(0) if hasattr(rsi_z, 'fillna') else rsi_z
+        cmf_z = cmf_z.fillna(0) if hasattr(cmf_z, 'fillna') else cmf_z
+        raw = 0.5 * rsi_z + 0.5 * cmf_z
+        rmin, rmax = raw.min(), raw.max()
+        df_current['Momentum_Score'] = (1 + (raw - rmin) / (rmax - rmin) * 9) if rmax > rmin else 5.0
+    else:
+        df_current['ADX_Z_Rank'] = df_current['ADX_Z'].rank(ascending=False)
+        df_current['RS_Rating_Rank'] = df_current['RS_Rating'].rank(ascending=False)
+        df_current['RSI_Rank'] = df_current['RSI'].rank(ascending=False)
+        df_current['DI_Spread_Rank'] = df_current['DI_Spread'].rank(ascending=False)
+        total_weight = sum(momentum_weights.values()) or 1
+        df_current['Momentum_Score'] = (
+            (df_current['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / total_weight) +
+            (df_current['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / total_weight) +
+            (df_current['RSI_Rank'] * momentum_weights.get('RSI', 30) / total_weight) +
+            (df_current['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / total_weight)
+        )
+        num_sectors = len(df_current)
+        if num_sectors > 1:
+            min_rank = df_current['Momentum_Score'].min()
+            max_rank = df_current['Momentum_Score'].max()
+            if max_rank > min_rank:
+                df_current['Momentum_Score'] = 10 - ((df_current['Momentum_Score'] - min_rank) / (max_rank - min_rank)) * 9
+            else:
+                df_current['Momentum_Score'] = 5.0
         else:
             df_current['Momentum_Score'] = 5.0
-    
+
     df_current = df_current.sort_values('Momentum_Score', ascending=False)
     top_2_sectors = df_current.head(2)['Sector'].tolist()
     
@@ -3084,13 +3100,14 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None):
         st.warning("⚠️ Need at least 22 trading days of benchmark data for the 20-day table.")
         return
 
-    # Use the same 97-stock universe as the Excel (Sector-Company.xlsx)
+    # Use the same universe as Sector-Company.xlsx / sector_company.csv (e.g. 135 stocks)
     from company_symbols import SECTOR_COMPANIES
     universe_symbols = sorted({sym for sector_dict in SECTOR_COMPANIES.values() for sym in sector_dict.keys()})
+    n_stocks = len(universe_symbols)
 
     st.markdown("### 📊 Market breadth")
     st.caption(
-        "Last 20 trading days on 97-stock universe. "
+        f"Last 20 trading days on {n_stocks}-stock universe. "
         "Advance/Total %, % Above 8/20/50 DMA, Nifty Chg %: "
         "🔴 <25% weak | 🟡 25–50% neutral | 🟢 >50% positive (breadth columns)."
     )
@@ -3504,7 +3521,7 @@ def _compute_screener_score(daily, hourly, w_rsi_dir=3.0, w_ma=2.0, w_vwap_above
 
 def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
     """
-    Detailed Stock Screener on 97-stock universe (from Sector-Company.xlsx).
+    Detailed Stock Screener on sector-company universe (from Sector-Company.xlsx / sector_company.csv).
 
     Columns:
     - Company
@@ -3738,6 +3755,10 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
         "**Scoring logic:** Same as Historical Rankings Bullish/Bearish picks. Score = RSI direction (1W, 1D, 1H all up) "
         "+ price above 8/20/50 SMA + price vs VWAP (1H) + RSI divergence (2H). Higher score = stronger bullish; top 15 = Bullish, bottom 15 = Bearish."
     )
+
+    # DataFrame for Part 3 (Fibonacci) and Part 4 (Confluence): must have Symbol, Sector, Company Name
+    df_stocks = df_sorted.copy()
+    df_stocks["Company Name"] = df_stocks["Company"]
 
     # Legacy experimental market overview / Fibonacci analysis block (disabled)
     # Kept for reference; does not run.

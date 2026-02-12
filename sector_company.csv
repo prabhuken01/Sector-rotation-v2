@@ -8,21 +8,41 @@ Auto,Bosch India,BOSCHLTD.NS,5.8
 Auto,Ashok Leyland,ASHOKLEY.NS,4.5
 Auto,Force Motors,FORCEMOT.NS,3.2
 Auto,Eicher Motors,EICHERMOT.NS,2.8
+Auto,M&M,M&M.NS,
+Auto,Tata Motors Passenger Vehicles,TMPV.NS,
+Auto,TVS Motor,TVSMOTOR.NS,
+Auto,Motherson Sumi Systems,MOTHERSON.NS,
+Auto,Timken India,TIINDIA.NS,
+Auto,MRF Limited,MRF.NS,
+Auto,Apollo Tyres,APOLLOTYRE.NS,
+Auto,Exide Industries,EXIDEIND.NS,
+Auto,Balkrishna Industries,BALKRISIND.NS,
 Commodities,Hindalco Industries,HINDALCO.NS,25.3
 Commodities,NMDC Limited,NMDC.NS,18.7
 Commodities,Coal India,COALINDIA.NS,15.2
 Commodities,Fineotex Chemical,FINEOTEX.NS,12.1
 Commodities,Ratnamani Metals,RATNAMANI.NS,8.9
 Commodities,Jindal Steel,JINDALSTEL.NS,7.8
-Commodities,Vedanta,VEDL.NS,6.4
 Commodities,Manganese Ore India,MOIL.NS,5.6
+Commodities,Vedanta,VEDL.NS,6.4
+Consumer Durable,Titan Company,TITAN.NS,
+Consumer Durable,Dixon Technologies,DIXON.NS,
+Consumer Durable,Havells India,HAVELLS.NS,
+Consumer Durable,Voltas,VOLTAS.NS,
+Consumer Durable,Blue Star,BLUESTARCO.NS,
+Consumer Durable,Kajaria Ceramics,KAJARIACER.NS,
+Consumer Durable,Thangamayil Jewellery,THANGAMAYL.NS,
+Consumer Durable,PNG Jewellers,PNGJL.NS,
+Consumer Durable,Kalyan Jewellers India,KALYANKJIL.NS,
 Defence,Bharat Electronics,BEL.NS,28.5
 Defence,Hindustan Aeronautics,HAL.NS,25.3
 Defence,Mazagon Dock,MAZDOCK.NS,18.7
 Defence,Bharat Dynamics,BDL.NS,5.2
 Energy,Reliance Industries,RELIANCE.NS,35.2
 Energy,NTPC Limited,NTPC.NS,18.9
-Energy,Power Grid,POWERGRID.NS,12.3
+Energy,Power Grid Corporation,POWERGRID.NS,12.3
+Energy,Tata Power,TATAPOWER.NS,
+Energy,Adani Green Energy,ADANIGREEN.NS,
 Fin Services,Bajaj Finance Ltd.,BAJFINANCE.NS,15.4
 Fin Services,Shriram Finance Ltd.,SHRIRAMFIN.NS,8.2
 Fin Services,Bajaj Finserv Ltd.,BAJAJFINSV.NS,6.85
@@ -33,9 +53,12 @@ Fin Services,HDFC Life Insurance Company,HDFCLIFE.NS,4.74
 Fin Services,Cholamandalam Inv. & Fin.,CHOLAFIN.NS,4.23
 Fin Services,PB Fintech (Policybazaar),POLICYBZR.NS,3.66
 Fin Services,MCX India Ltd.,MCX.NS,3.34
-Fin Services,PNB Housing,PNBHOUSING.NS,1.9
+Fin Services,PNB Housing Finance,PNBHOUSING.NS,1.9
 Fin Services,HDFC Asset Management,HDFCAMC.NS,1.3
 Fin Services,Manappuram Finance,MANAPPURAM.NS,1.0
+Fin Services,LT Finance,LTF.NS,
+Fin Services,Muthoot Finance,MUTHOOTFIN.NS,
+Fin Services,AB Capital,ABCAPITAL.NS,
 FMCG,ITC Limited,ITC.NS,22.3
 FMCG,Nestle India,NESTLEIND.NS,18.9
 FMCG,Hindustan Unilever,HINDUNILVR.NS,17.5
@@ -44,17 +67,28 @@ FMCG,Britannia Industries,BRITANNIA.NS,10.8
 FMCG,Godrej Industries,GODREJIND.NS,8.2
 FMCG,Emami Limited,EMAMILTD.NS,5.6
 FMCG,Colgate-Palmolive,COLPAL.NS,4.6
+FMCG,Dabur India,DABUR.NS,
+FMCG,Varun Beverages,VBL.NS,
+FMCG,Godrej Consumer Products,GODREJCP.NS,
+FMCG,Tata Consumer Products,TATACONSUM.NS,
 Infra,Larsen & Toubro,LT.NS,24.3
 Infra,Indian Railway Finance,IRFC.NS,15.8
 Infra,NHPC Limited,NHPC.NS,12.5
-Infra,Bharat Petroleum,BPCL.NS,9.7
 Infra,REC Limited,REC.NS,6.4
+Infra,Bharti Airtel,BHARTIARTL.NS,
+Infra,Adani Ports & SEZ,ADANIPORTS.NS,
+Infra,IndiGo,INDIGO.NS,
+Infra,Grasim Industries,GRASIM.NS,
+Infra,JSW Energy,JSWENERGY.NS,
+Infra,Siemens Limited,SIEMENS.NS,
+Infra,Cummins India,CUMMINSIND.NS,
+Infra,Shree Cement,SHREECEM.NS,
 IT,Tata Consultancy Services,TCS.NS,20.5
 IT,Infosys,INFY.NS,18.2
 IT,Wipro,WIPRO.NS,12.1
 IT,Tech Mahindra,TECHM.NS,9.8
 IT,HCL Technologies,HCLTECH.NS,7.3
-IT,Persistent,PERSISTENT.NS,6.4
+IT,Persistent Systems,PERSISTENT.NS,6.4
 IT,Coforge,COFORGE.NS,5.3
 IT,Mphasis,MPHASIS.NS,5.2
 IT,LT Technologies,LTTS.NS,4.1
@@ -62,15 +96,15 @@ Media,Sun TV Network,SUNTV.NS,18.5
 Media,Zee Entertainment,ZEEL.NS,12.8
 Media,TV Today,TVTODAY.NS,10.2
 Media,Network 18,NETWORK18.NS,8.9
+Media,PVR INOX,PVRINOX.NS,
 Metal,Tata Steel,TATASTEEL.NS,27.7
 Metal,JSW Steel,JSWSTEEL.NS,17.9
 Metal,National Aluminium,NATIONALUM.NS,5.7
-Nifty 50,HDFC Bank,HDFCBANK.NS,8.2
-Nifty 50,ICICI Bank,ICICIBANK.NS,6.3
-Nifty 50,State Bank of India,SBIN.NS,5.1
+Oil & Gas,Bharat Petroleum,BPCL.NS,22.3
 Oil & Gas,Indian Oil Corporation,IOC.NS,18.5
 Oil & Gas,Oil and Natural Gas,ONGC.NS,10.2
 Oil & Gas,Gas Authority of India,GAIL.NS,3.8
+Oil & Gas,Reliance Industries,RELIANCE.NS,45.2
 Pharma,Sun Pharmaceutical,SUNPHARMA.NS,18.5
 Pharma,Lupin Limited,LUPIN.NS,14.2
 Pharma,Cipla,CIPLA.NS,12.8
@@ -79,11 +113,15 @@ Pharma,Aurobindo Pharma,AUROPHARMA.NS,9.7
 Pharma,Divi's Laboratories,DIVISLAB.NS,8.3
 Pharma,IPCA Laboratories,IPCALAB.NS,6.9
 Pharma,Alembic Pharma,APLLTD.NS,5.8
+PSU Bank,State Bank of India,SBIN.NS,38.2
 PSU Bank,Central Bank,CENTRALBK.NS,18.5
 PSU Bank,Bank of Baroda,BANKBARODA.NS,15.3
 PSU Bank,Indian Bank,INDIANB.NS,12.1
 PSU Bank,Canara Bank,CANBK.NS,9.8
 PSU Bank,Union Bank,UNIONBANK.NS,4.2
+PSU Bank,Punjab National Bank,PNB.NS,
+Pvt Bank,HDFC Bank,HDFCBANK.NS,28.5
+Pvt Bank,ICICI Bank,ICICIBANK.NS,24.3
 Pvt Bank,Axis Bank,AXISBANK.NS,18.7
 Pvt Bank,Kotak Mahindra Bank,KOTAKBANK.NS,15.2
 Pvt Bank,IDFC First Bank,IDFCFIRSTB.NS,7.8
@@ -93,44 +131,6 @@ Realty,Sunteck Realty,SUNTECK.NS,18.3
 Realty,Oberoi Realty,OBEROIRLTY.NS,14.0
 Realty,Prestige Estates,PRESTIGE.NS,11.8
 Realty,Lodha Group,LODHA.NS,10.2
-Realty,Indiabulls Real Estate,IBREALEST.NS,8.6
+Realty,Equinox India Developments (formerly Indiabulls),EQUINOX.NS,8.6
 Realty,Brigade Enterprises,BRIGADE.NS,8.0
 Realty,Godrej Properties,GODREJPROP.NS,6.7
-Auto,Samvardhana Motherson,MOTHERSON.NS,
-Auto,Minda Corporation,MINDACORP.NS,
-Commodities,SAIL,SAIL.NS,
-Defence,Paras Defence,PARAS.NS,
-Energy,Tata Power,TATAPOWER.NS,
-Energy,Adani Green Energy,ADANIGREEN.NS,
-Fin Services,ICICI Lombard,ICICIGI.NS,
-Fin Services,Motilal Oswal Fin.,MOTILALOFS.NS,
-FMCG,Dabur India,DABUR.NS,
-FMCG,Varun Beverages,VARUNBEV.NS,
-Infra,IRB Infrastructure,IRB.NS,
-Infra,Adani Ports,ADANIPORTS.NS,
-IT,L&T Infotech,LTIM.NS,
-Media,Dish TV India,DISHTV.NS,
-Metal,Hindustan Zinc,HINDZINC.NS,
-Oil & Gas,Petronet LNG,PETRONET.NS,
-Pharma,Biocon,BIOCON.NS,
-Pharma,Glenmark Pharma,GLENMARK.NS,
-PSU Bank,Punjab National Bank,PNB.NS,
-Pvt Bank,Federal Bank,FEDERALBNK.NS,
-Realty,Mahindra Lifespace,MAHALXMI.NS,
-Nifty 50,Bharti Airtel,BHARTIARTL.NS,
-Auto,Apollo Tyres,APOLLOTYRE.NS,
-FMCG,United Spirits,MCDOWELL-N.NS,
-Infra,GMR Airports,GMRINFRA.NS,
-Pharma,Torrent Pharma,TORNTPHARM.NS,
-PSU Bank,Bank of India,BANKINDIA.NS,
-Commodities,JSW Energy,JSWENERGY.NS,
-Defence,Solar Industries,SOLARA.NS,
-Fin Services,SBI Cards,SBICARD.NS,
-FMCG,Titan Company,TITAN.NS,
-Media,PVR Inox,PVRINOX.NS,
-Metal,Jindal Stainless,JSL.NS,
-Pvt Bank,Bandhan Bank,BANDHANBNK.NS,
-Realty,Sobha,SOBHA.NS,
-Pharma,UPL Limited,UPL.NS,
-Auto,Escorts Kubota,ESCORTS.NS,
-Infra,Voltas,VOLTAS.NS,

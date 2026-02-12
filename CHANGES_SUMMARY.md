@@ -1,5 +1,13 @@
 # Changes Summary
 
+## Version 2.3.0 (Feb 2026) – Summary
+
+- **Sector-company:** 135-stock universe from Sector-company-v2.xlsx in project `Sector-Company.xlsx` and `sector_company.csv`; app shows dynamic count (134 unique symbols).
+- **Momentum – Trending:** Score = 50% Z(RSI) + 50% Z(CMF) in Momentum Ranking and Historical Rankings; Historical mode unchanged.
+- **UI/copy:** Market breadth and captions use dynamic stock count; Historical Rankings caption for T/T-1; Stock Screener Part 3 `df_stocks` fix. No other core logic changed.
+
+---
+
 ## Changes Made
 
 ### 1. ✅ ETF as Proxy Checkbox Default

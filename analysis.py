@@ -245,46 +245,62 @@ def analyze_all_sectors(sector_data_dict, benchmark_data, momentum_weights=None,
     
     df = pd.DataFrame(results)
     
-    # Calculate ranking-based momentum score
-    # Rank each indicator: Higher raw value = better = gets rank 1 (ascending=False)
-    # Historical: ADX_Z, RS_Rating, RSI, DI_Spread (CMF weight 0). Trending: CMF + RSI only.
+    # Calculate momentum score
+    # Trending mode: 50% Z(RSI) + 50% Z(CMF). Historical: rank-based with ADX_Z, RS_Rating, RSI, DI_Spread.
     num_sectors = len(df)
-    df['ADX_Z_Rank'] = df['ADX_Z'].rank(ascending=False, method='min')  # Higher ADX_Z = stronger trend = rank 1
-    df['RS_Rating_Rank'] = df['RS_Rating'].rank(ascending=False, method='min')  # Higher RS = outperforming = rank 1
-    df['RSI_Rank'] = df['RSI'].rank(ascending=False, method='min')  # Higher RSI = stronger momentum = rank 1
-    df['DI_Spread_Rank'] = df['DI_Spread'].rank(ascending=False, method='min')  # Higher DI spread = bullish = rank 1
-    if momentum_weights.get('CMF', 0) != 0 and 'CMF' in df.columns:
-        df['CMF_Rank'] = df['CMF'].rank(ascending=False, method='min')  # Higher CMF = money flow in = rank 1
-    
-    # Calculate weighted average rank (lower = better); only include keys with non-zero weight
     total_weight = sum(momentum_weights.values())
     if total_weight <= 0:
         total_weight = 100.0
-    rank_components = [
-        ('ADX_Z', 'ADX_Z_Rank'),
-        ('RS_Rating', 'RS_Rating_Rank'),
-        ('RSI', 'RSI_Rank'),
-        ('DI_Spread', 'DI_Spread_Rank'),
-        ('CMF', 'CMF_Rank'),
-    ]
-    df['Weighted_Avg_Rank'] = 0.0
-    for key, rank_col in rank_components:
-        w = momentum_weights.get(key, 0)
-        if w != 0 and rank_col in df.columns:
-            df['Weighted_Avg_Rank'] = df['Weighted_Avg_Rank'] + (df[rank_col] * w / total_weight)
-    
-    # Scale to 1-10 where 10 = best momentum (lowest weighted rank), 1 = worst momentum (highest weighted rank)
-    # Formula: Score = 10 - ((weighted_rank - 1) / (num_sectors - 1)) * 9
-    # This maps rank 1 -> score 10, rank N -> score 1
-    if num_sectors > 1:
-        min_rank = df['Weighted_Avg_Rank'].min()
-        max_rank = df['Weighted_Avg_Rank'].max()
-        if max_rank > min_rank:
-            df['Momentum_Score'] = 10 - ((df['Weighted_Avg_Rank'] - min_rank) / (max_rank - min_rank)) * 9
+    use_trending_z = (
+        momentum_weights.get('CMF', 0) != 0
+        and momentum_weights.get('RSI', 0) != 0
+        and momentum_weights.get('ADX_Z', 0) == 0
+        and momentum_weights.get('RS_Rating', 0) == 0
+        and momentum_weights.get('DI_Spread', 0) == 0
+    )
+    if use_trending_z and 'CMF' in df.columns and num_sectors > 1:
+        # Trending: 50% Z-score of RSI + 50% Z-score of CMF (cross-sectional), then scale to 1-10
+        rsi_mean, rsi_std = df['RSI'].mean(), df['RSI'].std()
+        cmf_mean, cmf_std = df['CMF'].mean(), df['CMF'].std()
+        rsi_z = (df['RSI'] - rsi_mean) / rsi_std if rsi_std and not pd.isna(rsi_std) else pd.Series(0.0, index=df.index)
+        cmf_z = (df['CMF'] - cmf_mean) / cmf_std if cmf_std and not pd.isna(cmf_std) else pd.Series(0.0, index=df.index)
+        rsi_z = rsi_z.fillna(0)
+        cmf_z = cmf_z.fillna(0)
+        raw_score = 0.5 * rsi_z + 0.5 * cmf_z
+        rmin, rmax = raw_score.min(), raw_score.max()
+        if rmax > rmin:
+            df['Momentum_Score'] = 1 + (raw_score - rmin) / (rmax - rmin) * 9
         else:
-            df['Momentum_Score'] = 5.0  # All same score
+            df['Momentum_Score'] = 5.0
     else:
-        df['Momentum_Score'] = 5.0  # Single sector
+        # Rank-based (Historical or mixed weights)
+        df['ADX_Z_Rank'] = df['ADX_Z'].rank(ascending=False, method='min')
+        df['RS_Rating_Rank'] = df['RS_Rating'].rank(ascending=False, method='min')
+        df['RSI_Rank'] = df['RSI'].rank(ascending=False, method='min')
+        df['DI_Spread_Rank'] = df['DI_Spread'].rank(ascending=False, method='min')
+        if momentum_weights.get('CMF', 0) != 0 and 'CMF' in df.columns:
+            df['CMF_Rank'] = df['CMF'].rank(ascending=False, method='min')
+        rank_components = [
+            ('ADX_Z', 'ADX_Z_Rank'),
+            ('RS_Rating', 'RS_Rating_Rank'),
+            ('RSI', 'RSI_Rank'),
+            ('DI_Spread', 'DI_Spread_Rank'),
+            ('CMF', 'CMF_Rank'),
+        ]
+        df['Weighted_Avg_Rank'] = 0.0
+        for key, rank_col in rank_components:
+            w = momentum_weights.get(key, 0)
+            if w != 0 and rank_col in df.columns:
+                df['Weighted_Avg_Rank'] = df['Weighted_Avg_Rank'] + (df[rank_col] * w / total_weight)
+        if num_sectors > 1:
+            min_rank = df['Weighted_Avg_Rank'].min()
+            max_rank = df['Weighted_Avg_Rank'].max()
+            if max_rank > min_rank:
+                df['Momentum_Score'] = 10 - ((df['Weighted_Avg_Rank'] - min_rank) / (max_rank - min_rank)) * 9
+            else:
+                df['Momentum_Score'] = 5.0
+        else:
+            df['Momentum_Score'] = 5.0
     
     # Calculate rank-based reversal score ONLY for sectors with Reversal_Status != 'No'
     # This ensures reversal scores are relative only among eligible reversal candidates
