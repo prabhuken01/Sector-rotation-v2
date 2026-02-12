@@ -5,6 +5,9 @@ Enhanced with configurable weights, ETF proxy, and improved aesthetics
 Version: 2.0.0 - Fixed reversal ranking logic (Jan 2026)
 """
 
+# Visible app version (shown on main page for deploy verification)
+APP_VERSION = "2.1.0"
+
 import os
 import streamlit as st
 import pandas as pd
@@ -3519,7 +3522,13 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
     from datetime import datetime as dt
     from company_symbols import SECTOR_COMPANIES
 
-    st.markdown("### 📊 Stock Screener (97 Stocks)")
+    # Universe from SECTOR_COMPANIES (count = number of stocks in data source)
+    universe = []
+    for sector, syms in SECTOR_COMPANIES.items():
+        for sym, info in syms.items():
+            universe.append((sector, sym, info.get("name", sym)))
+
+    st.markdown(f"### 📊 Stock Screener ({len(universe)} Stocks)")
     st.markdown("---")
 
     # Use last 10 trading days for dropdown, descending (today/latest first)
@@ -3540,12 +3549,6 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
     )
 
     end_dt = dt.combine(selected_date, dt.min.time())
-
-    # Universe from SECTOR_COMPANIES (97 stocks)
-    universe = []
-    for sector, syms in SECTOR_COMPANIES.items():
-        for sym, info in syms.items():
-            universe.append((sector, sym, info.get("name", sym)))
 
     if not universe:
         st.warning("⚠️ No companies found in Sector-Company universe.")
@@ -4392,6 +4395,7 @@ def main():
                     unsafe_allow_html=True)
         st.markdown('<div class="sub-header">Advanced Technical Analysis with Configurable Weights</div>', 
                     unsafe_allow_html=True)
+        st.caption(f"App version: **{APP_VERSION}**")
         
         # Sidebar controls
         try:
