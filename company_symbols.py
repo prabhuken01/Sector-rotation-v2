@@ -277,19 +277,20 @@ def load_sector_companies_from_excel(excel_file='Sector-Company.xlsx'):
         return None
 
 
-# Load order: sector_company.csv first, then Sector-Company.xlsx, then built-in
+# Load order: Sector-Company.xlsx first (canonical 135-stock universe), then
+# sector_company.csv as a fallback, then the built-in defaults.
 _loaded_source = None
-_csv_data = load_sector_companies_from_csv('sector_company.csv')
-if _csv_data is not None:
-    SECTOR_COMPANIES = _csv_data
-    _loaded_source = 'sector_company.csv'
-    print("[OK] Loaded sector-company data from sector_company.csv")
+_excel_data = load_sector_companies_from_excel('Sector-Company.xlsx')
+if _excel_data is not None:
+    SECTOR_COMPANIES = _excel_data
+    _loaded_source = 'Sector-Company.xlsx'
+    print("[OK] Loaded sector-company data from Sector-Company.xlsx")
 else:
-    _excel_data = load_sector_companies_from_excel('Sector-Company.xlsx')
-    if _excel_data is not None:
-        SECTOR_COMPANIES = _excel_data
-        _loaded_source = 'Sector-Company.xlsx'
-        print("[OK] Loaded sector-company data from Sector-Company.xlsx")
+    _csv_data = load_sector_companies_from_csv('sector_company.csv')
+    if _csv_data is not None:
+        SECTOR_COMPANIES = _csv_data
+        _loaded_source = 'sector_company.csv'
+        print("[OK] Loaded sector-company data from sector_company.csv")
 
 
 # ---------------------------------------------------------------------------

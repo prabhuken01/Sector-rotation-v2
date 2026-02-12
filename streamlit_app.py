@@ -6,7 +6,7 @@ Version: 2.0.0 - Fixed reversal ranking logic (Jan 2026)
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 
 import os
 import streamlit as st
@@ -2147,13 +2147,13 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
     ]
     
-    # Need at least 22 bars for 20 days + next 2d
-    if len(benchmark_data) < 22:
-        st.warning("⚠️ Need at least 22 trading days of data for the 10-day table.")
+    # Need a reasonable history window for the 10-day table
+    if len(benchmark_data) < 12:
+        st.warning("⚠️ Need at least 12 trading days of data for the 10-day table.")
     else:
-        # Use 10 days for performance (user preference: 7–10 days)
-        lookback_days = min(10, len(benchmark_data) - 2)
-        dates_10 = benchmark_data.index[-(lookback_days + 2):-2].tolist()  # last N dates, each has T+1 and T+2
+        # Use last 10 trading days including the most recent dates (T and T-1)
+        lookback_days = min(10, len(benchmark_data))
+        dates_10 = benchmark_data.index[-lookback_days:].tolist()
         table_rows = []
 
         # Load historical rankings cache (CSV) so we only compute missing dates
@@ -2182,11 +2182,9 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             nifty_fetched, _ = fetch_all_sectors_parallel(nifty_symbols_dict, end_date=end_dt, interval='1d')
             nifty_closes = {sym: d['Close'] for sym, d in nifty_fetched.items() if d is not None and len(d) >= 2}
             
-            # 2) All companies: fetch in parallel
+            # 2) All companies: fetch in parallel (same universe as Stock Screener)
             all_companies = []
             for sector, syms in SECTOR_COMPANIES.items():
-                if sector == 'Nifty 50':
-                    continue
                 for sym, info in syms.items():
                     all_companies.append((sector, sym, info.get('name', sym)))
             
