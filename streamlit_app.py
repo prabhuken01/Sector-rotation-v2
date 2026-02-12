@@ -2906,7 +2906,7 @@ def display_data_sources_tab():
                     "Weight (%)": st.column_config.NumberColumn("Weight (%)", width="small", format="%.1f"),
                 },
             )
-            st.caption("This list is loaded from sector_company.csv (or Sector-Company.xlsx if CSV is missing). No company appears in more than one sector.")
+            st.caption("This list is loaded from sector_company.csv (Sector-Company.xlsx used only if CSV is not found). No company appears in more than one sector.")
         else:
             st.info("No sector–company data loaded.")
     except Exception as e:

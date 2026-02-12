@@ -277,20 +277,20 @@ def load_sector_companies_from_excel(excel_file='Sector-Company.xlsx'):
         return None
 
 
-# Load order: Sector-Company.xlsx first (canonical 135-stock universe), then
-# sector_company.csv as a fallback, then the built-in defaults.
+# Load order: sector_company.csv first (canonical 135-stock from Sector-company-v2; always in repo),
+# then Sector-Company.xlsx if present, then the built-in defaults.
 _loaded_source = None
-_excel_data = load_sector_companies_from_excel('Sector-Company.xlsx')
-if _excel_data is not None:
-    SECTOR_COMPANIES = _excel_data
-    _loaded_source = 'Sector-Company.xlsx'
-    print("[OK] Loaded sector-company data from Sector-Company.xlsx")
+_csv_data = load_sector_companies_from_csv('sector_company.csv')
+if _csv_data is not None:
+    SECTOR_COMPANIES = _csv_data
+    _loaded_source = 'sector_company.csv'
+    print("[OK] Loaded sector-company data from sector_company.csv")
 else:
-    _csv_data = load_sector_companies_from_csv('sector_company.csv')
-    if _csv_data is not None:
-        SECTOR_COMPANIES = _csv_data
-        _loaded_source = 'sector_company.csv'
-        print("[OK] Loaded sector-company data from sector_company.csv")
+    _excel_data = load_sector_companies_from_excel('Sector-Company.xlsx')
+    if _excel_data is not None:
+        SECTOR_COMPANIES = _excel_data
+        _loaded_source = 'Sector-Company.xlsx'
+        print("[OK] Loaded sector-company data from Sector-Company.xlsx")
 
 
 # ---------------------------------------------------------------------------
