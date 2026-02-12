@@ -2897,8 +2897,16 @@ def display_data_sources_tab():
     # Sector / Company / Symbol / Weight (%) table so user knows the data source
     st.markdown("### 📋 Sector–Company data (used by all tabs)")
     try:
-        from company_symbols import get_sector_company_table
-        table_rows = get_sector_company_table()
+        from company_symbols import SECTOR_COMPANIES
+        table_rows = []
+        for sector in sorted(SECTOR_COMPANIES.keys()):
+            for symbol, info in SECTOR_COMPANIES[sector].items():
+                table_rows.append({
+                    'Sector': sector,
+                    'Company Name': info.get('name', symbol),
+                    'Symbol': symbol,
+                    'Weight (%)': info.get('weight', 0),
+                })
         if table_rows:
             df_sc = pd.DataFrame(table_rows)
             st.dataframe(
