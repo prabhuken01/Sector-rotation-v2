@@ -2684,16 +2684,10 @@ def display_sector_companies_tab():
     
     st.info("📋 **Top companies by weight in each sector/ETF** - These are the companies tracked for company-level analysis.")
     
-    from company_symbols import SECTOR_COMPANIES, load_sector_companies_from_excel
-    
-    # Try to load from Excel if available
-    excel_data = load_sector_companies_from_excel('Sector-Company.xlsx')
-    
-    # Use Excel data if available, otherwise use default
-    display_data = excel_data if excel_data is not None else SECTOR_COMPANIES
-    
-    if excel_data is not None:
-        st.success("✅ **Data loaded from Sector-Company.xlsx**")
+    from company_symbols import SECTOR_COMPANIES, SECTOR_COMPANY_EXCEL_PATH_USED
+    # Show what the app actually uses (SECTOR_COMPANIES); reload button updates it from Excel
+    display_data = SECTOR_COMPANIES
+    excel_loaded = SECTOR_COMPANY_EXCEL_PATH_USED
     
     # Download/Upload section
     st.markdown("#### 📥 Export / 📤 Import Company Mappings")
@@ -2723,9 +2717,19 @@ def display_sector_companies_tab():
         )
     
     with reload_col:
-        if excel_data is not None:
-            st.caption("✅ Using Sector-Company.xlsx")
-        else:
+        try:
+            from company_symbols import SECTOR_COMPANY_EXCEL_PATH_USED, reload_sector_companies_from_excel
+            path_display = SECTOR_COMPANY_EXCEL_PATH_USED or "Sector-Company.xlsx"
+            st.caption(f"✅ Loaded from: **{path_display}**")
+            if st.button("🔄 Reload from Excel", help="Re-read Sector-Company.xlsx and refresh company names (no restart needed)"):
+                ok, msg = reload_sector_companies_from_excel()
+                if ok:
+                    st.cache_data.clear()
+                    st.success("Reloaded. Refreshing...")
+                    st.rerun()
+                else:
+                    st.error(msg)
+        except Exception as e:
             st.caption("📁 Place Sector-Company.xlsx in project folder to load custom weights")
     
     st.markdown("---")
@@ -2906,7 +2910,7 @@ def display_data_sources_tab():
                     "Weight (%)": st.column_config.NumberColumn("Weight (%)", width="small", format="%.1f"),
                 },
             )
-            st.caption("This list is loaded from sector_company.csv (Sector-Company.xlsx used only if CSV is not found). No company appears in more than one sector.")
+            st.caption("This list is loaded from Sector-Company.xlsx (sheet 'Main'). **Restart the app** after editing the Excel to see updated company names. No company appears in more than one sector.")
         else:
             st.info("No sector–company data loaded.")
     except Exception as e:
@@ -3100,7 +3104,7 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None):
         st.warning("⚠️ Need at least 22 trading days of benchmark data for the 20-day table.")
         return
 
-    # Use the same universe as Sector-Company.xlsx / sector_company.csv (e.g. 135 stocks)
+    # Use the same universe as Sector-Company.xlsx Sheet2
     from company_symbols import SECTOR_COMPANIES
     universe_symbols = sorted({sym for sector_dict in SECTOR_COMPANIES.values() for sym in sector_dict.keys()})
     n_stocks = len(universe_symbols)
@@ -3521,7 +3525,7 @@ def _compute_screener_score(daily, hourly, w_rsi_dir=3.0, w_ma=2.0, w_vwap_above
 
 def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
     """
-    Detailed Stock Screener on sector-company universe (from Sector-Company.xlsx / sector_company.csv).
+    Detailed Stock Screener on sector-company universe (from Sector-Company.xlsx, sheet Main).
 
     Columns:
     - Company
@@ -3535,7 +3539,7 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
     - Final score (higher = stronger bullish setup)
     """
     from datetime import datetime as dt
-    from company_symbols import SECTOR_COMPANIES
+    from company_symbols import SECTOR_COMPANIES, SECTOR_COMPANY_EXCEL_PATH_USED
 
     # Universe from SECTOR_COMPANIES (count = number of stocks in data source)
     universe = []
@@ -3544,6 +3548,16 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
             universe.append((sector, sym, info.get("name", sym)))
 
     st.markdown(f"### 📊 Stock Screener ({len(universe)} Stocks)")
+    path_display = SECTOR_COMPANY_EXCEL_PATH_USED or "Sector-Company.xlsx"
+    st.caption(f"Company names from: **{path_display}** — use **Sector Companies** tab → **Reload from Excel** after editing.")
+    # Show TIINDIA.NS name so user can confirm Excel is applied
+    _ti_name = None
+    for _s, _syms in SECTOR_COMPANIES.items():
+        if "TIINDIA.NS" in _syms:
+            _ti_name = _syms["TIINDIA.NS"].get("name")
+            break
+    if _ti_name is not None:
+        st.caption(f"✓ Check: TIINDIA.NS is shown as **{_ti_name}** (from Excel).")
     st.markdown("---")
 
     # Use last 10 trading days for dropdown, descending (today/latest first)

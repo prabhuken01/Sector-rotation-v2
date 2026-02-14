@@ -2,9 +2,18 @@
 
 A comprehensive Python-based tool for analyzing NSE (National Stock Exchange) sector performance using advanced technical indicators and momentum/reversal scoring strategies. Powered by Streamlit with real-time data from Yahoo Finance.
 
-**📚 Documentation:**
-- [Implementation Guide](implementation_guide.md) - Technical details & troubleshooting
-- [Scoring Methodology](UNIFIED_SCORING_LOGIC.md) - Complete scoring logic explanation
+**Recommended setup (Option A):** Use one folder for app and data (e.g. `E:\Personal\Trading_Champion\Projects\Sector-rotation-v2\Sector-rotation-v2`). Keep **Sector-Company.xlsx** there with a single sheet named **Main**. Run the app from that folder so it finds the Excel in the same directory. Ensure the E: drive has the latest code (copy from repo or worktree).
+
+**📚 Documentation (read in order):**
+- **readme-1.md** (this file) – Overview and quick start
+- **EXCEL_ONE_PLACE_STEPS-2.md** – Excel setup: one sheet **Main**, run consolidate once
+- **PROJECT_FILES_AND_PURPOSE-3.md** – Files and purpose
+- **DEPLOYMENT-4.md** – Deploy to Streamlit Cloud / Railway / Render
+- **CHANGES_LOG-5.md** – Version history
+- **CHANGES_SUMMARY-6.md** – Feature summary
+- **CACHE_SETUP_GUIDE-7.md** – Cache setup
+- **UNIFIED_SCORING_LOGIC-8.md** – Scoring methodology
+- **implementation_guide-9.md** – Technical details & troubleshooting
 
 ## 🎯 Overview
 
@@ -81,11 +90,16 @@ cd Sector-rotation-v2
 pip install -r requirements.txt
 ```
 
-### Run Application
+### Option A – Run from your project folder (e.g. E: drive)
+1. Copy latest code to `E:\Personal\Trading_Champion\Projects\Sector-rotation-v2\Sector-rotation-v2` (or your chosen folder).
+2. Put **Sector-Company.xlsx** in that folder with one sheet named **Main** (see EXCEL_ONE_PLACE_STEPS-2.md; run `consolidate_sector_company_to_sheet2.py` once to remove Grok_Sector/Sheet1 and rename Sheet2 to Main).
+3. From that folder: `streamlit run streamlit_app.py`  
+   Opens at: `http://localhost:8501`
+
+### Run Application (generic)
 ```bash
 python -m streamlit run streamlit_app.py
 ```
-Opens at: `http://localhost:8501`
 
 ## 📱 UI Tabs Overview
 
@@ -141,7 +155,7 @@ Opens at: `http://localhost:8501`
 | **indicators.py** | Technical indicator calculations |
 | **data_fetcher.py** | Yahoo Finance data fetching with caching |
 | **config.py** | Configuration (sectors, ETFs, default weights) |
-| **company_symbols.py** | Company-to-sector mappings with weights |
+| **company_symbols.py** | Company-to-sector mappings (Excel sheet **Main**) |
 
 ## 📝 Recent Updates (Jan 2026)
 
@@ -154,6 +168,7 @@ Opens at: `http://localhost:8501`
 - ✅ Fixed momentum/reversal scoring logic
 - ✅ Added IST timezone support
 - ✅ Improved point-in-time historical calculations
+- ✅ Single source: Sector-Company.xlsx sheet **Main** (Grok_Sector, Sheet1 removed via consolidate script)
 
 ## 🔗 Quick Links
 
@@ -163,4 +178,4 @@ Opens at: `http://localhost:8501`
 
 ## 📧 Support
 
-For issues or suggestions, please check the implementation_guide.md for detailed methodology and troubleshooting.
+For issues or suggestions, see **implementation_guide-9.md** for detailed methodology and troubleshooting.

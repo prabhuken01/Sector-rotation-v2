@@ -102,8 +102,8 @@ Complete technical documentation for the NSE Sector Analysis Tool.
 ├── config.py                # Configuration constants
 ├── company_symbols.py       # Company mappings (120+ companies)
 ├── requirements.txt         # Python dependencies
-├── readme.md               # Quick start & overview
-└── implementation_guide.md  # This file
+├── readme-1.md               # Quick start & overview
+└── implementation_guide-9.md  # This file
 ```
 
 ### Key Classes & Functions

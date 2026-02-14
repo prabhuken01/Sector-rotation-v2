@@ -36,7 +36,7 @@
   - Shows summary statistics
 
 ### 3. ✅ Deployment Guide
-- **File**: `DEPLOYMENT.md`
+- **File**: `DEPLOYMENT-4.md`
 - **Content**: Comprehensive guide for deploying to free hosting platforms:
   - Streamlit Cloud (Recommended)
   - Railway
@@ -77,7 +77,7 @@
 
 ## Files Created
 
-1. `DEPLOYMENT.md` - Deployment guide for free hosting platforms
+1. `DEPLOYMENT-4.md` - Deployment guide for free hosting platforms
 2. `CHANGES_SUMMARY.md` - This file
 
 ## Testing Recommendations
@@ -92,7 +92,7 @@
    - Check that top 2 stocks are displayed with technical parameters
 
 2. **Deployment Testing**:
-   - Follow `DEPLOYMENT.md` guide
+   - Follow `DEPLOYMENT-4.md` guide
    - Deploy to Streamlit Cloud (recommended)
    - Test all features in deployed environment
 
@@ -106,7 +106,7 @@
 ## Next Steps
 
 1. Test the application locally
-2. Deploy to Streamlit Cloud following `DEPLOYMENT.md`
+2. Deploy to Streamlit Cloud following `DEPLOYMENT-4.md`
 3. Share the deployed URL with users
 4. Monitor performance and user feedback
 

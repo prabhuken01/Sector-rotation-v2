@@ -3,8 +3,9 @@ Company Symbol Mappings for NSE Sectors
 Static mapping of top 8-10 companies by weight in each sector/ETF
 Weights are approximate based on latest index compositions
 """
+import os
 
-__all__ = ['SECTOR_COMPANIES', 'get_company_symbol_list', 'load_sector_companies_from_excel', 'load_sector_companies_from_csv', 'get_sector_company_table']
+__all__ = ['SECTOR_COMPANIES', 'SECTOR_COMPANY_EXCEL_PATH_USED', 'get_company_symbol_list', 'load_sector_companies_from_excel', 'load_sector_companies_from_csv', 'get_sector_company_table', 'reload_sector_companies_from_excel']
 
 # Top companies by weight in each sector/ETF
 SECTOR_COMPANIES = {
@@ -254,10 +255,10 @@ def load_sector_companies_from_csv(csv_file='sector_company.csv'):
         return None
 
 
-def load_sector_companies_from_excel(excel_file='Sector-Company.xlsx'):
+def load_sector_companies_from_excel(excel_file='Sector-Company.xlsx', sheet_name='Main'):
     """
-    Load sector-company mappings from Excel file.
-    Excel format: Sector | Company Name | Symbol | Weight(%)
+    Load sector-company mappings from Excel file (sheet named 'Main' by default).
+    Single source. Excel format: Sector | Company Name | Symbol | Weight(%)
     Blank Symbol rows are skipped; blank Weight treated as 0.
     Returns dict matching SECTOR_COMPANIES format, or None if file doesn't exist.
     """
@@ -266,7 +267,13 @@ def load_sector_companies_from_excel(excel_file='Sector-Company.xlsx'):
         import os
         if not os.path.exists(excel_file):
             return None
-        df = pd.read_excel(excel_file)
+        df = None
+        try:
+            df = pd.read_excel(excel_file, sheet_name=sheet_name)
+        except Exception:
+            df = pd.read_excel(excel_file, sheet_name=0)
+        if df is None or df.empty:
+            return None
         for col in ['Sector', 'Company Name', 'Symbol', 'Weight (%)']:
             if col not in df.columns:
                 print(f"[WARN] Excel missing column '{col}'; skipping load.")
@@ -277,20 +284,40 @@ def load_sector_companies_from_excel(excel_file='Sector-Company.xlsx'):
         return None
 
 
-# Load order: sector_company.csv first (canonical 135-stock from Sector-company-v2; always in repo),
-# then Sector-Company.xlsx if present, then the built-in defaults.
+# Single source: Sector-Company.xlsx. Path from config (one place to edit) or same folder as app.
 _loaded_source = None
-_csv_data = load_sector_companies_from_csv('sector_company.csv')
-if _csv_data is not None:
-    SECTOR_COMPANIES = _csv_data
-    _loaded_source = 'sector_company.csv'
-    print("[OK] Loaded sector-company data from sector_company.csv")
+_excel_path_used = None
+SECTOR_COMPANY_EXCEL_PATH_USED = None  # Set when Excel loads; used by UI to show which file was loaded
+try:
+    from config import SECTOR_COMPANY_EXCEL_PATH
+except Exception:
+    SECTOR_COMPANY_EXCEL_PATH = None
+if SECTOR_COMPANY_EXCEL_PATH:
+    _excel_path_used = SECTOR_COMPANY_EXCEL_PATH
 else:
-    _excel_data = load_sector_companies_from_excel('Sector-Company.xlsx')
+    # Resolve relative to this file's folder so the correct Excel is used regardless of cwd
+    _base = os.path.dirname(os.path.abspath(__file__))
+    _excel_path_used = os.path.join(_base, 'Sector-Company.xlsx')
+_excel_data = load_sector_companies_from_excel(_excel_path_used, sheet_name='Main')
+if _excel_data is not None:
+    SECTOR_COMPANIES = _excel_data
+    _loaded_source = "Sector-Company.xlsx (Main)"
+    SECTOR_COMPANY_EXCEL_PATH_USED = _excel_path_used
+    print("[OK] Loaded sector-company data from", _excel_path_used)
+else:
+    _excel_data = load_sector_companies_from_excel(_excel_path_used, sheet_name='Sheet2')
     if _excel_data is not None:
         SECTOR_COMPANIES = _excel_data
-        _loaded_source = 'Sector-Company.xlsx'
-        print("[OK] Loaded sector-company data from Sector-Company.xlsx")
+        _loaded_source = "Sector-Company.xlsx (Sheet2)"
+        SECTOR_COMPANY_EXCEL_PATH_USED = _excel_path_used
+        print("[OK] Loaded sector-company data from", _excel_path_used)
+    else:
+        _excel_data = load_sector_companies_from_excel(_excel_path_used, sheet_name=0)
+        if _excel_data is not None:
+            SECTOR_COMPANIES = _excel_data
+            _loaded_source = 'Sector-Company.xlsx (first sheet)'
+            SECTOR_COMPANY_EXCEL_PATH_USED = _excel_path_used
+            print("[OK] Loaded sector-company data from", _excel_path_used)
 
 
 # ---------------------------------------------------------------------------
@@ -324,3 +351,27 @@ try:
 except Exception:
     # F&O integration is best-effort only; never block app startup
     pass
+
+
+def reload_sector_companies_from_excel():
+    """
+    Re-read Sector-Company.xlsx and update SECTOR_COMPANIES in place.
+    Use after editing the Excel so the app shows new names without restart.
+    Returns (True, path) on success, (False, error_msg) on failure.
+    """
+    global SECTOR_COMPANIES, SECTOR_COMPANY_EXCEL_PATH_USED
+    try:
+        from config import SECTOR_COMPANY_EXCEL_PATH
+    except Exception:
+        SECTOR_COMPANY_EXCEL_PATH = None
+    path = SECTOR_COMPANY_EXCEL_PATH if SECTOR_COMPANY_EXCEL_PATH else os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Sector-Company.xlsx')
+    data = load_sector_companies_from_excel(path, sheet_name='Main')
+    if data is None:
+        data = load_sector_companies_from_excel(path, sheet_name='Sheet2')
+    if data is None:
+        data = load_sector_companies_from_excel(path, sheet_name=0)
+    if data is not None:
+        SECTOR_COMPANIES = data
+        SECTOR_COMPANY_EXCEL_PATH_USED = path
+        return (True, path)
+    return (False, "Sector-Company.xlsx not found or invalid")
