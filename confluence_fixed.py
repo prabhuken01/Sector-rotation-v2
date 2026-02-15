@@ -276,17 +276,22 @@ def analyze_stock_confluence(data_1h_or_entry, data_1d, entry_timeframe='2h'):
 
         tf_label = '2H' if entry_timeframe == '2h' else ('4H' if entry_timeframe == '4h' else '1D')
 
+        # Confirmation TF (not always 1D: in 4H+1H mode it is 1H conceptually; data_1d is still used)
         return {
             'current_price': round(float(price_entry), 2),
             'trend_entry': trend_entry,
             'trend_1d': trend_1d,
+            'trend_conf': trend_1d,
             'ma_alignment_entry': ma_align_entry,
             'ma_alignment_1d': ma_align_1d,
+            'ma_alignment_conf': ma_align_1d,
             'ma_crossover_entry': crossover_entry,
             'rsi_entry': round(float(rsi_e), 1),
             'rsi_entry_prev': round(float(rsi_e_prev), 1),
             'rsi_1d': round(float(rsi_d), 1),
             'rsi_1d_prev': round(float(rsi_d_prev), 1),
+            'rsi_conf': round(float(rsi_d), 1),
+            'rsi_conf_prev': round(float(rsi_d_prev), 1),
             'divergence': divergence,
             'price_position': price_position,
             'recent_high': round(float(recent_high), 2) if recent_high else None,

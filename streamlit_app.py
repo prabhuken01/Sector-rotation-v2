@@ -4436,32 +4436,37 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
     )
     conf_tf_label = "1D + 2H" if "1D + 2H" in conf_tf else "4H + 1H"
     conf_tf_code = '2h' if "1D + 2H" in conf_tf else '4h'
+    # Column labels: entry TF and confirmation TF only (no "1D+2H" in column names)
+    # 1D+2H mode: Entry = 1D, Confirmation = 2H  |  4H+1H mode: Entry = 4H, Confirmation = 1H
+    if conf_tf_code == '2h':
+        entry_label, conf_label = '1D', '2H'
+    else:
+        entry_label, conf_label = '4H', '1H'
 
     # --- Logic explanation (V2: 10 factors, max ~20 pts) ---
-    entry_tf_short = "2H" if conf_tf_code == '2h' else "4H"
     st.markdown(f"""
-**How Confluence Scoring works** (entry TF: **{entry_tf_short}** + **1D** confirmation):
+**How Confluence Scoring works** (entry TF: **{entry_label}** + **{conf_label}** confirmation):
 
 Each stock is scored **separately for Bullish and Bearish** across **10 factors** on two timeframes.
 Opposing conditions get **negative (penalty)** points — a downtrending stock cannot rank high in the Bullish table.
 
 | # | Factor | Bullish: +Pts | Bullish: −Pts | Bearish: +Pts | Bearish: −Pts | Description |
 |---|--------|---------------|---------------|---------------|---------------|-------------|
-| 1 | **Trend ({entry_tf_short})** | Uptrend (HH/HL): **+4** | Downtrend: **−3** | Downtrend (LL/LH): **+4** | Uptrend: **−3** | Swing high/low on last 15 bars. **HH/HL** = at least 3 successive higher highs and higher lows. **LL/LH** = lower lows and lower highs. |
-| 2 | **Trend (1D)** | Uptrend: **+3** | Downtrend: **−2** | Downtrend: **+3** | Uptrend: **−2** | Daily trend confirms or contradicts entry-TF signal. |
-| 3 | **MA Align ({entry_tf_short})** | Price>20>50 DMA: **+3** | Bearish: **−2** | Price<20<50 DMA: **+3** | Bullish: **−2** | Price above/below 20 and 50 DMA on entry TF. |
-| 4 | **MA Align (1D)** | Bullish: **+2** | Bearish: **−1** | Bearish: **+2** | Bullish: **−1** | Same on daily. |
+| 1 | **Trend ({entry_label})** | Uptrend (HH/HL): **+4** | Downtrend: **−3** | Downtrend (LL/LH): **+4** | Uptrend: **−3** | Swing high/low on last 15 bars. **HH/HL** = at least 3 successive higher highs and higher lows. **LL/LH** = lower lows and lower highs. |
+| 2 | **Trend ({conf_label})** | Uptrend: **+3** | Downtrend: **−2** | Downtrend: **+3** | Uptrend: **−2** | Confirmation TF validates or contradicts entry signal. |
+| 3 | **MA Align ({entry_label})** | Price>20>50 DMA: **+3** | Bearish: **−2** | Price<20<50 DMA: **+3** | Bullish: **−2** | Price above/below 20 and 50 DMA on entry TF. |
+| 4 | **MA Align ({conf_label})** | Bullish: **+2** | Bearish: **−1** | Bearish: **+2** | Bullish: **−1** | Same on confirmation TF. |
 | 5 | **Price Position** | Near Low: **+2** | Near High: **−1** | Near High: **+3** | Near Low: **−2** | **Near High** = within 2% of 20-bar high (ideal SHORT at LH). **Near Low** = within 2% of 20-bar low (ideal BUY at HL). Bearish at Near Low = too late. |
-| 6 | **RSI ({entry_tf_short})** | Rising 40–70: **+2**; OB: **−1** | Falling: **−0.5** | At LH: 50–70 ↓: **+2.5**; else context | At LH oversold: **−1.5** | Bullish: rising RSI in 40–70. Bearish: at resistance want RSI 50–70 turning down, not oversold. |
-| 7 | **RSI (1D)** | Rising 40–70: **+1.5** | OB: **−0.5** | Falling 30–60: **+1.5** | OS: **−0.5** | Daily RSI confirmation. |
-| 8 | **MA Crossover ({entry_tf_short})** | Bullish X: **+1.5** | Bearish X: **−1** | Bearish X: **+1.5** | Bullish X: **−1** | 20/50 DMA within 1.5% = crossover forming. |
+| 6 | **RSI ({entry_label})** | Rising 40–70: **+2**; OB: **−1** | Falling: **−0.5** | At LH: 50–70 ↓: **+2.5**; else context | At LH oversold: **−1.5** | Bullish: rising RSI in 40–70. Bearish: at resistance want RSI 50–70 turning down, not oversold. |
+| 7 | **RSI ({conf_label})** | Rising 40–70: **+1.5** | OB: **−0.5** | Falling 30–60: **+1.5** | OS: **−0.5** | Confirmation TF RSI. |
+| 8 | **MA Crossover ({entry_label})** | Bullish X: **+1.5** | Bearish X: **−1** | Bearish X: **+1.5** | Bullish X: **−1** | 20/50 DMA within 1.5% = crossover forming. |
 | 9 | **RSI Divergence** | Bullish div: **+1.5** | Bearish div: **−1** | Bearish div: **+1.5** | Bullish div: **−1** | Price vs RSI divergence on last 10 bars (e.g. price lower low, RSI higher low = bullish). |
 | 10 | **Volume** | High: **+1** | — | High at resistance: **+1.5** | — | Recent vol > 1.2× average. At resistance, high vol supports distribution (bearish). |
 
 **Max score ≈ 20 pts** per side. **≥ 12** = excellent, **≥ 9** = good/strong, **5–9** = moderate, **< 5** = weak/avoid. **Negative** = opposite setup.
 """)
 
-    st.info(f"Analyzing confluence: **{conf_tf_label}** (entry + 1D confirmation). This may take a few minutes...")
+    st.info(f"Analyzing confluence: **{conf_tf_label}** (entry **{entry_label}** + confirmation **{conf_label}**). This may take a few minutes...")
 
     stock_results_bullish = []
     stock_results_bearish = []
@@ -4473,7 +4478,7 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
         sector = row['Sector']
         company_name = row['Company Name']
 
-        status_text.text(f"Confluence ({conf_tf_label}+1D) for {company_name} ({idx+1}/{len(df_stocks)})...")
+        status_text.text(f"Confluence ({conf_tf_label}) for {company_name} ({idx+1}/{len(df_stocks)})...")
         progress_bar.progress((idx + 1) / len(df_stocks))
 
         try:
@@ -4508,18 +4513,31 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
             rsi_entry_disp = f"{rsi_e}" + (" ↑" if rsi_e > rsi_ep else (" ↓" if rsi_e < rsi_ep else ""))
             rsi_d = analysis_data['rsi_1d']
             rsi_dp = analysis_data['rsi_1d_prev']
-            rsi_1d_disp = f"{rsi_d}" + (" ↑" if rsi_d > rsi_dp else (" ↓" if rsi_d < rsi_dp else ""))
+            rsi_conf_disp = f"{rsi_d}" + (" ↑" if rsi_d > rsi_dp else (" ↓" if rsi_d < rsi_dp else ""))
+            # Column naming: entry_label/conf_label only (1D+2H → Trend (1D), Trend (2H) | 4H+1H → Trend (4H), Trend (1H))
+            # Data mapping: 1D+2H → entry=1D data (trend_1d), conf=2H data (trend_entry); 4H+1H → entry=4H (trend_entry), conf=1H (trend_1d)
+            trend_entry_val = analysis_data['trend_entry']
+            trend_conf_val = analysis_data['trend_1d']
+            ma_entry_val = analysis_data['ma_alignment_entry']
+            ma_conf_val = analysis_data['ma_alignment_1d']
+            entry_trend = trend_conf_val if entry_label == '1D' else trend_entry_val
+            conf_trend = trend_entry_val if conf_label == '2H' else trend_conf_val
+            entry_ma = ma_conf_val if entry_label == '1D' else ma_entry_val
+            conf_ma = ma_entry_val if conf_label == '2H' else ma_conf_val
+            entry_rsi = rsi_conf_disp if entry_label == '1D' else rsi_entry_disp
+            conf_rsi = rsi_entry_disp if conf_label == '2H' else rsi_conf_disp
 
             common = {
                 'Sector': sector,
                 'Symbol': symbol,
                 'Company': company_name,
-                f'Trend ({conf_tf_label})': analysis_data['trend_entry'],
-                'Trend (1D)': analysis_data['trend_1d'],
-                f'MA Align ({conf_tf_label})': analysis_data['ma_alignment_entry'],
-                f'RSI ({conf_tf_label})': rsi_entry_disp,
-                'RSI (1D)': rsi_1d_disp,
-                'Setup': analysis_data['ma_crossover_entry'],
+                f'Trend ({entry_label})': entry_trend,
+                f'Trend ({conf_label})': conf_trend,
+                f'MA Align ({entry_label})': entry_ma,
+                f'MA Align ({conf_label})': conf_ma,
+                f'RSI ({entry_label})': entry_rsi,
+                f'RSI ({conf_label})': conf_rsi,
+                f'Setup ({entry_label})': analysis_data['ma_crossover_entry'],
                 'Divergence': analysis_data['divergence'],
                 'Price Pos.': analysis_data.get('price_position', 'Unknown'),
             }
@@ -4549,10 +4567,10 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
         df_bearish['Rank'] = range(1, len(df_bearish) + 1)
 
         display_cols_conf = ['Rank', 'Sector', 'Symbol', 'Company',
-                             f'Trend ({conf_tf_label})', 'Trend (1D)',
-                             f'MA Align ({conf_tf_label})',
-                             f'RSI ({conf_tf_label})', 'RSI (1D)',
-                             'Setup', 'Divergence', 'Price Pos.',
+                             f'Trend ({entry_label})', f'Trend ({conf_label})',
+                             f'MA Align ({entry_label})', f'MA Align ({conf_label})',
+                             f'RSI ({entry_label})', f'RSI ({conf_label})',
+                             f'Setup ({entry_label})', 'Divergence', 'Price Pos.',
                              'Score', 'Description']
 
         # Top 8 Bullish
@@ -4566,7 +4584,7 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
         confluence_shortlist_symbols = set(df_bull8['Symbol'].tolist()) | set(df_bear8['Symbol'].tolist())
 
         # --- Display Bullish ---
-        st.markdown(f"### 🟢 Top 8 Bullish by Confluence ({conf_tf_label} + 1D)")
+        st.markdown(f"### 🟢 Top 8 Bullish by Confluence ({conf_tf_label})")
         st.caption("Score ≥ 12 = excellent, ≥ 9 = good. **Price Pos. 'Near Low'** = ideal BUY at HL support.")
 
         def _color_bull(val):
@@ -4598,14 +4616,14 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
                 r = df_bull8.iloc[i]
                 st.markdown(f"**{i+1}. {r['Company']} ({r['Symbol']})** — Score: **{r['Score']}**")
                 st.markdown(f"  - {r['Description']}")
-                st.markdown(f"  - Trend: {conf_tf_label}={r[f'Trend ({conf_tf_label})']}, 1D={r['Trend (1D)']}")
-                st.markdown(f"  - MA: {r[f'MA Align ({conf_tf_label})']}, RSI: {conf_tf_label}={r[f'RSI ({conf_tf_label})']}, 1D={r['RSI (1D)']}")
+                st.markdown(f"  - Trend: {entry_label}={r[f'Trend ({entry_label})']}, {conf_label}={r[f'Trend ({conf_label})']}")
+                st.markdown(f"  - MA: {r[f'MA Align ({entry_label})']}, {r[f'MA Align ({conf_label})']} | RSI: {r[f'RSI ({entry_label})']}, {r[f'RSI ({conf_label})']}")
                 if i < 2: st.markdown("---")
 
         st.markdown("---")
 
         # --- Display Bearish ---
-        st.markdown(f"### 🔴 Top 8 Bearish by Confluence ({conf_tf_label} + 1D)")
+        st.markdown(f"### 🔴 Top 8 Bearish by Confluence ({conf_tf_label})")
         st.caption("Score ≥ 12 = excellent, ≥ 9 = good. **Price Pos. 'Near High'** = ideal SHORT at LH resistance.")
 
         def _color_bear(val):
@@ -4637,8 +4655,8 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
                 r = df_bear8.iloc[i]
                 st.markdown(f"**{i+1}. {r['Company']} ({r['Symbol']})** — Score: **{r['Score']}**")
                 st.markdown(f"  - {r['Description']}")
-                st.markdown(f"  - Trend: {conf_tf_label}={r[f'Trend ({conf_tf_label})']}, 1D={r['Trend (1D)']}")
-                st.markdown(f"  - MA: {r[f'MA Align ({conf_tf_label})']}, RSI: {conf_tf_label}={r[f'RSI ({conf_tf_label})']}, 1D={r['RSI (1D)']}")
+                st.markdown(f"  - Trend: {entry_label}={r[f'Trend ({entry_label})']}, {conf_label}={r[f'Trend ({conf_label})']}")
+                st.markdown(f"  - MA: {r[f'MA Align ({entry_label})']}, {r[f'MA Align ({conf_label})']} | RSI: {r[f'RSI ({entry_label})']}, {r[f'RSI ({conf_label})']}")
                 if i < 2: st.markdown("---")
 
         # Key insights
@@ -4661,7 +4679,7 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
         if bear_too_late > 0:
             st.warning(f"⚠️ {bear_too_late} bearish setup(s) are at 'Near Low' — TOO LATE for SHORT (price already fell to LL).")
 
-        st.success(f"✅ Confluence analysis complete! Analyzed {len(stock_results_bullish)} stocks on {conf_tf_label} + 1D.")
+        st.success(f"✅ Confluence analysis complete! Analyzed {len(stock_results_bullish)} stocks on {conf_tf_label}.")
 
         # Interpretation guide (V2: max ~20 pts)
         with st.expander("ℹ️ Score Interpretation Guide (V2)"):
