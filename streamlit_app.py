@@ -2113,7 +2113,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     """
     Display historical rankings.
     
-    Primary content: date-wise table for the last 10 trading days with:
+    Primary content: date-wise table for the last 15 trading days with:
     - Market breadth: Advance/Total %
     - Stocks % above 10 DMA (Nifty 50)
     - Momentum Ranked #1 Sector
@@ -2146,9 +2146,9 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     hist_conf_tf_code = '2h' if "1D + 2H" in hist_conf_tf else '4h'
     hist_conf_tf_label = "1D + 2H" if "1D + 2H" in hist_conf_tf else "4H + 1H"
 
-    # --- Primary content: date-wise table (last 10 days) ---
-    st.markdown("#### 📋 Primary: Date-wise summary (MA+RSI+VWAP) – last 10 trading days")
-    st.caption("Scoring: MA+RSI+VWAP (1 pt each RSI 1W/1D/1H up, 1 pt each Price > 8/20/50 SMA, + VWAP). Includes T, T-1 when available; Next 1D % / Next 2D % may be blank for those rows.")
+    # --- Primary content: date-wise table (last 15 days) ---
+    st.markdown("#### 📋 Primary: Date-wise summary (MA+RSI+VWAP) – last 15 trading days")
+    st.caption("Scoring: MA+RSI+VWAP (1 pt each RSI 1W/1D/1H up, 1 pt each Price > 8/20/50 SMA, + VWAP). Last 15 days; Next 1D % / Next 2D % may be blank for latest rows.")
     NIFTY50_SYMBOLS = [
         'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
         'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
@@ -2162,12 +2162,12 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
     ]
     
-    # Need a reasonable history window for the 10-day table
-    if len(benchmark_data) < 12:
-        st.warning("⚠️ Need at least 12 trading days of data for the 10-day table.")
+    # Need a reasonable history window for the 15-day table
+    if len(benchmark_data) < 16:
+        st.warning("⚠️ Need at least 16 trading days of data for the 15-day table.")
     else:
-        # Use last 10 trading days including the most recent dates (T and T-1)
-        lookback_days = min(10, len(benchmark_data))
+        # Use last 15 trading days including the most recent dates (T and T-1)
+        lookback_days = min(15, len(benchmark_data))
         dates_10 = benchmark_data.index[-lookback_days:].tolist()
         table_rows = []
 
@@ -2187,7 +2187,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             except Exception:
                 pass
 
-        with st.spinner("Building 10-day historical table (Advance/Total %, sectors, bullish/bearish stocks)..."):
+        with st.spinner("Building 15-day historical table (Advance/Total %, sectors, bullish/bearish stocks)..."):
             progress_bar = st.progress(0)
             status_text = st.empty()
 
@@ -2580,7 +2580,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     f"Switch timeframe above to recompute ({hist_conf_tf})."
                 )
         else:
-            st.info("No rows computed for the 10-day table.")
+            st.info("No rows computed for the 15-day table.")
     
     st.markdown("---")
     st.markdown("#### 📈 Secondary: Sector evolution (Momentum & Reversal)")
