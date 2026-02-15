@@ -2138,9 +2138,9 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     # --- Confluence timeframe selector (must match Part 3: 1D+2H or 4H+1H) ---
     hist_conf_tf = st.radio(
         "Confluence timeframe for historical analysis:",
-        ["1D + 2H (default)", "4H + 1H"],
+        ["1D + 2H", "4H + 1H (default)"],
         horizontal=True,
-        index=0,
+        index=1,
         key="hist_conf_timeframe"
     )
     hist_conf_tf_code = '2h' if "1D + 2H" in hist_conf_tf else '4h'
@@ -2550,6 +2550,27 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             conf_bull_present = [c for c in conf_bull_cols if c in df_primary.columns]
             conf_bear_present = [c for c in conf_bear_cols if c in df_primary.columns]
 
+            def _color_breadth_rows(df_subset, breadth_cols):
+                """Return list of style lists for each row: color Advance/Total % and Stocks % above 10 DMA."""
+                def style_row(row):
+                    res = [''] * len(row)
+                    for col in breadth_cols:
+                        if col not in row.index:
+                            continue
+                        try:
+                            v = float(row[col])
+                            idx = list(row.index).index(col)
+                            if v > 60:
+                                res[idx] = 'background-color: #27AE60; color: #fff; font-weight: bold'
+                            elif v < 40:
+                                res[idx] = 'background-color: #E74C3C; color: #fff; font-weight: bold'
+                        except Exception:
+                            pass
+                    return res
+                return style_row
+
+            breadth_cols = [c for c in ['Advance/Total %', 'Stocks % above 10 DMA'] if c in df_primary.columns]
+
             if len(conf_bull_present) >= 4:
                 st.markdown(f"#### 🟢 Confluence Bullish #1/#2 ({hist_conf_tf_label}, Advance/Total, % 10 DMA, CMP)")
                 df_conf_bull = df_primary[conf_bull_present].sort_values('Date', ascending=False)
@@ -2558,7 +2579,11 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                 pct_cols_b = [c for c in ['Advance/Total %', 'Stocks % above 10 DMA', 'Conf Bull #1 1D %', 'Conf Bull #1 2D %', 'Conf Bull #1 3D %', 'Conf Bull #2 1D %', 'Conf Bull #2 2D %', 'Conf Bull #2 3D %'] if c in df_conf_bull.columns]
                 fmt = {c: '{:.0f}' for c in score_cols_b + cmp_cols_b}
                 fmt.update({c: '{:.1f}' for c in pct_cols_b})
-                st.dataframe(df_conf_bull.style.format(fmt, na_rep=''), use_container_width=True, hide_index=True)
+                style_bull = _color_breadth_rows(df_conf_bull, breadth_cols)
+                st.dataframe(
+                    df_conf_bull.style.apply(style_bull, axis=1).format(fmt, na_rep=''),
+                    use_container_width=True, hide_index=True
+                )
 
             if len(conf_bear_present) >= 4:
                 st.markdown(f"#### 🔴 Confluence Bearish #1/#2 ({hist_conf_tf_label}, Advance/Total, % 10 DMA, CMP)")
@@ -2568,7 +2593,11 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                 pct_cols_be = [c for c in ['Advance/Total %', 'Stocks % above 10 DMA', 'Conf Bear #1 1D %', 'Conf Bear #1 2D %', 'Conf Bear #1 3D %', 'Conf Bear #2 1D %', 'Conf Bear #2 2D %', 'Conf Bear #2 3D %'] if c in df_conf_bear.columns]
                 fmt = {c: '{:.0f}' for c in score_cols_be + cmp_cols_be}
                 fmt.update({c: '{:.1f}' for c in pct_cols_be})
-                st.dataframe(df_conf_bear.style.format(fmt, na_rep=''), use_container_width=True, hide_index=True)
+                style_bear = _color_breadth_rows(df_conf_bear, breadth_cols)
+                st.dataframe(
+                    df_conf_bear.style.apply(style_bear, axis=1).format(fmt, na_rep=''),
+                    use_container_width=True, hide_index=True
+                )
 
             if len(conf_bull_present) >= 4 or len(conf_bear_present) >= 4:
                 st.caption(
@@ -4426,12 +4455,12 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
         generate_entry_description,
     )
 
-    # --- Timeframe selector: 1D+2H (swing/position) or 4H+1H (day/short-term) ---
+    # --- Timeframe selector: 1D+2H (swing/position) or 4H+1H (day/short-term), default 4H+1H ---
     conf_tf = st.radio(
         "Select confluence analysis:",
-        ["1D + 2H (default)", "4H + 1H"],
+        ["1D + 2H", "4H + 1H (default)"],
         horizontal=True,
-        index=0,
+        index=1,
         key="conf_timeframe"
     )
     conf_tf_label = "1D + 2H" if "1D + 2H" in conf_tf else "4H + 1H"
