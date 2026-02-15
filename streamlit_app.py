@@ -2135,9 +2135,20 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         return (mw.get('CMF', 0) != 0 and mw.get('RSI', 0) != 0 and
                 mw.get('ADX_Z', 0) == 0 and mw.get('RS_Rating', 0) == 0 and mw.get('DI_Spread', 0) == 0)
     
+    # --- Confluence timeframe selector (affects confluence columns in the table) ---
+    hist_conf_tf = st.radio(
+        "Confluence timeframe for historical analysis:",
+        ["2H", "1D (Daily)"],
+        horizontal=True,
+        index=0,
+        key="hist_conf_timeframe"
+    )
+    hist_conf_tf_code = '2h' if hist_conf_tf == "2H" else '1d'
+    hist_conf_tf_label = "2H" if hist_conf_tf == "2H" else "Daily"
+
     # --- Primary content: date-wise table (last 10 days) ---
-    st.markdown("#### 📋 Primary: Date-wise summary (last 10 trading days)")
-    st.caption("Includes the most recent dates (T, T-1) when available; Next 1D % / Next 2D % may be blank for those rows.")
+    st.markdown("#### 📋 Primary: Date-wise summary (MA+RSI+VWAP) – last 10 trading days")
+    st.caption("Scoring: MA+RSI+VWAP (1 pt each RSI 1W/1D/1H up, 1 pt each Price > 8/20/50 SMA, + VWAP). Includes T, T-1 when available; Next 1D % / Next 2D % may be blank for those rows.")
     NIFTY50_SYMBOLS = [
         'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
         'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
@@ -2163,7 +2174,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         # Load historical rankings cache (CSV) so we only compute missing dates
         cache_dir = 'data_cache'
         os.makedirs(cache_dir, exist_ok=True)
-        cache_path = os.path.join(cache_dir, 'historical_rankings_cache_v2.csv')
+        cache_path = os.path.join(cache_dir, f'historical_rankings_cache_v6_{hist_conf_tf_code}.csv')
         cache_by_date = {}
         if os.path.isfile(cache_path):
             try:
@@ -2200,6 +2211,18 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                 if d is not None and len(d) >= 14:
                     company_data[sym] = {'sector': sector, 'name': name, 'data': d}
             
+            # Column names for confluence section (bullish + bearish, 1D/2D/3D)
+            _CONF_COLS_ALL = [
+                'Conf Bull #1', 'Conf Bull #1 Dir', 'Conf Bull #1 Score',
+                'Conf Bull #1 1D %', 'Conf Bull #1 2D %', 'Conf Bull #1 3D %',
+                'Conf Bull #2', 'Conf Bull #2 Dir', 'Conf Bull #2 Score',
+                'Conf Bull #2 1D %', 'Conf Bull #2 2D %', 'Conf Bull #2 3D %',
+                'Conf Bear #1', 'Conf Bear #1 Dir', 'Conf Bear #1 Score',
+                'Conf Bear #1 1D %', 'Conf Bear #1 2D %', 'Conf Bear #1 3D %',
+                'Conf Bear #2', 'Conf Bear #2 Dir', 'Conf Bear #2 Score',
+                'Conf Bear #2 1D %', 'Conf Bear #2 2D %', 'Conf Bear #2 3D %',
+            ]
+
             total_dates = len(dates_10)
             for di, date_t in enumerate(dates_10):
                 progress_bar.progress((di + 1) / total_dates)
@@ -2310,7 +2333,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     try:
                         d = rec['data']
                         idx = d.index.get_indexer([date_t], method='ffill')[0]
-                        if idx < 59 or idx + 2 >= len(d):
+                        if idx < 59:
                             continue
                         subset = d.iloc[: idx + 1]
                         hourly = company_hourly.get(sym) if company_hourly else None
@@ -2326,7 +2349,8 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                         c0 = d['Close'].iloc[idx]
                         r1 = (d['Close'].iloc[idx + 1] / c0 - 1) * 100 if idx + 1 < len(d) else None
                         r2 = (d['Close'].iloc[idx + 2] / c0 - 1) * 100 if idx + 2 < len(d) else None
-                        out.append((sector, name, r1, r2))
+                        r3 = (d['Close'].iloc[idx + 3] / c0 - 1) * 100 if idx + 3 < len(d) else None
+                        out.append((sector, name, r1, r2, r3))
                     return out
 
                 if screener_list:
@@ -2347,11 +2371,66 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     row['Bearish #2 Stock'] = b2[1][1] if len(b2) >= 2 else ''
                     row['Bearish #2 Next 1D %'] = round(b2[1][2], 1) if len(b2) >= 2 and b2[1][2] is not None else None
                     row['Bearish #2 Next 2D %'] = round(b2[1][3], 1) if len(b2) >= 2 and b2[1][3] is not None else None
+                    # Confluence table: bullish #1/#2 and bearish #1/#2 by real confluence scoring
+                    confluence_list = []
+                    confluence_details = {}  # sym -> details dict
+                    for (sym, sector, name, _s, d, _idx) in screener_list:
+                        if hist_conf_tf_code == '1d':
+                            # Use daily subset for 1D confluence
+                            conf_data = d.iloc[: _idx + 1] if _idx + 1 <= len(d) else d
+                        else:
+                            # Use hourly data for 2H confluence
+                            conf_data = company_hourly.get(sym) if company_hourly else None
+                        c_score, c_details = _compute_confluence_score(conf_data, timeframe=hist_conf_tf_code)
+                        if c_score is not None:
+                            confluence_list.append((sym, sector, name, c_score, d, _idx))
+                            if c_details:
+                                confluence_details[sym] = c_details
+                    if confluence_list:
+                        confluence_list.sort(key=lambda x: x[3], reverse=True)
+                        # Bullish: top 2 by score
+                        conf_bull2 = confluence_list[:2]
+                        cb_ret = next_returns_from_list(conf_bull2)
+                        # Bearish: bottom 2 by score (reversed so #1 = lowest)
+                        conf_bear2 = confluence_list[-2:][::-1] if len(confluence_list) >= 2 else confluence_list[-2:]
+                        cr_ret = next_returns_from_list(conf_bear2)
+
+                        # Bullish #1
+                        row['Conf Bull #1'] = cb_ret[0][1] if len(cb_ret) >= 1 else ''
+                        row['Conf Bull #1 Dir'] = confluence_details.get(conf_bull2[0][0], {}).get('Direction', '') if len(conf_bull2) >= 1 else ''
+                        row['Conf Bull #1 Score'] = conf_bull2[0][3] if len(conf_bull2) >= 1 else None
+                        row['Conf Bull #1 1D %'] = round(cb_ret[0][2], 1) if len(cb_ret) >= 1 and cb_ret[0][2] is not None else None
+                        row['Conf Bull #1 2D %'] = round(cb_ret[0][3], 1) if len(cb_ret) >= 1 and cb_ret[0][3] is not None else None
+                        row['Conf Bull #1 3D %'] = round(cb_ret[0][4], 1) if len(cb_ret) >= 1 and cb_ret[0][4] is not None else None
+                        # Bullish #2
+                        row['Conf Bull #2'] = cb_ret[1][1] if len(cb_ret) >= 2 else ''
+                        row['Conf Bull #2 Dir'] = confluence_details.get(conf_bull2[1][0], {}).get('Direction', '') if len(conf_bull2) >= 2 else ''
+                        row['Conf Bull #2 Score'] = conf_bull2[1][3] if len(conf_bull2) >= 2 else None
+                        row['Conf Bull #2 1D %'] = round(cb_ret[1][2], 1) if len(cb_ret) >= 2 and cb_ret[1][2] is not None else None
+                        row['Conf Bull #2 2D %'] = round(cb_ret[1][3], 1) if len(cb_ret) >= 2 and cb_ret[1][3] is not None else None
+                        row['Conf Bull #2 3D %'] = round(cb_ret[1][4], 1) if len(cb_ret) >= 2 and cb_ret[1][4] is not None else None
+                        # Bearish #1
+                        row['Conf Bear #1'] = cr_ret[0][1] if len(cr_ret) >= 1 else ''
+                        row['Conf Bear #1 Dir'] = confluence_details.get(conf_bear2[0][0], {}).get('Direction', '') if len(conf_bear2) >= 1 else ''
+                        row['Conf Bear #1 Score'] = conf_bear2[0][3] if len(conf_bear2) >= 1 else None
+                        row['Conf Bear #1 1D %'] = round(cr_ret[0][2], 1) if len(cr_ret) >= 1 and cr_ret[0][2] is not None else None
+                        row['Conf Bear #1 2D %'] = round(cr_ret[0][3], 1) if len(cr_ret) >= 1 and cr_ret[0][3] is not None else None
+                        row['Conf Bear #1 3D %'] = round(cr_ret[0][4], 1) if len(cr_ret) >= 1 and cr_ret[0][4] is not None else None
+                        # Bearish #2
+                        row['Conf Bear #2'] = cr_ret[1][1] if len(cr_ret) >= 2 else ''
+                        row['Conf Bear #2 Dir'] = confluence_details.get(conf_bear2[1][0], {}).get('Direction', '') if len(conf_bear2) >= 2 else ''
+                        row['Conf Bear #2 Score'] = conf_bear2[1][3] if len(conf_bear2) >= 2 else None
+                        row['Conf Bear #2 1D %'] = round(cr_ret[1][2], 1) if len(cr_ret) >= 2 and cr_ret[1][2] is not None else None
+                        row['Conf Bear #2 2D %'] = round(cr_ret[1][3], 1) if len(cr_ret) >= 2 and cr_ret[1][3] is not None else None
+                        row['Conf Bear #2 3D %'] = round(cr_ret[1][4], 1) if len(cr_ret) >= 2 and cr_ret[1][4] is not None else None
+                    else:
+                        for k in _CONF_COLS_ALL:
+                            row[k] = None
                 else:
                     for k in ['Bullish #1 Stock', 'Bullish #1 Next 1D %', 'Bullish #1 Next 2D %',
                               'Bullish #2 Stock', 'Bullish #2 Next 1D %', 'Bullish #2 Next 2D %',
                               'Bearish #1 Stock', 'Bearish #1 Next 1D %', 'Bearish #1 Next 2D %',
-                              'Bearish #2 Stock', 'Bearish #2 Next 1D %', 'Bearish #2 Next 2D %']:
+                              'Bearish #2 Stock', 'Bearish #2 Next 1D %', 'Bearish #2 Next 2D %'] + _CONF_COLS_ALL:
                         row[k] = None
                 
                 table_rows.append(row)
@@ -2442,10 +2521,44 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             )
             st.dataframe(df_show_styled, use_container_width=True, hide_index=True)
             st.caption(
-                "**Scoring logic (same as Stock Screener):** Bullish #1/#2 and Bearish #1/#2 are ranked by the same "
-                "score: RSI direction (1W, 1D, 1H all up), price above 8/20/50 SMA, price vs VWAP (1H), and RSI divergence (2H). "
+                "**Scoring (MA+RSI+VWAP, same as Stock Screener):** Bullish #1/#2 and Bearish #1/#2 by same score: "
+                "1 pt each for RSI (1W/1D/1H) up, 1 pt each for Price > 8/20/50 SMA, + VWAP (1H). RSI divergence not used. "
                 "Higher score = stronger bullish setup; top 2 = Bullish, bottom 2 = Bearish."
             )
+            # Confluence table: Bullish #1/#2 and Bearish #1/#2 with 1D/2D/3D returns (2H analysis)
+            conf_bull_cols = ['Date',
+                              'Conf Bull #1', 'Conf Bull #1 Dir', 'Conf Bull #1 Score',
+                              'Conf Bull #1 1D %', 'Conf Bull #1 2D %', 'Conf Bull #1 3D %',
+                              'Conf Bull #2', 'Conf Bull #2 Dir', 'Conf Bull #2 Score',
+                              'Conf Bull #2 1D %', 'Conf Bull #2 2D %', 'Conf Bull #2 3D %']
+            conf_bear_cols = ['Date',
+                              'Conf Bear #1', 'Conf Bear #1 Dir', 'Conf Bear #1 Score',
+                              'Conf Bear #1 1D %', 'Conf Bear #1 2D %', 'Conf Bear #1 3D %',
+                              'Conf Bear #2', 'Conf Bear #2 Dir', 'Conf Bear #2 Score',
+                              'Conf Bear #2 1D %', 'Conf Bear #2 2D %', 'Conf Bear #2 3D %']
+
+            conf_bull_present = [c for c in conf_bull_cols if c in df_primary.columns]
+            conf_bear_present = [c for c in conf_bear_cols if c in df_primary.columns]
+
+            if len(conf_bull_present) >= 4:
+                st.markdown(f"#### 🟢 Confluence Bullish #1/#2 ({hist_conf_tf_label} analysis, 1D/2D/3D return)")
+                df_conf_bull = df_primary[conf_bull_present].sort_values('Date', ascending=False)
+                st.dataframe(df_conf_bull, use_container_width=True, hide_index=True)
+
+            if len(conf_bear_present) >= 4:
+                st.markdown(f"#### 🔴 Confluence Bearish #1/#2 ({hist_conf_tf_label} analysis, 1D/2D/3D return)")
+                df_conf_bear = df_primary[conf_bear_present].sort_values('Date', ascending=False)
+                st.dataframe(df_conf_bear, use_container_width=True, hide_index=True)
+
+            if len(conf_bull_present) >= 4 or len(conf_bear_present) >= 4:
+                st.caption(
+                    f"**Confluence scoring ({hist_conf_tf_label}):** Trend (HH/HL = W₁, Sideways = W₁×0.33, LL/LH = 0), "
+                    "Direction (Bullish = W₂, Mixed = W₂×0.33, Bearish = 0), "
+                    "RSI (rising+zone = W₃, rising = W₃×0.5), Setup (crossover+bullish = W₄), "
+                    "Divergence (bullish = W₅, bearish = −W₅×0.5). "
+                    "Dir = confluence direction. 1D/2D/3D % = next 1/2/3-day return. "
+                    f"Switch timeframe above to recompute ({hist_conf_tf})."
+                )
         else:
             st.info("No rows computed for the 10-day table.")
     
@@ -2964,34 +3077,19 @@ def find_swing_high_low(data, lookback_days=20):
 
 def check_fibonacci_golden_zone(price, fib_levels):
     """
-    Check if price is in Fibonacci golden zone (0.5 to 0.618).
+    Check if price is near Fibonacci 0.5 (golden level) within 2%.
     
     Returns:
         Tuple of (is_in_zone, fib_level, distance_pct)
-        fib_level: '0.5', '0.618', or None
-        distance_pct: % distance from fib level
+        fib_level: '0.5' or None
+        distance_pct: % distance from fib 0.5 level
     """
     fib_50 = fib_levels[0.5]
-    fib_618 = fib_levels[0.618]
-    
-    # Check if price is between 0.5 and 0.618
-    if fib_618 <= price <= fib_50:
-        # Calculate which level is closer
-        dist_to_50 = abs(price - fib_50) / fib_50 * 100
-        dist_to_618 = abs(price - fib_618) / fib_618 * 100
-        
-        if dist_to_50 < dist_to_618:
-            return True, '0.5', dist_to_50
-        else:
-            return True, '0.618', dist_to_618
     
     # Check if price is near 0.5 (within 2%)
-    if abs(price - fib_50) / fib_50 * 100 < 2.0:
-        return True, '0.5', abs(price - fib_50) / fib_50 * 100
-    
-    # Check if price is near 0.618 (within 2%)
-    if abs(price - fib_618) / fib_618 * 100 < 2.0:
-        return True, '0.618', abs(price - fib_618) / fib_618 * 100
+    dist = abs(price - fib_50) / fib_50 * 100
+    if dist < 2.0:
+        return True, '0.5', dist
     
     return False, None, None
 
@@ -3314,10 +3412,45 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None):
             column_config=col_config,
         )
 
+    # Nifty - Fibonacci Analysis (below breadth table)
+    st.markdown("---")
+    st.markdown("## 🔢 Nifty - Fibonacci Analysis")
+    st.markdown("---")
+    with st.spinner("Calculating Nifty Fibonacci levels..."):
+        try:
+            end_dt = benchmark_data.index[-1]
+            nifty_daily = fetch_sector_data('^NSEI', end_date=end_dt, interval='1d')
+            if nifty_daily is not None and len(nifty_daily) >= 20:
+                swing_high, swing_low, swing_high_date, swing_low_date = find_swing_high_low(nifty_daily, lookback_days=20)
+                fib_levels = calculate_fibonacci_levels(swing_high, swing_low)
+                current_nifty_price = nifty_daily['Close'].iloc[-1]
+                in_zone, fib_level, distance = check_fibonacci_golden_zone(current_nifty_price, fib_levels)
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown("### 📊 Swing Points (Last 20 Days)")
+                    st.write(f"**Swing High:** ₹{swing_high:,.2f} ({swing_high_date.strftime('%Y-%m-%d')})")
+                    st.write(f"**Swing Low:** ₹{swing_low:,.2f} ({swing_low_date.strftime('%Y-%m-%d')})")
+                    st.write(f"**Current Price:** ₹{current_nifty_price:,.2f}")
+                with col2:
+                    st.markdown("### 🔢 Fibonacci Levels")
+                    st.write(f"**0.236:** ₹{fib_levels[0.236]:,.2f}")
+                    st.write(f"**0.382:** ₹{fib_levels[0.382]:,.2f}")
+                    st.write(f"**0.500:** ₹{fib_levels[0.5]:,.2f} ⭐ Golden Level")
+                    st.write(f"**0.618:** ₹{fib_levels[0.618]:,.2f}")
+                    st.write(f"**0.786:** ₹{fib_levels[0.786]:,.2f}")
+                if in_zone:
+                    st.success(f"✅ Nifty is near Fib 0.5 (Golden Level) - Distance: {distance:.2f}%")
+                else:
+                    st.info(f"ℹ️ Nifty is not near Fib 0.5 level")
+            else:
+                st.warning("⚠️ Insufficient Nifty data for Fibonacci analysis")
+        except Exception as e:
+            st.error(f"❌ Error in Nifty Fibonacci analysis: {str(e)}")
+
 
 def display_stock_analysis_tab(analysis_date=None, benchmark_data=None, momentum_weights=None):
     """
-    Stock Screener: Top 15 bullish and Top 15 bearish stocks by momentum score.
+    Stock Screener: Top 10 bullish and Top 10 bearish stocks by momentum score.
     
     Args:
         analysis_date: Date for analysis
@@ -3328,7 +3461,7 @@ def display_stock_analysis_tab(analysis_date=None, benchmark_data=None, momentum
     from company_symbols import SECTOR_COMPANIES
     from indicators import calculate_rsi, calculate_adx, calculate_z_score
     
-    st.markdown("### 📊 Stock Screener: Top 15 Bullish & Top 15 Bearish")
+    st.markdown("### 📊 Stock Screener: Top 10 Bullish & Top 10 Bearish")
     st.markdown("---")
     
     if benchmark_data is None or len(benchmark_data) < 14:
@@ -3406,8 +3539,8 @@ def display_stock_analysis_tab(analysis_date=None, benchmark_data=None, momentum
     )
     df_c = df_c.sort_values('Score', ascending=True)
     
-    top15_bullish = df_c.head(15)
-    top15_bearish = df_c.tail(15).iloc[::-1]
+    top15_bullish = df_c.head(10)
+    top15_bearish = df_c.tail(10).iloc[::-1]
     
     display_cols = ['Sector', 'Symbol', 'Name', 'RS_Rating', 'RSI', 'ADX_Z', 'DI_Spread', 'Score']
     df_c['RS_Rating'] = df_c['rs_rating']
@@ -3428,13 +3561,13 @@ def display_stock_analysis_tab(analysis_date=None, benchmark_data=None, momentum
             res[idx] = 'background-color: #E74C3C; color: #fff; font-weight: bold'
         return res
     
-    st.markdown("#### 🟢 Top 15 Bullish (by Momentum Score)")
+    st.markdown("#### 🟢 Top 10 Bullish (by Momentum Score)")
     bull_cols = [c for c in display_cols if c in top15_bullish.columns]
     df_bull = top15_bullish[bull_cols].copy()
     df_bull_styled = df_bull.style.apply(lambda r: ['background-color: #d4edda; color: #000' if i < len(r) else '' for i in range(len(r))], axis=1)
     st.dataframe(df_bull, use_container_width=True, hide_index=True)
     
-    st.markdown("#### 🔴 Top 15 Bearish (by Momentum Score)")
+    st.markdown("#### 🔴 Top 10 Bearish (by Momentum Score)")
     bear_cols = [c for c in display_cols if c in top15_bearish.columns]
     df_bear = top15_bearish[bear_cols].copy()
     st.dataframe(df_bear, use_container_width=True, hide_index=True)
@@ -3443,10 +3576,10 @@ def display_stock_analysis_tab(analysis_date=None, benchmark_data=None, momentum
     st.success(f"✅ Screener complete! Analyzed {len(company_scores)} stocks from SECTOR_COMPANIES.")
 
 
-def _compute_screener_score(daily, hourly, w_rsi_dir=3.0, w_ma=2.0, w_vwap_above=2.0, w_vwap_approach=1.0, w_div=1.0):
+def _compute_screener_score(daily, hourly, w_vwap_above=1.0, w_vwap_approach=0.5):
     """
-    Same scoring as Stock Screener tab: RSI direction (1W/1D/1H), price vs 8/20/50 SMA,
-    price vs VWAP (1H), RSI divergence (2H). Returns score (higher = more bullish).
+    MA+RSI+VWAP scoring: 1 pt each for RSI (1W/1D/1H) up, 1 pt each for Price > 8/20/50 SMA,
+    plus VWAP (1H). RSI divergence not used. Returns score (higher = more bullish).
     """
     if daily is None or len(daily) < 60:
         return None
@@ -3484,7 +3617,6 @@ def _compute_screener_score(daily, hourly, w_rsi_dir=3.0, w_ma=2.0, w_vwap_above
         rsi_1d_dir = _dir(rsi_1d_val, rsi_1d_prev)
         rsi_1h_dir = _dir(rsi_1h_val, rsi_1h_prev)
         vwap_relation = "N/A"
-        rsi_div_2h = "No"
         if hourly is not None and len(hourly) > 0:
             last_day = hourly.index[-1].date()
             day_mask = hourly.index.date == last_day
@@ -3497,36 +3629,184 @@ def _compute_screener_score(daily, hourly, w_rsi_dir=3.0, w_ma=2.0, w_vwap_above
                 if vwap:
                     diff_pct = (price / vwap - 1) * 100
                     vwap_relation = "Above" if diff_pct > 0.5 else ("Approaching" if abs(diff_pct) <= 0.5 else "Below")
-            h2 = hourly.resample("2H").last()
-            if len(h2) >= 4:
-                rsi_2h = calculate_rsi(h2)
-                if len(rsi_2h.dropna()) >= 3:
-                    close = h2["Close"]
-                    c3, c2, c1 = float(close.iloc[-3]), float(close.iloc[-2]), float(close.iloc[-1])
-                    r3, r2, r1 = float(rsi_2h.iloc[-3]), float(rsi_2h.iloc[-2]), float(rsi_2h.iloc[-1])
-                    if (c1 < c2 < c3 and r1 > r2 > r3) or (c1 > c2 > c3 and r1 < r2 < r3):
-                        rsi_div_2h = "Yes"
 
         score = 0.0
-        if rsi_1w_dir == "Up" and rsi_1d_dir == "Up" and rsi_1h_dir == "Up":
-            score += w_rsi_dir
-        ma_count = sum(1 for c in [p_gt_8 == "Yes", p_gt_20 == "Yes", p_gt_50 == "Yes"] if c)
-        score += (ma_count / 3.0) * w_ma if ma_count > 0 else 0.0
+        if rsi_1w_dir == "Up":
+            score += 1.0
+        if rsi_1d_dir == "Up":
+            score += 1.0
+        if rsi_1h_dir == "Up":
+            score += 1.0
+        if p_gt_8 == "Yes":
+            score += 1.0
+        if p_gt_20 == "Yes":
+            score += 1.0
+        if p_gt_50 == "Yes":
+            score += 1.0
         if vwap_relation == "Above":
             score += w_vwap_above
         elif vwap_relation == "Approaching":
             score += w_vwap_approach
-        if rsi_div_2h == "Yes":
-            score += w_div
         return round(score, 2)
     except Exception:
         return None
 
 
+def _compute_confluence_score(data_input, w_trend=3.0, w_direction=3.0, w_rsi=2.0, w_setup=2.0, w_divergence=2.0, timeframe='2h'):
+    """
+    Confluence scoring (same logic as Part 3 Confluence in Stock Screener).
+    Supports timeframe='2h' (1H data resampled to 2H) or '1d' (daily data used directly).
+      Trend: HH/HL = +w_trend, Sideways = +w_trend*0.33, LL/LH = 0
+      Direction: Bullish = +w_direction, Mixed = +w_direction*0.33, Bearish = 0
+      RSI: rising+zone = +w_rsi, rising = +w_rsi*0.5
+      Setup: crossover+bullish = +w_setup
+      Divergence: bullish = +w_divergence, bearish = -w_divergence*0.5
+    Returns (score, details_dict) or (None, None) on failure.
+    """
+    if data_input is None:
+        return None, None
+    try:
+        if timeframe == '1d':
+            # Daily data used directly
+            data_tf = data_input
+            if len(data_tf) < 60:
+                return None, None
+            sub_data = data_tf  # for divergence: compare last 2 bars
+        else:
+            # 1H data resampled to 2H
+            if len(data_input) < 40:
+                return None, None
+            data_tf = data_input.resample('2h').agg({
+                'Open': 'first', 'High': 'max', 'Low': 'min',
+                'Close': 'last', 'Volume': 'sum'
+            }).dropna()
+            if len(data_tf) < 20:
+                return None, None
+            sub_data = data_input  # keep 1H for divergence sub-check
+
+        data_tf['DMA_20'] = data_tf['Close'].rolling(20).mean()
+        data_tf['DMA_50'] = data_tf['Close'].rolling(50).mean()
+
+        current_price = data_tf['Close'].iloc[-1]
+        dma_20 = data_tf['DMA_20'].iloc[-1]
+        dma_50 = data_tf['DMA_50'].iloc[-1]
+
+        # 1. TREND
+        recent_highs = data_tf['High'].tail(10).values
+        recent_lows = data_tf['Low'].tail(10).values
+        uptrend = downtrend = False
+        if len(recent_highs) >= 5:
+            hh = recent_highs[-1] > recent_highs[-3] > recent_highs[-5]
+            hl = recent_lows[-1] > recent_lows[-3] > recent_lows[-5]
+            uptrend = hh and hl
+        if len(recent_lows) >= 5:
+            ll = recent_lows[-1] < recent_lows[-3] < recent_lows[-5]
+            lh = recent_highs[-1] < recent_highs[-3] < recent_highs[-5]
+            downtrend = ll and lh
+
+        trend = "HH/HL (Uptrend)" if uptrend else ("LL/LH (Downtrend)" if downtrend else "Sideways")
+
+        # 2. DIRECTION
+        if pd.notna(dma_20) and pd.notna(dma_50):
+            if current_price > dma_20 > dma_50:
+                direction = "Bullish"
+            elif current_price < dma_20 < dma_50:
+                direction = "Bearish"
+            else:
+                direction = "Mixed"
+        else:
+            direction = "N/A"
+
+        # 3. RSI (on chosen timeframe)
+        rsi_series = calculate_rsi(data_tf)
+        rsi_current = rsi_series.iloc[-1] if not rsi_series.isna().all() else 50.0
+        rsi_prev = rsi_series.iloc[-2] if len(rsi_series) > 1 and not pd.isna(rsi_series.iloc[-2]) else rsi_current
+        rsi_rising = rsi_current > rsi_prev
+        rsi_in_zone = 40 <= rsi_current <= 60
+
+        # 4. SETUP: DMA crossover
+        if pd.notna(dma_20) and pd.notna(dma_50):
+            dma_diff_pct = abs((dma_20 - dma_50) / dma_50 * 100)
+            if dma_diff_pct < 2.0:
+                setup = "Crossover Setup"
+            elif dma_20 > dma_50:
+                setup = "20 DMA > 50 DMA"
+            else:
+                setup = "20 DMA < 50 DMA"
+        else:
+            setup = "N/A"
+
+        # 5. RSI DIVERGENCE
+        divergence = "None"
+        if timeframe == '1d':
+            # Daily: compare last 2 bars
+            if len(data_tf) >= 3:
+                p_prev = data_tf['Close'].iloc[-2]
+                rsi_prev_bar = rsi_series.iloc[-2] if len(rsi_series) > 1 and not pd.isna(rsi_series.iloc[-2]) else None
+                if rsi_prev_bar is not None:
+                    if current_price < p_prev and rsi_current > rsi_prev_bar:
+                        divergence = "Bullish"
+                    elif current_price > p_prev and rsi_current < rsi_prev_bar:
+                        divergence = "Bearish"
+        else:
+            # 2H: midpoint of current 2H bar from 1H sub-data
+            bar_start = data_tf.index[-1] - pd.Timedelta(hours=2)
+            current_sub = sub_data[sub_data.index >= bar_start]
+            if len(current_sub) >= 2:
+                mid = len(current_sub) // 2
+                if 0 < mid < len(current_sub):
+                    rsi_sub = calculate_rsi(current_sub)
+                    if len(rsi_sub) > mid and not pd.isna(rsi_sub.iloc[mid]):
+                        rsi_at_50 = rsi_sub.iloc[mid]
+                        p_start = current_sub['Close'].iloc[0]
+                        p_mid = current_sub['Close'].iloc[mid]
+                        if p_mid < p_start and rsi_at_50 > rsi_current:
+                            divergence = "Bullish"
+                        elif p_mid > p_start and rsi_at_50 < rsi_current:
+                            divergence = "Bearish"
+
+        # Weighted Score (same formula as Part 3 UI)
+        score = 0.0
+        if trend == "HH/HL (Uptrend)":
+            score += w_trend
+        elif trend != "LL/LH (Downtrend)":
+            score += w_trend * 0.33
+
+        if direction == "Bullish":
+            score += w_direction
+        elif direction != "Bearish":
+            score += w_direction * 0.33
+
+        if rsi_rising and rsi_in_zone:
+            score += w_rsi
+        elif rsi_rising:
+            score += w_rsi * 0.5
+
+        if setup == "Crossover Setup" and direction == "Bullish":
+            score += w_setup
+
+        if divergence == "Bullish":
+            score += w_divergence
+        elif divergence == "Bearish":
+            score -= w_divergence * 0.5
+
+        details = {
+            'Trend': trend,
+            'Direction': direction,
+            'RSI': f"{rsi_current:.1f}",
+            'Setup': setup,
+            'Divergence': divergence,
+        }
+        return score, details
+    except Exception:
+        return None, None
+
+
 def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
     """
-    Detailed Stock Screener on sector-company universe (from Sector-Company.xlsx, sheet Main).
+    Stock Screener (MA+RSI+VWAP) on sector-company universe (from Sector-Company.xlsx, sheet Main).
 
+    Scoring: 1 pt each for RSI (1W/1D/1H) up, 1 pt each for Price > 8/20/50 SMA, + VWAP (1H). RSI divergence not used.
     Columns:
     - Company
     - Price (closing at analysis date)
@@ -3583,13 +3863,10 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
         st.warning("⚠️ No companies found in Sector-Company universe.")
         return
 
-    # Scoring controls (simple sliders)
-    with st.expander("⚙️ Scoring weights (optional)", expanded=False):
-        w_rsi_dir = st.slider("Weight: RSI directions (1W/1D/1H all up)", 0.0, 5.0, 3.0, 0.5)
-        w_ma = st.slider("Weight: Price above 8/20/50 SMA", 0.0, 5.0, 2.0, 0.5)
-        w_vwap_above = st.slider("Weight: Price above VWAP (1H)", 0.0, 5.0, 2.0, 0.5)
-        w_vwap_approach = st.slider("Weight: Price approaching VWAP (1H)", 0.0, 5.0, 1.0, 0.5)
-        w_div = st.slider("Weight: RSI divergence (2H)", 0.0, 5.0, 1.0, 0.5)
+    # Scoring: MA+RSI+VWAP (1 pt each for RSI 1W/1D/1H up, 1 pt each for Price > 8/20/50 SMA; RSI divergence removed)
+    with st.expander("⚙️ Scoring weights (optional) – MA+RSI+VWAP", expanded=False):
+        w_vwap_above = st.slider("Weight: Price above VWAP (1H)", 0.0, 5.0, 1.0, 0.5)
+        w_vwap_approach = st.slider("Weight: Price approaching VWAP (1H)", 0.0, 5.0, 0.5, 0.5)
 
     results = []
     progress = st.progress(0.0)
@@ -3689,45 +3966,40 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
                         if bullish_div or bearish_div:
                             rsi_div_2h = "Yes"
 
-            # --- Final score ---
+            # --- Final score (MA+RSI+VWAP): 1 pt each for RSI 1W/1D/1H up, 1 pt each for Price > 8/20/50 SMA; RSI divergence not used
             score = 0.0
-
-            if rsi_1w_dir == "Up" and rsi_1d_dir == "Up" and rsi_1h_dir == "Up":
-                score += w_rsi_dir
-
-            ma_count = sum(
-                1 for cond in [
-                    (p_gt_8 == "Yes"),
-                    (p_gt_20 == "Yes"),
-                    (p_gt_50 == "Yes"),
-                ] if cond
-            )
-            score += (ma_count / 3.0) * w_ma if ma_count > 0 else 0.0
-
+            if rsi_1w_dir == "Up":
+                score += 1.0
+            if rsi_1d_dir == "Up":
+                score += 1.0
+            if rsi_1h_dir == "Up":
+                score += 1.0
+            if p_gt_8 == "Yes":
+                score += 1.0
+            if p_gt_20 == "Yes":
+                score += 1.0
+            if p_gt_50 == "Yes":
+                score += 1.0
             if vwap_relation == "Above":
                 score += w_vwap_above
             elif vwap_relation == "Approaching":
                 score += w_vwap_approach
-
-            if rsi_div_2h == "Yes":
-                score += w_div
 
             results.append({
                 "Sector": sector,
                 "Symbol": symbol,
                 "Company": name,
                 "Price": round(price, 2),
+                "Price > 50 SMA": p_gt_50,
+                "Price > 20 SMA": p_gt_20,
+                "Price > 8 SMA": p_gt_8,
                 "RSI (1W)": int(round(rsi_1w_val, 0)) if rsi_1w_val is not None else None,
                 "RSI (1W) Dir": rsi_1w_dir,
                 "RSI (1D)": int(round(rsi_1d_val, 0)) if rsi_1d_val is not None else None,
                 "RSI (1D) Dir": rsi_1d_dir,
                 "RSI (1H)": int(round(rsi_1h_val, 0)) if rsi_1h_val is not None else None,
                 "RSI (1H) Dir": rsi_1h_dir,
-                "Price > 8 SMA": p_gt_8,
-                "Price > 20 SMA": p_gt_20,
-                "Price > 50 SMA": p_gt_50,
                 "Price vs VWAP (1H)": vwap_relation,
-                "RSI divergence (2H)": rsi_div_2h,
                 "Final score": round(score, 2),
             })
         except Exception:
@@ -3741,10 +4013,10 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
         return
 
     df = pd.DataFrame(results)
-    df_sorted = df.sort_values("Final score", ascending=False)
+    df_sorted = df.sort_values(["Final score", "Symbol"], ascending=[False, True])
 
-    top_bullish = df_sorted.head(15)
-    top_bearish = df_sorted.tail(15).iloc[::-1]
+    top_bullish = df_sorted.head(10)
+    top_bearish = df_sorted.tail(10).iloc[::-1]
 
     def sentiment_color(score):
         if pd.isna(score):
@@ -3755,19 +4027,19 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
             return "🟡 Moderate"
         return "🟢 Strong"
 
-    st.markdown("#### 🟢 Top 15 Bullish")
+    st.markdown("#### 🟢 Top 10 Bullish")
     bull = top_bullish.copy()
     bull["Sentiment"] = bull["Final score"].apply(sentiment_color)
     st.dataframe(bull, use_container_width=True, hide_index=True)
 
-    st.markdown("#### 🔴 Top 15 Bearish")
+    st.markdown("#### 🔴 Top 10 Bearish")
     bear = top_bearish.copy()
     bear["Sentiment"] = bear["Final score"].apply(sentiment_color)
     st.dataframe(bear, use_container_width=True, hide_index=True)
 
     st.caption(
-        "**Scoring logic:** Same as Historical Rankings Bullish/Bearish picks. Score = RSI direction (1W, 1D, 1H all up) "
-        "+ price above 8/20/50 SMA + price vs VWAP (1H) + RSI divergence (2H). Higher score = stronger bullish; top 15 = Bullish, bottom 15 = Bearish."
+        "**Scoring (MA+RSI+VWAP):** Same as Historical Rankings. Score = 1 pt each RSI (1W/1D/1H) up + 1 pt each Price > 8/20/50 SMA + VWAP (1H). "
+        "**MA+RSI+VWAP:** 1 pt each for RSI (1W/1D/1H) up, 1 pt each for Price > 8/20/50 SMA, + VWAP (1H). RSI divergence not used. Tie-break: by Symbol. Top 10 = Bullish, bottom 10 = Bearish."
     )
 
     # DataFrame for Part 3 (Fibonacci) and Part 4 (Confluence): must have Symbol, Sector, Company Name
@@ -4010,256 +4282,116 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
         })
     
     # ============================================================
-    # PART 2: NIFTY - FIBONACCI ANALYSIS
+    # PART 3: INDIVIDUAL STOCK RANKING - CONFLUENCE ANALYSIS
     # ============================================================
-    st.markdown("## 🔢 PART 2: Nifty - Fibonacci Analysis")
+    st.markdown("## 🏆 PART 3: Individual Stock Ranking - Confluence Analysis")
     st.markdown("---")
-    
-    with st.spinner("Calculating Nifty Fibonacci levels..."):
-        try:
-            # Fetch daily Nifty data for last 20 days
-            nifty_daily = fetch_sector_data('^NSEI', end_date=analysis_date, interval='1d')
-            
-            if nifty_daily is not None and len(nifty_daily) >= 20:
-                # Find swing high and swing low based on day's HIGH and LOW
-                swing_high, swing_low, swing_high_date, swing_low_date = find_swing_high_low(nifty_daily, lookback_days=20)
-                
-                # Calculate Fibonacci levels
-                fib_levels = calculate_fibonacci_levels(swing_high, swing_low)
-                
-                # Current Nifty price
-                current_nifty_price = nifty_daily['Close'].iloc[-1]
-                
-                # Check if current price is in golden zone
-                in_zone, fib_level, distance = check_fibonacci_golden_zone(current_nifty_price, fib_levels)
-                
-                # Display Fibonacci analysis
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.markdown("### 📊 Swing Points (Last 20 Days)")
-                    st.write(f"**Swing High:** ₹{swing_high:,.2f} ({swing_high_date.strftime('%Y-%m-%d')})")
-                    st.write(f"**Swing Low:** ₹{swing_low:,.2f} ({swing_low_date.strftime('%Y-%m-%d')})")
-                    st.write(f"**Current Price:** ₹{current_nifty_price:,.2f}")
-                
-                with col2:
-                    st.markdown("### 🔢 Fibonacci Levels")
-                    st.write(f"**0.236:** ₹{fib_levels[0.236]:,.2f}")
-                    st.write(f"**0.382:** ₹{fib_levels[0.382]:,.2f}")
-                    st.write(f"**0.500:** ₹{fib_levels[0.5]:,.2f} ⭐")
-                    st.write(f"**0.618:** ₹{fib_levels[0.618]:,.2f} ⭐")
-                    st.write(f"**0.786:** ₹{fib_levels[0.786]:,.2f}")
-                
-                if in_zone:
-                    st.success(f"✅ Nifty is in Golden Zone (Fib {fib_level}) - Distance: {distance:.2f}%")
-                else:
-                    st.info(f"ℹ️ Nifty is not in Golden Zone. Nearest level: {fib_level if fib_level else 'N/A'}")
-            else:
-                st.warning("⚠️ Insufficient Nifty data for Fibonacci analysis")
-        except Exception as e:
-            st.error(f"❌ Error in Nifty Fibonacci analysis: {str(e)}")
-    
-    # ============================================================
-    # PART 3: INDIVIDUAL STOCK - FIBONACCI ANALYSIS
-    # ============================================================
-    st.markdown("## 📊 PART 3: Individual Stock - Fibonacci Analysis")
-    st.markdown("---")
-    st.info("Analyzing stocks for Fibonacci golden zone (0.5-0.618). This may take a few minutes...")
-    
-    fib_results = []
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    for idx, row in df_stocks.iterrows():
-        symbol = row['Symbol']
-        sector = row['Sector']
-        company_name = row['Company Name']
-        
-        status_text.text(f"Analyzing Fibonacci for {company_name} ({idx+1}/{len(df_stocks)})...")
-        progress_bar.progress((idx + 1) / len(df_stocks))
-        
-        try:
-            # Fetch 15-minute data (preferred timeframe)
-            # For day-end data after 4 PM, we'll use daily data and resample if needed
-            data_15m = fetch_sector_data(symbol, end_date=analysis_date, interval='15m')
-            
-            # If 15m not available, try daily and use it
-            if data_15m is None or len(data_15m) < 20:
-                data_daily = fetch_sector_data(symbol, end_date=analysis_date, interval='1d')
-                if data_daily is None or len(data_daily) < 20:
-                    continue
-                data_for_fib = data_daily
-            else:
-                data_for_fib = data_15m
-            
-            # Find swing high and swing low based on day's HIGH and LOW (last 20 days)
-            # For intraday data, we need to aggregate to daily first
-            if data_for_fib.index.freq is None or 'D' not in str(data_for_fib.index.freq):
-                # Resample to daily using HIGH and LOW
-                data_daily_agg = data_for_fib.resample('D').agg({
-                    'Open': 'first',
-                    'High': 'max',  # Day's high
-                    'Low': 'min',   # Day's low
-                    'Close': 'last',
-                    'Volume': 'sum'
-                }).dropna()
-            else:
-                data_daily_agg = data_for_fib
-            
-            if len(data_daily_agg) < 20:
-                continue
-            
-            # Find swing points
-            swing_high, swing_low, swing_high_date, swing_low_date = find_swing_high_low(data_daily_agg, lookback_days=20)
-            
-            # Calculate Fibonacci levels
-            fib_levels = calculate_fibonacci_levels(swing_high, swing_low)
-            
-            # Current stock price
-            current_price = data_daily_agg['Close'].iloc[-1]
-            
-            # Check if in golden zone (0.5-0.618)
-            in_zone, fib_level, distance = check_fibonacci_golden_zone(current_price, fib_levels)
-            
-            if in_zone:
-                # Calculate price range
-                fib_50 = fib_levels[0.5]
-                fib_618 = fib_levels[0.618]
-                price_range = f"₹{fib_618:,.2f} - ₹{fib_50:,.2f}"
-                
-                # Calculate % up from Fib 0.5 or % down from Fib 0.618
-                if fib_level == '0.5':
-                    pct_from_fib = ((current_price - fib_50) / fib_50) * 100
-                    remark = f"{price_range} | {pct_from_fib:+.2f}% from Fib 0.5"
-                else:
-                    pct_from_fib = ((current_price - fib_618) / fib_618) * 100
-                    remark = f"{price_range} | {pct_from_fib:+.2f}% from Fib 0.618"
-                
-                # Find last crossing time
-                last_crossing = find_last_crossing_time(data_daily_agg, fib_levels[0.5] if fib_level == '0.5' else fib_levels[0.618], current_price)
-                
-                # Fetch 1H data for RSI and ADX
-                data_1h = fetch_sector_data(symbol, end_date=analysis_date, interval='1h')
-                rsi_1h = None
-                adx_1h = None
-                
-                if data_1h is not None and len(data_1h) >= 14:
-                    rsi_series = calculate_rsi(data_1h)
-                    rsi_1h = rsi_series.iloc[-1] if not rsi_series.isna().all() else None
-                    
-                    adx_series, _, _, _ = calculate_adx(data_1h)
-                    adx_1h = adx_series.iloc[-1] if adx_series is not None and not adx_series.isna().all() else None
-                
-                # Calculate match score (lower distance = better match)
-                match_score = 100 - distance  # Invert distance so higher = better
-                
-                fib_results.append({
-                    'Company': company_name,
-                    'Stock Price': current_price,
-                    'Fib Level': fib_level,
-                    'Remark': remark,
-                    'Last Crossing Time': last_crossing,
-                    'RSI (1H)': f"{rsi_1h:.1f}" if rsi_1h else "N/A",
-                    'ADX (1H)': f"{adx_1h:.1f}" if adx_1h else "N/A",
-                    'Match Score': match_score,
-                    'Sector': sector,
-                    'Symbol': symbol
-                })
-        
-        except Exception as e:
-            continue
-    
-    progress_bar.empty()
-    status_text.empty()
-    
-    if fib_results:
-        # Sort by match score (descending order of best match)
-        df_fib = pd.DataFrame(fib_results)
-        df_fib = df_fib.sort_values('Match Score', ascending=False)
-        
-        # Display results
-        st.markdown("### 🎯 Stocks in Fibonacci Golden Zone (0.5-0.618)")
-        display_cols = ['Company', 'Stock Price', 'Fib Level', 'Remark', 'Last Crossing Time', 'RSI (1H)', 'ADX (1H)']
-        st.dataframe(df_fib[display_cols], use_container_width=True, hide_index=True)
-        
-        st.success(f"✅ Found {len(fib_results)} stocks in Fibonacci golden zone")
-    else:
-        st.warning("⚠️ No stocks found in Fibonacci golden zone")
-    
-    # ============================================================
-    # PART 4: INDIVIDUAL STOCK RANKING - CONFLUENCE ANALYSIS
-    # ============================================================
-    st.markdown("## 🏆 PART 4: Individual Stock Ranking - Confluence Analysis")
-    st.markdown("---")
-    st.info("Analyzing stocks for confluence factors. This may take a few minutes...")
-    
+
+    # --- Timeframe selector ---
+    conf_tf = st.radio(
+        "Select timeframe for confluence analysis:",
+        ["1D (Daily)", "2H"],
+        horizontal=True,
+        index=1,
+        key="conf_timeframe"
+    )
+    conf_tf_label = "Daily" if conf_tf == "1D (Daily)" else "2H"
+
+    # --- Logic explanation with descriptions ---
+    st.markdown(f"""
+**How Confluence Scoring works** (timeframe: **{conf_tf_label}**):
+
+Each stock is evaluated on **5 factors**. Higher score = more bullish; lower score = more bearish.
+
+| # | Factor | Bullish Condition | Pts | Bearish Condition | Pts | Description |
+|---|--------|-------------------|-----|-------------------|-----|-------------|
+| 1 | **Trend** | HH/HL (Uptrend) | +W₁ | LL/LH (Downtrend) | 0 | Compares last 3 swing highs & lows on {conf_tf_label} bars. **HH/HL** = each successive high & low is higher than the one before (e.g. High₋₁ > High₋₃ > High₋₅). **LL/LH** = the opposite. Sideways = neither pattern. |
+| | | Sideways | +W₁×0.33 | Sideways | +W₁×0.33 | |
+| 2 | **Direction** | Price > 20 DMA > 50 DMA | +W₂ | Price < 20 DMA < 50 DMA | 0 | Uses 20- and 50-period DMA on {conf_tf_label}. **Bullish** when price is above both and 20 DMA is above 50 DMA. **Bearish** when price is below both and 20 DMA is below 50 DMA. Mixed = any other alignment. |
+| | | Mixed | +W₂×0.33 | Mixed | +W₂×0.33 | |
+| 3 | **RSI Momentum** | RSI rising + in 40-60 zone | +W₃ | RSI falling + in 40-60 zone | 0 | RSI (14) on {conf_tf_label}. **Rising** = current RSI > previous bar's RSI. The 40-60 zone signals early momentum before overbought/oversold. |
+| | | RSI rising only | +W₃×0.5 | RSI falling only | 0 | |
+| 4 | **Chart Setup** | DMA crossover + Bullish dir. | +W₄ | DMA crossover + Bearish dir. | 0 | Triggered when 20 DMA and 50 DMA are within 2% of each other (approaching crossover). Full points only when combined with matching direction. |
+| 5 | **RSI Divergence** | Price falls but RSI rises | +W₅ | Price rises but RSI falls | −W₅×0.5 | Checks the midpoint of the current {conf_tf_label} bar: if price dropped but RSI increased = bullish divergence (reversal signal). Opposite = bearish divergence. |
+""")
+
+    # --- Weight matrix (user-configurable) ---
+    with st.expander("⚙️ Confluence Weight Matrix (adjust defaults)", expanded=False):
+        wcol1, wcol2, wcol3, wcol4, wcol5 = st.columns(5)
+        with wcol1:
+            w_trend = st.number_input("W₁ Trend", min_value=0.0, max_value=10.0, value=3.0, step=0.5, key="conf_w_trend")
+        with wcol2:
+            w_direction = st.number_input("W₂ Direction", min_value=0.0, max_value=10.0, value=3.0, step=0.5, key="conf_w_direction")
+        with wcol3:
+            w_rsi = st.number_input("W₃ RSI Mom.", min_value=0.0, max_value=10.0, value=2.0, step=0.5, key="conf_w_rsi")
+        with wcol4:
+            w_setup = st.number_input("W₄ Setup", min_value=0.0, max_value=10.0, value=2.0, step=0.5, key="conf_w_setup")
+        with wcol5:
+            w_divergence = st.number_input("W₅ Divergence", min_value=0.0, max_value=10.0, value=2.0, step=0.5, key="conf_w_divergence")
+        max_score = w_trend + w_direction + w_rsi + w_setup + w_divergence
+        st.caption(
+            f"**Max bullish score:** {max_score:.1f} &nbsp;|&nbsp; "
+            f"**Min bearish score:** {-(w_divergence * 0.5):.1f} &nbsp;|&nbsp; "
+            f"Weights: Trend {w_trend} + Direction {w_direction} + RSI {w_rsi} + Setup {w_setup} + Divergence {w_divergence}"
+        )
+
+    st.info(f"Analyzing confluence on **{conf_tf_label}** timeframe. This may take a few minutes...")
+
     stock_results = []
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
+
     for idx, row in df_stocks.iterrows():
         symbol = row['Symbol']
         sector = row['Sector']
         company_name = row['Company Name']
-        
-        status_text.text(f"Analyzing confluence for {company_name} ({idx+1}/{len(df_stocks)})...")
+
+        status_text.text(f"Confluence ({conf_tf_label}) for {company_name} ({idx+1}/{len(df_stocks)})...")
         progress_bar.progress((idx + 1) / len(df_stocks))
-        
+
         try:
-            # Fetch 1H data and resample to 4H
-            data_1h = fetch_sector_data(symbol, end_date=analysis_date, interval='1h')
-            if data_1h is None or len(data_1h) < 50:
-                continue
-            
-            # Resample to 4H
-            data_4h = data_1h.resample('4H').agg({
-                'Open': 'first',
-                'High': 'max',
-                'Low': 'min',
-                'Close': 'last',
-                'Volume': 'sum'
-            }).dropna()
-            
-            if len(data_4h) < 20:
-                continue
-            
-            # Calculate DMAs
-            data_4h['DMA_20'] = data_4h['Close'].rolling(20).mean()
-            data_4h['DMA_50'] = data_4h['Close'].rolling(50).mean()
-            
-            # Get latest values
-            current_price = data_4h['Close'].iloc[-1]
-            dma_20 = data_4h['DMA_20'].iloc[-1]
-            dma_50 = data_4h['DMA_50'].iloc[-1]
-            
-            # 1. TREND: Detect HH/HL (Uptrend) or LL/LH (Downtrend)
-            recent_highs = data_4h['High'].tail(10).values
-            recent_lows = data_4h['Low'].tail(10).values
-            
-            # Check for Higher Highs and Higher Lows (Uptrend)
-            if len(recent_highs) >= 4:
-                hh_pattern = recent_highs[-1] > recent_highs[-3] > recent_highs[-5] if len(recent_highs) >= 5 else False
-                hl_pattern = recent_lows[-1] > recent_lows[-3] > recent_lows[-5] if len(recent_lows) >= 5 else False
-                uptrend = hh_pattern and hl_pattern
+            # --- Fetch data based on selected timeframe ---
+            if conf_tf == "1D (Daily)":
+                data_tf = fetch_sector_data(symbol, end_date=analysis_date, interval='1d')
+                if data_tf is None or len(data_tf) < 60:
+                    continue
+                # For divergence check, use the last 2 daily bars
+                data_sub = data_tf
+                div_lookback_hours = 24  # not used for daily; we use bar-based logic
             else:
-                uptrend = False
-            
-            # Check for Lower Lows and Lower Highs (Downtrend)
-            if len(recent_lows) >= 4:
-                ll_pattern = recent_lows[-1] < recent_lows[-3] < recent_lows[-5] if len(recent_lows) >= 5 else False
-                lh_pattern = recent_highs[-1] < recent_highs[-3] < recent_highs[-5] if len(recent_highs) >= 5 else False
-                downtrend = ll_pattern and lh_pattern
-            else:
-                downtrend = False
-            
-            if uptrend:
-                trend = "HH/HL (Uptrend)"
-            elif downtrend:
-                trend = "LL/LH (Downtrend)"
-            else:
-                trend = "Sideways"
-            
-            # 2. DIRECTION: Price > 20 DMA > 50 DMA (Bullish) or Price < 20 DMA < 50 DMA (Bearish)
+                # 2H: fetch 1H and resample to 2H
+                data_1h = fetch_sector_data(symbol, end_date=analysis_date, interval='1h')
+                if data_1h is None or len(data_1h) < 40:
+                    continue
+                data_tf = data_1h.resample('2h').agg({
+                    'Open': 'first', 'High': 'max', 'Low': 'min',
+                    'Close': 'last', 'Volume': 'sum'
+                }).dropna()
+                if len(data_tf) < 20:
+                    continue
+                data_sub = data_1h  # keep 1H for divergence sub-check
+
+            # Calculate DMAs on chosen timeframe
+            data_tf['DMA_20'] = data_tf['Close'].rolling(20).mean()
+            data_tf['DMA_50'] = data_tf['Close'].rolling(50).mean()
+
+            current_price = data_tf['Close'].iloc[-1]
+            dma_20 = data_tf['DMA_20'].iloc[-1]
+            dma_50 = data_tf['DMA_50'].iloc[-1]
+
+            # 1. TREND: HH/HL vs LL/LH on last 5 bars (indices -1, -3, -5)
+            recent_highs = data_tf['High'].tail(10).values
+            recent_lows = data_tf['Low'].tail(10).values
+            uptrend = downtrend = False
+            if len(recent_highs) >= 5:
+                uptrend = (recent_highs[-1] > recent_highs[-3] > recent_highs[-5]) and \
+                          (recent_lows[-1] > recent_lows[-3] > recent_lows[-5])
+            if len(recent_lows) >= 5:
+                downtrend = (recent_lows[-1] < recent_lows[-3] < recent_lows[-5]) and \
+                            (recent_highs[-1] < recent_highs[-3] < recent_highs[-5])
+            trend = "HH/HL (Uptrend)" if uptrend else ("LL/LH (Downtrend)" if downtrend else "Sideways")
+
+            # 2. DIRECTION: Price vs 20 DMA vs 50 DMA
             if pd.notna(dma_20) and pd.notna(dma_50):
                 if current_price > dma_20 > dma_50:
                     direction = "Bullish"
@@ -4269,88 +4401,89 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
                     direction = "Mixed"
             else:
                 direction = "N/A"
-            
-            # 3. MOMENTUM: RSI (14)
-            rsi_series = calculate_rsi(data_4h)
+
+            # 3. RSI MOMENTUM (14-period on chosen timeframe)
+            rsi_series = calculate_rsi(data_tf)
             rsi_current = rsi_series.iloc[-1] if not rsi_series.isna().all() else 50.0
             rsi_prev = rsi_series.iloc[-2] if len(rsi_series) > 1 and not pd.isna(rsi_series.iloc[-2]) else rsi_current
-            
             rsi_rising = rsi_current > rsi_prev
             rsi_falling = rsi_current < rsi_prev
             rsi_in_zone = 40 <= rsi_current <= 60
-            
             rsi_status = []
             if rsi_rising:
                 rsi_status.append("Rising")
             if rsi_falling:
                 rsi_status.append("Falling")
             if rsi_in_zone:
-                rsi_status.append("40-60 Zone")
-            
+                rsi_status.append("40-60")
             rsi_display = f"{rsi_current:.1f} ({', '.join(rsi_status)})" if rsi_status else f"{rsi_current:.1f}"
-            
-            # 4. CHART SETUP: DMA crossover detection
+
+            # 4. CHART SETUP: DMA crossover proximity
             if pd.notna(dma_20) and pd.notna(dma_50):
                 dma_diff_pct = abs((dma_20 - dma_50) / dma_50 * 100)
-                if dma_diff_pct < 2.0:  # Within 2% = approaching crossover
+                if dma_diff_pct < 2.0:
                     setup = "Crossover Setup"
                 elif dma_20 > dma_50:
-                    setup = "20 DMA > 50 DMA"
+                    setup = "20 > 50 DMA"
                 else:
-                    setup = "20 DMA < 50 DMA"
+                    setup = "20 < 50 DMA"
             else:
                 setup = "N/A"
-            
-            # 5. RSI DIVERGENCE: At 50% formation mark (2-hour mark of 4H candle)
-            current_4h_start = data_4h.index[-1] - pd.Timedelta(hours=4)
-            current_1h_data = data_1h[data_1h.index >= current_4h_start]
-            
+
+            # 5. RSI DIVERGENCE
             divergence = "None"
-            if len(current_1h_data) >= 2:
-                mid_point_idx = len(current_1h_data) // 2
-                if mid_point_idx > 0 and mid_point_idx < len(current_1h_data):
-                    rsi_1h_series = calculate_rsi(current_1h_data)
-                    if len(rsi_1h_series) > mid_point_idx:
-                        rsi_at_50pct = rsi_1h_series.iloc[mid_point_idx] if not pd.isna(rsi_1h_series.iloc[mid_point_idx]) else rsi_current
-                        
-                        price_at_start = current_1h_data['Close'].iloc[0]
-                        price_at_50pct = current_1h_data['Close'].iloc[mid_point_idx]
-                        price_at_end = current_1h_data['Close'].iloc[-1]
-                        
-                        if price_at_50pct < price_at_start and rsi_at_50pct > rsi_current:
+            if conf_tf == "1D (Daily)":
+                # For daily: compare last 2 bars
+                if len(data_tf) >= 3:
+                    p_prev = data_tf['Close'].iloc[-2]
+                    rsi_prev_bar = rsi_series.iloc[-2] if len(rsi_series) > 1 and not pd.isna(rsi_series.iloc[-2]) else None
+                    if rsi_prev_bar is not None:
+                        if current_price < p_prev and rsi_current > rsi_prev_bar:
                             divergence = "Bullish"
-                        elif price_at_50pct > price_at_start and rsi_at_50pct < rsi_current:
+                        elif current_price > p_prev and rsi_current < rsi_prev_bar:
                             divergence = "Bearish"
-            
-            # Calculate Confluence Score
-            score = 0
+            else:
+                # For 2H: use midpoint of current 2H bar from 1H sub-data
+                bar_start = data_tf.index[-1] - pd.Timedelta(hours=2)
+                current_sub = data_sub[data_sub.index >= bar_start]
+                if len(current_sub) >= 2:
+                    mid = len(current_sub) // 2
+                    if 0 < mid < len(current_sub):
+                        rsi_sub = calculate_rsi(current_sub)
+                        if len(rsi_sub) > mid and not pd.isna(rsi_sub.iloc[mid]):
+                            rsi_at_mid = rsi_sub.iloc[mid]
+                            p_start = current_sub['Close'].iloc[0]
+                            p_mid = current_sub['Close'].iloc[mid]
+                            if p_mid < p_start and rsi_at_mid > rsi_current:
+                                divergence = "Bullish"
+                            elif p_mid > p_start and rsi_at_mid < rsi_current:
+                                divergence = "Bearish"
+
+            # --- Weighted Confluence Score ---
+            score = 0.0
             if trend == "HH/HL (Uptrend)":
-                score += 3
-            elif trend == "LL/LH (Downtrend)":
-                score += 0
-            else:
-                score += 1
-            
+                score += w_trend
+            elif trend != "LL/LH (Downtrend)":
+                score += w_trend * 0.33
+
             if direction == "Bullish":
-                score += 3
-            elif direction == "Bearish":
-                score += 0
-            else:
-                score += 1
-            
+                score += w_direction
+            elif direction != "Bearish":
+                score += w_direction * 0.33
+
             if rsi_rising and rsi_in_zone:
-                score += 2
+                score += w_rsi
             elif rsi_rising:
-                score += 1
-            
+                score += w_rsi * 0.5
+
             if setup == "Crossover Setup" and direction == "Bullish":
-                score += 2
-            
+                score += w_setup
+
             if divergence == "Bullish":
-                score += 2
+                score += w_divergence
             elif divergence == "Bearish":
-                score -= 1
-            
+                score -= w_divergence * 0.5
+
             stock_results.append({
                 'Sector': sector,
                 'Symbol': symbol,
@@ -4360,29 +4493,147 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None):
                 'RSI': rsi_display,
                 'Setup': setup,
                 'Divergence': divergence,
-                'Score': score
+                'Score': round(score, 2)
             })
-            
-        except Exception as e:
+
+        except Exception:
             continue
-    
+
     progress_bar.empty()
     status_text.empty()
-    
+
+    # Build confluence top-8 bullish + top-8 bearish for display and Fibonacci filtering
+    df_results = pd.DataFrame()
+    df_top10 = pd.DataFrame()  # kept for export compatibility
+    confluence_shortlist_symbols = set()
+
     if not stock_results:
         st.warning("⚠️ No stock data available for confluence analysis")
     else:
-        # Create DataFrame and rank
         df_results = pd.DataFrame(stock_results)
         df_results = df_results.sort_values('Score', ascending=False)
         df_results['Rank'] = range(1, len(df_results) + 1)
-        
-        # Display top 10
-        st.markdown("### 🥇 Top 10 Stocks by Confluence Score")
-        df_top10 = df_results.head(10)[['Rank', 'Sector', 'Symbol', 'Company', 'Trend', 'Direction', 'RSI', 'Setup', 'Divergence', 'Score']]
-        st.dataframe(df_top10, use_container_width=True, hide_index=True)
-        
-        st.success(f"✅ Confluence analysis complete! Analyzed {len(stock_results)} stocks.")
+
+        display_cols_conf = ['Rank', 'Sector', 'Symbol', 'Company', 'Trend', 'Direction', 'RSI', 'Setup', 'Divergence', 'Score']
+
+        # Top 8 Bullish (highest scores)
+        df_bull8 = df_results.head(8)[display_cols_conf].copy()
+        df_bull8['Rank'] = range(1, len(df_bull8) + 1)
+
+        # Top 8 Bearish (lowest scores)
+        df_bear8 = df_results.tail(8).iloc[::-1][display_cols_conf].copy()
+        df_bear8['Rank'] = range(1, len(df_bear8) + 1)
+
+        confluence_shortlist_symbols = set(df_bull8['Symbol'].tolist()) | set(df_bear8['Symbol'].tolist())
+
+        st.markdown(f"### 🟢 Top 8 Bullish by Confluence ({conf_tf_label})")
+        st.dataframe(df_bull8, use_container_width=True, hide_index=True)
+
+        st.markdown(f"### 🔴 Top 8 Bearish by Confluence ({conf_tf_label})")
+        st.dataframe(df_bear8, use_container_width=True, hide_index=True)
+
+        st.success(f"✅ Confluence analysis complete! Analyzed {len(stock_results)} stocks on {conf_tf_label} timeframe.")
+
+        # Keep df_top10 for export (top 10 overall for backward compat)
+        df_top10 = df_results.head(10)[display_cols_conf]
+
+    # ============================================================
+    # PART 4: INDIVIDUAL STOCK - FIBONACCI ANALYSIS (shortlisted only)
+    # ============================================================
+    st.markdown("## 📊 PART 4: Individual Stock - Fibonacci Analysis")
+    st.markdown("---")
+
+    # Build shortlist: union of Top 10 Bullish + Top 10 Bearish (MA+RSI+VWAP) + Confluence Top 8 Bull + Top 8 Bear
+    fib_shortlist_symbols = set(top_bullish['Symbol'].tolist()) | set(top_bearish['Symbol'].tolist()) | confluence_shortlist_symbols
+    df_fib_stocks = df_stocks[df_stocks['Symbol'].isin(fib_shortlist_symbols)]
+
+    st.info(
+        f"Analyzing Fibonacci 0.5 (golden level) for **{len(df_fib_stocks)}** shortlisted stocks "
+        f"(Top 10 Bullish/Bearish from MA+RSI+VWAP + Confluence Top 8 Bullish/Bearish)."
+    )
+    st.caption(
+        "**Note:** Fibonacci analysis is limited to shortlisted stocks from Part 2 and Part 3 "
+        "to reduce processing time. Only the Fib 0.5 level is checked (within 2%)."
+    )
+
+    fib_results = []
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    for i, (idx, row) in enumerate(df_fib_stocks.iterrows()):
+        symbol = row['Symbol']
+        sector = row['Sector']
+        company_name = row['Company Name']
+
+        status_text.text(f"Fibonacci for {company_name} ({i+1}/{len(df_fib_stocks)})...")
+        progress_bar.progress((i + 1) / len(df_fib_stocks))
+
+        try:
+            data_15m = fetch_sector_data(symbol, end_date=analysis_date, interval='15m')
+            if data_15m is None or len(data_15m) < 20:
+                data_daily = fetch_sector_data(symbol, end_date=analysis_date, interval='1d')
+                if data_daily is None or len(data_daily) < 20:
+                    continue
+                data_for_fib = data_daily
+            else:
+                data_for_fib = data_15m
+
+            if data_for_fib.index.freq is None or 'D' not in str(data_for_fib.index.freq):
+                data_daily_agg = data_for_fib.resample('D').agg({
+                    'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'
+                }).dropna()
+            else:
+                data_daily_agg = data_for_fib
+
+            if len(data_daily_agg) < 20:
+                continue
+
+            swing_high, swing_low, swing_high_date, swing_low_date = find_swing_high_low(data_daily_agg, lookback_days=20)
+            fib_levels = calculate_fibonacci_levels(swing_high, swing_low)
+            current_price = data_daily_agg['Close'].iloc[-1]
+            in_zone, fib_level, distance = check_fibonacci_golden_zone(current_price, fib_levels)
+
+            if in_zone:
+                fib_50 = fib_levels[0.5]
+                pct_from_fib = ((current_price - fib_50) / fib_50) * 100
+                remark = f"Fib 0.5: ₹{fib_50:,.2f} | {pct_from_fib:+.2f}% from level"
+                last_crossing = find_last_crossing_time(data_daily_agg, fib_50, current_price)
+
+                data_1h = fetch_sector_data(symbol, end_date=analysis_date, interval='1h')
+                rsi_1h = adx_1h = None
+                if data_1h is not None and len(data_1h) >= 14:
+                    rsi_s = calculate_rsi(data_1h)
+                    rsi_1h = rsi_s.iloc[-1] if not rsi_s.isna().all() else None
+                    adx_s, _, _, _ = calculate_adx(data_1h)
+                    adx_1h = adx_s.iloc[-1] if adx_s is not None and not adx_s.isna().all() else None
+
+                fib_results.append({
+                    'Company': company_name,
+                    'Stock Price': current_price,
+                    'Fib Level': fib_level,
+                    'Remark': remark,
+                    'Last Crossing Time': last_crossing,
+                    'RSI (1H)': f"{rsi_1h:.1f}" if rsi_1h else "N/A",
+                    'ADX (1H)': f"{adx_1h:.1f}" if adx_1h else "N/A",
+                    'Match Score': 100 - distance,
+                    'Sector': sector,
+                    'Symbol': symbol
+                })
+        except Exception:
+            continue
+
+    progress_bar.empty()
+    status_text.empty()
+
+    if fib_results:
+        df_fib = pd.DataFrame(fib_results)
+        df_fib = df_fib.sort_values('Match Score', ascending=False)
+        st.markdown("### 🎯 Stocks near Fibonacci 0.5 (Golden Level)")
+        display_cols = ['Company', 'Stock Price', 'Fib Level', 'Remark', 'Last Crossing Time', 'RSI (1H)', 'ADX (1H)']
+        st.dataframe(df_fib[display_cols], use_container_width=True, hide_index=True)
+        st.success(f"✅ Found {len(fib_results)} stocks near Fibonacci 0.5 level (out of {len(df_fib_stocks)} shortlisted)")
+    else:
+        st.warning(f"⚠️ No stocks near Fibonacci 0.5 level (checked {len(df_fib_stocks)} shortlisted stocks)")
     
     # ============================================================
     # HISTORICAL LOGGING & EXPORT

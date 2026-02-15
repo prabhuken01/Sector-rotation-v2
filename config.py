@@ -7,9 +7,8 @@ Configuration constants for NSE Market Sector Analysis Tool
 # Set this to the full path of your Sector-Company.xlsx if you want to always
 # use the same file (e.g. on E: drive). Leave None to use the file in the
 # same folder as the app.
-# Example (uncomment and fix path to match your PC):
-# SECTOR_COMPANY_EXCEL_PATH = r"E:\Personal\Trading_Champion\Projects\Sector-rotation-v2\Sector-rotation-v2\Sector-Company.xlsx"
-SECTOR_COMPANY_EXCEL_PATH = None
+# Default: E: drive project folder (single source of truth for company data)
+SECTOR_COMPANY_EXCEL_PATH = r"E:\Personal\Trading_Champion\Projects\Sector-rotation-v2\Sector-rotation-v2\Sector-Company.xlsx"
 
 # Technical Indicator Periods
 RSI_PERIOD = 14
