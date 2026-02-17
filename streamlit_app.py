@@ -2,11 +2,11 @@
 """
 NSE Market Sector Analysis Tool - Streamlit Web Interface
 Enhanced with configurable weights, ETF proxy, and improved aesthetics
-Version: 2.3.2 - Sector mapping fix, screener directional gating (Feb 2026)
+Version: 2.3.4 - FMCG ETF fix, market breadth fallback (Feb 2026)
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.3.2"
+APP_VERSION = "2.3.4"
 
 import os
 import streamlit as st
