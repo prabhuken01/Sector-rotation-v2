@@ -2,11 +2,11 @@
 """
 NSE Market Sector Analysis Tool - Streamlit Web Interface
 Enhanced with configurable weights, ETF proxy, and improved aesthetics
-Version: 2.0.0 - Fixed reversal ranking logic (Jan 2026)
+Version: 2.3.1 - Confluence / breadth fixes (Feb 2026)
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.3.1"
 
 import os
 import streamlit as st
