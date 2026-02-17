@@ -1,576 +1,616 @@
 """
-ENHANCED CONFLUENCE ANALYSIS V2
-================================
+confluence_fixed.py  — v3.0
+============================
+Fixes applied in this version
+-------------------------------
+(a) Historical Rankings sync:
+    The sector-filter and timeframe choice is now purely caller-controlled.
+    Both Historical Rankings and Part-3 Stock Screener receive the same
+    top/bottom sector list from the same helper functions here, so a given
+    date/TF/filter combination always produces identical stock selections.
 
-Key Improvements over V1:
-1. Fixed BEARISH logic — Entry at LH (resistance), NOT at LL (too late)
-2. Price position detection: Near High / Near Low / Middle
-3. Volume confirmation for breakdown/breakout signals
-4. RSI interpretation fixed for bearish (50-70 at LH, not <30)
-5. Two-timeframe analysis (entry TF + 1D confirmation)
-6. Negative scoring for opposing conditions
-7. Position-aware entry descriptions
+(b) Bearish sector selection:
+    get_bottom_n_sectors_by_momentum() returns the BOTTOM-N sectors
+    (lowest RSI + CMF) for bearish picks.  The existing
+    get_top_n_sectors_by_momentum() (in streamlit_app.py) is for bullish.
 
-Scoring (max ~20 pts each side):
-  Trend (entry TF):  +4 aligned / -3 opposing / +0.5 sideways
-  Trend (1D):        +3 aligned / -2 opposing / +0.5 sideways
-  MA Align (entry):  +3 aligned / -2 opposing
-  MA Align (1D):     +2 aligned / -1 opposing
-  Price Position:    Bullish: Near Low +2 / Bearish: Near High +3
-  RSI (entry TF):    up to +2.5 (context-dependent)
-  RSI (1D):          up to +1.5
-  Crossover (entry): +1.5 aligned / -1 opposing
-  Divergence:        +1.5 aligned / -1 opposing
-  Volume:            +1 to +1.5 (context-dependent)
+(c) RSI direction enforced:
+    Bullish  → RSI *rising* earns positive pts; RSI *falling* is penalised.
+    Bearish  → RSI *falling* earns positive pts; RSI *rising* is penalised.
+
+(d) Pivot-based price position (ENTRY TF only):
+    For 4H+1H → use 4H pivot structure.
+    For 1D+2H → use 1D pivot structure.
+    2H / 1H conf-TF trend is kept as a display placeholder (weight = 0).
+    Entry ideal:  Bullish at HL (Higher Low),  Bearish at LH (Lower High).
+
+(e) HH / HL / LH / LL reconstruction via detect_swing_structure()
+    (Python port of the Pine-Script "Pivot Points High Low" indicator).
 """
 
+from __future__ import annotations
 import pandas as pd
 import numpy as np
 
-# Use the project's own RSI calculation if available; fallback to local impl.
-try:
-    from indicators import calculate_rsi as _calc_rsi_series
-    def _calculate_rsi_from_df(df, period=14):
-        """Wrapper: indicators.calculate_rsi expects a DataFrame with 'Close'."""
-        return _calc_rsi_series(df, period=period)
-except ImportError:
-    def _calculate_rsi_from_df(df, period=14):
-        try:
-            delta = df['Close'].diff()
-            gain = delta.where(delta > 0, 0).rolling(window=period).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-            rs = gain / loss
-            return 100 - (100 / (1 + rs))
-        except Exception:
-            return pd.Series([50.0] * len(df), index=df.index)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RSI helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _calculate_rsi_from_df(data: pd.DataFrame, period: int = 14) -> pd.Series:
+    delta = data["Close"].diff()
+    gain  = delta.where(delta > 0, 0.0).rolling(period).mean()
+    loss  = (-delta.where(delta < 0, 0.0)).rolling(period).mean()
+    rs    = gain / loss.replace(0, np.nan).fillna(1e-10)
+    return (100.0 - 100.0 / (1.0 + rs)).fillna(50.0)
 
 
-# ---------------------------------------------------------------------------
-# Trend detection
-# ---------------------------------------------------------------------------
-def detect_trend(highs, lows, lookback=10):
+# ─────────────────────────────────────────────────────────────────────────────
+# (e) Pivot Points High / Low — Python port of Pine-Script ta.pivothigh/low
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _pivot_highs_lows(
+    data: pd.DataFrame,
+    left: int = 3,
+    right: int = 3,
+) -> tuple[list[tuple[int, float]], list[tuple[int, float]]]:
     """
-    Detect trend using swing highs and lows.
-    Returns: 'Uptrend (HH/HL)', 'Downtrend (LL/LH)', or 'Sideways'
-    """
-    if len(highs) < lookback or len(lows) < lookback:
-        return 'Sideways'
+    Detect pivot highs and pivot lows.
 
-    recent_highs = highs[-lookback:]
-    recent_lows = lows[-lookback:]
-
-    hh_count = sum(1 for i in range(2, len(recent_highs)) if recent_highs[i] > recent_highs[i - 2])
-    hl_count = sum(1 for i in range(2, len(recent_lows)) if recent_lows[i] > recent_lows[i - 2])
-
-    ll_count = sum(1 for i in range(2, len(recent_lows)) if recent_lows[i] < recent_lows[i - 2])
-    lh_count = sum(1 for i in range(2, len(recent_highs)) if recent_highs[i] < recent_highs[i - 2])
-
-    if hh_count >= 3 and hl_count >= 3:
-        return 'Uptrend (HH/HL)'
-    elif ll_count >= 3 and lh_count >= 3:
-        return 'Downtrend (LL/LH)'
-    else:
-        return 'Sideways'
-
-
-# ---------------------------------------------------------------------------
-# MA alignment helper
-# ---------------------------------------------------------------------------
-def _ma_alignment(price, dma20, dma50):
-    if pd.isna(dma20) or pd.isna(dma50):
-        return 'N/A'
-    if price > dma20 > dma50:
-        return 'Bullish'
-    elif price < dma20 < dma50:
-        return 'Bearish'
-    else:
-        return 'Mixed'
-
-
-# ---------------------------------------------------------------------------
-# MA crossover detection
-# ---------------------------------------------------------------------------
-def _ma_crossover(dma20, dma50):
-    if pd.isna(dma20) or pd.isna(dma50):
-        return 'N/A'
-    diff_pct = abs((dma20 - dma50) / dma50 * 100)
-    if diff_pct < 1.5:
-        return 'Bullish Crossover' if dma20 > dma50 else 'Bearish Crossover'
-    return 'None'
-
-
-# ---------------------------------------------------------------------------
-# Divergence detection
-# ---------------------------------------------------------------------------
-def _detect_divergence(data_tf, rsi_series):
-    """Check last 10 bars for price-RSI divergence."""
-    if len(data_tf) < 10 or len(rsi_series) < 10:
-        return 'None'
-    try:
-        recent = data_tf.tail(10)
-        highs = recent['High'].values
-        lows = recent['Low'].values
-        rsi_vals = rsi_series.tail(10).values
-        if len(highs) >= 5:
-            if lows[-1] < lows[-3] and rsi_vals[-1] > rsi_vals[-3]:
-                return 'Bullish'
-            if highs[-1] > highs[-3] and rsi_vals[-1] < rsi_vals[-3]:
-                return 'Bearish'
-    except Exception:
-        pass
-    return 'None'
-
-
-# ---------------------------------------------------------------------------
-# NEW: Price position detection (Near High / Near Low / Middle)
-# ---------------------------------------------------------------------------
-def _find_recent_swing_points(data, lookback=20):
-    """
-    Find recent swing high/low and determine where current price sits.
-
-    Returns: (recent_high, recent_low, position)
-      position: 'Near High' | 'Near Low' | 'Middle' | 'Unknown'
-    """
-    if len(data) < lookback:
-        return None, None, 'Unknown'
-
-    recent_data = data.tail(lookback)
-    recent_high = recent_data['High'].max()
-    recent_low = recent_data['Low'].min()
-    current_price = data['Close'].iloc[-1]
-
-    total_range = recent_high - recent_low
-    if total_range == 0:
-        return recent_high, recent_low, 'Unknown'
-
-    dist_from_high = abs(current_price - recent_high) / recent_high * 100
-    dist_from_low = abs(current_price - recent_low) / recent_low * 100
-
-    if dist_from_high < 2.0:
-        return recent_high, recent_low, 'Near High'
-    elif dist_from_low < 2.0:
-        return recent_high, recent_low, 'Near Low'
-    else:
-        return recent_high, recent_low, 'Middle'
-
-
-# ---------------------------------------------------------------------------
-# NEW: Volume confirmation
-# ---------------------------------------------------------------------------
-def _check_volume_confirmation(data, lookback=5):
-    """
-    Check if recent volume is higher than average (20-bar).
-    Returns: 'High' if recent vol > avg * 1.2, else 'Normal', or 'N/A'.
-    """
-    if 'Volume' not in data.columns or len(data) < lookback * 4:
-        return 'N/A'
-    try:
-        recent_vol = data['Volume'].tail(lookback).mean()
-        avg_vol = data['Volume'].tail(lookback * 4).mean()
-        return 'High' if recent_vol > avg_vol * 1.2 else 'Normal'
-    except Exception:
-        return 'N/A'
-
-
-# ---------------------------------------------------------------------------
-# Analyze a single stock across two timeframes (V2)
-# ---------------------------------------------------------------------------
-def analyze_stock_confluence(data_1h_or_entry, data_1d, entry_timeframe='2h'):
-    """
-    Enhanced multi-timeframe confluence analysis.
-
-    Parameters
-    ----------
-    data_1h_or_entry : DataFrame
-        If entry_timeframe='2h': 1H data (resampled to 2H internally).
-        If entry_timeframe='1d': daily data (used directly as entry TF).
-    data_1d : DataFrame
-        Daily data for the confirmation timeframe.
-    entry_timeframe : str
-        '2h', '4h', or '1d'. For '2h'/'4h', 1H data is resampled; for '1d', daily is used as entry.
+    A bar at index i is a pivot HIGH when its High is the unique highest
+    value in the window [i-left … i+right].  Same logic for LOW.
 
     Returns
     -------
-    dict with all analysis fields including price_position and volume_status,
-    or None on failure.
+    ph : list[(bar_index, price)]  — confirmed pivot highs
+    pl : list[(bar_index, price)]  — confirmed pivot lows
+    """
+    highs = data["High"].values
+    lows  = data["Low"].values
+    n     = len(data)
+    ph: list[tuple[int, float]] = []
+    pl: list[tuple[int, float]] = []
+
+    for i in range(left, n - right):
+        h_win = highs[i - left : i + right + 1]
+        if highs[i] == h_win.max() and int((h_win == highs[i]).sum()) == 1:
+            ph.append((i, float(highs[i])))
+
+        l_win = lows[i - left : i + right + 1]
+        if lows[i] == l_win.min() and int((l_win == lows[i]).sum()) == 1:
+            pl.append((i, float(lows[i])))
+
+    return ph, pl
+
+
+def detect_swing_structure(
+    data: pd.DataFrame,
+    left: int = 3,
+    right: int = 3,
+    min_pivots: int = 4,
+) -> dict:
+    """
+    Classify the swing structure of the data into:
+      'Uptrend (HH/HL)'   — majority of pivot highs are HH, pivot lows are HL
+      'Downtrend (LL/LH)' — majority of pivot lows are LL, pivot highs are LH
+      'Sideways'          — neither dominant
+
+    Also returns the most-recent pivot low price (last HL candidate)
+    and most-recent pivot high price (last LH candidate).
+    """
+    empty = {
+        "trend": "Sideways",
+        "last_hl_price": None,
+        "last_lh_price": None,
+        "ph_list": [],
+        "pl_list": [],
+    }
+
+    needed = left + right + min_pivots * 2
+    if data is None or len(data) < needed:
+        return empty
+
+    ph, pl = _pivot_highs_lows(data, left=left, right=right)
+
+    if len(ph) < 2 or len(pl) < 2:
+        return {**empty, "ph_list": ph, "pl_list": pl}
+
+    # How many consecutive pairs are HH / LH / HL / LL
+    hh = sum(1 for i in range(1, len(ph)) if ph[i][1] > ph[i - 1][1])
+    lh = sum(1 for i in range(1, len(ph)) if ph[i][1] < ph[i - 1][1])
+    hl = sum(1 for i in range(1, len(pl)) if pl[i][1] > pl[i - 1][1])
+    ll = sum(1 for i in range(1, len(pl)) if pl[i][1] < pl[i - 1][1])
+
+    pairs_h = len(ph) - 1
+    pairs_l = len(pl) - 1
+
+    is_up   = (pairs_h > 0 and pairs_l > 0
+               and hh / pairs_h >= 0.55 and hl / pairs_l >= 0.55)
+    is_down = (pairs_h > 0 and pairs_l > 0
+               and lh / pairs_h >= 0.55 and ll / pairs_l >= 0.55)
+
+    trend = ("Uptrend (HH/HL)" if is_up
+             else "Downtrend (LL/LH)" if is_down
+             else "Sideways")
+
+    return {
+        "trend":         trend,
+        "last_hl_price": pl[-1][1] if pl else None,   # most-recent pivot low = HL candidate
+        "last_lh_price": ph[-1][1] if ph else None,   # most-recent pivot high = LH candidate
+        "ph_list":       ph,
+        "pl_list":       pl,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MA / crossover / divergence / volume helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _ma_alignment(price: float, dma20: float, dma50: float) -> str:
+    if pd.isna(dma20) or pd.isna(dma50):
+        return "N/A"
+    if price > dma20 > dma50:
+        return "Bullish"
+    if price < dma20 < dma50:
+        return "Bearish"
+    return "Mixed"
+
+
+def _ma_crossover(dma20: float, dma50: float) -> str:
+    if pd.isna(dma20) or pd.isna(dma50):
+        return "N/A"
+    diff_pct = abs((dma20 - dma50) / max(dma50, 1e-6) * 100)
+    if diff_pct < 1.5:
+        return "Bullish Crossover" if dma20 > dma50 else "Bearish Crossover"
+    return "None"
+
+
+def _detect_divergence(data: pd.DataFrame, rsi_series: pd.Series) -> str:
+    if len(data) < 10:
+        return "None"
+    try:
+        rh  = data["High"].tail(10).values
+        rl  = data["Low"].tail(10).values
+        rrs = rsi_series.tail(10).values
+        if len(rrs) < 5 or np.isnan(rrs).all():
+            return "None"
+        if rl[-1] < rl[-3] and rrs[-1] > rrs[-3]:
+            return "Bullish"
+        if rh[-1] > rh[-3] and rrs[-1] < rrs[-3]:
+            return "Bearish"
+    except Exception:
+        pass
+    return "None"
+
+
+def _volume_status(data: pd.DataFrame, lookback: int = 5) -> str:
+    if "Volume" not in data.columns or len(data) < lookback * 2:
+        return "N/A"
+    try:
+        rv  = data["Volume"].tail(lookback).mean()
+        avg = data["Volume"].tail(lookback * 4).mean()
+        return "High" if (avg > 0 and rv > avg * 1.2) else "Normal"
+    except Exception:
+        return "N/A"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (d) Price-position: where is the current price relative to last HL / LH?
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _price_position(price: float, swing: dict, threshold_pct: float = 3.0) -> str:
+    """
+    'Near HL' — within threshold_pct% of last pivot low  → ideal bullish entry
+    'Near LH' — within threshold_pct% of last pivot high → ideal bearish entry
+    'Middle'  — neither
+    """
+    hl = swing.get("last_hl_price")
+    lh = swing.get("last_lh_price")
+
+    near_hl = hl is not None and abs(price - hl) / max(hl, 1e-6) * 100 <= threshold_pct
+    near_lh = lh is not None and abs(price - lh) / max(lh, 1e-6) * 100 <= threshold_pct
+
+    if near_hl and near_lh:
+        return "Near HL" if abs(price - hl) <= abs(price - lh) else "Near LH"
+    if near_hl:
+        return "Near HL"
+    if near_lh:
+        return "Near LH"
+    return "Middle"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# (b) Bottom-N sectors helper — weak sectors for bearish picks
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_bottom_n_sectors_by_momentum(
+    sector_data_dict: dict,
+    momentum_weights: dict,
+    n: int = 4,
+) -> list:
+    """
+    Return the N sectors with the LOWEST RSI + CMF momentum.
+    These are losing momentum — candidates for bearish stock selection.
+    """
+    if not sector_data_dict or len(sector_data_dict) < n:
+        return list(sector_data_dict.keys()) if sector_data_dict else []
+
+    scores: list = []
+    try:
+        from indicators import calculate_rsi, calculate_cmf
+    except ImportError:
+        return list(sector_data_dict.keys())
+
+    for name, data in sector_data_dict.items():
+        if data is None or len(data) < 14:
+            continue
+        try:
+            rsi_s = calculate_rsi(data)
+            cmf_s = calculate_cmf(data)
+            scores.append({
+                "Sector": name,
+                "RSI": float(rsi_s.iloc[-1]) if not rsi_s.isna().all() else 50.0,
+                "CMF": float(cmf_s.iloc[-1]) if not cmf_s.isna().all() else 0.0,
+            })
+        except Exception:
+            continue
+
+    if not scores:
+        return list(sector_data_dict.keys())
+
+    df = pd.DataFrame(scores)
+    if len(df) > 1:
+        rs = df["RSI"].std()
+        cs = df["CMF"].std()
+        rz = (df["RSI"] - df["RSI"].mean()) / rs if rs > 0 else 0.0
+        cz = (df["CMF"] - df["CMF"].mean()) / cs if cs > 0 else 0.0
+        df["Score"] = 0.5 * rz + 0.5 * cz
+    else:
+        df["Score"] = 0.0
+
+    # ascending=True → weakest first
+    return df.sort_values("Score", ascending=True).head(n)["Sector"].tolist()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main analysis function
+# ─────────────────────────────────────────────────────────────────────────────
+
+def analyze_stock_confluence(
+    data_1h_or_entry: pd.DataFrame,
+    data_1d: pd.DataFrame | None,
+    entry_timeframe: str = "2h",
+) -> dict | None:
+    """
+    Build a per-stock analysis dict used by both scoring functions.
+
+    (d) Pivot structure is built on the ENTRY TF only.
+        Confirmation-TF trend is displayed but not scored (weight = 0).
     """
     try:
-        # --- Build entry-TF data ---
-        if entry_timeframe == '2h':
-            if data_1h_or_entry is None or len(data_1h_or_entry) < 40:
-                return None
-            data_entry = data_1h_or_entry.resample('2h').agg({
-                'Open': 'first', 'High': 'max', 'Low': 'min',
-                'Close': 'last', 'Volume': 'sum'
-            }).dropna()
-            if len(data_entry) < 20:
-                return None
-        elif entry_timeframe == '4h':
-            if data_1h_or_entry is None or len(data_1h_or_entry) < 80:
-                return None
-            data_entry = data_1h_or_entry.resample('4h').agg({
-                'Open': 'first', 'High': 'max', 'Low': 'min',
-                'Close': 'last', 'Volume': 'sum'
-            }).dropna()
-            if len(data_entry) < 20:
-                return None
+        if entry_timeframe in ("2h", "4h"):
+            freq     = "2H" if entry_timeframe == "2h" else "4H"
+            min_bars = 50
+            data_entry = (
+                data_1h_or_entry
+                .resample(freq)
+                .agg({"Open": "first", "High": "max", "Low": "min",
+                      "Close": "last",  "Volume": "sum"})
+                .dropna()
+            )
         else:
             data_entry = data_1h_or_entry
-            if data_entry is None or len(data_entry) < 50:
-                return None
+            data_1d    = data_1h_or_entry
+            min_bars   = 50
 
-        if data_1d is None or len(data_1d) < 50:
+        if data_entry is None or len(data_entry) < min_bars:
+            return None
+        if data_1d is None or len(data_1d) < 30:
             return None
 
-        # --- Indicators on entry TF ---
         data_entry = data_entry.copy()
-        data_entry['DMA_20'] = data_entry['Close'].rolling(20).mean()
-        data_entry['DMA_50'] = data_entry['Close'].rolling(50).mean()
-        rsi_entry = _calculate_rsi_from_df(data_entry)
+        data_entry["DMA_20"] = data_entry["Close"].rolling(20).mean()
+        data_entry["DMA_50"] = data_entry["Close"].rolling(50).mean()
+        rsi_e_s = _calculate_rsi_from_df(data_entry)
 
-        price_entry = data_entry['Close'].iloc[-1]
-        dma20_entry = data_entry['DMA_20'].iloc[-1]
-        dma50_entry = data_entry['DMA_50'].iloc[-1]
-        rsi_e = rsi_entry.iloc[-1] if not rsi_entry.isna().all() else 50.0
-        rsi_e_prev = rsi_entry.iloc[-2] if len(rsi_entry) > 1 and not pd.isna(rsi_entry.iloc[-2]) else rsi_e
+        price_e = float(data_entry["Close"].iloc[-1])
+        dma20_e = float(data_entry["DMA_20"].iloc[-1])
+        dma50_e = float(data_entry["DMA_50"].iloc[-1])
+        rsi_e   = float(rsi_e_s.iloc[-1]) if not rsi_e_s.isna().all() else 50.0
+        rsi_ep  = float(rsi_e_s.iloc[-2]) if len(rsi_e_s.dropna()) >= 2 else rsi_e
 
-        # --- Indicators on 1D ---
         data_1d = data_1d.copy()
-        data_1d['DMA_20'] = data_1d['Close'].rolling(20).mean()
-        data_1d['DMA_50'] = data_1d['Close'].rolling(50).mean()
-        rsi_1d = _calculate_rsi_from_df(data_1d)
+        data_1d["DMA_20"] = data_1d["Close"].rolling(20).mean()
+        data_1d["DMA_50"] = data_1d["Close"].rolling(50).mean()
+        rsi_d_s = _calculate_rsi_from_df(data_1d)
 
-        price_1d = data_1d['Close'].iloc[-1]
-        dma20_1d = data_1d['DMA_20'].iloc[-1]
-        dma50_1d = data_1d['DMA_50'].iloc[-1]
-        rsi_d = rsi_1d.iloc[-1] if not rsi_1d.isna().all() else 50.0
-        rsi_d_prev = rsi_1d.iloc[-2] if len(rsi_1d) > 1 and not pd.isna(rsi_1d.iloc[-2]) else rsi_d
+        price_d = float(data_1d["Close"].iloc[-1])
+        dma20_d = float(data_1d["DMA_20"].iloc[-1])
+        dma50_d = float(data_1d["DMA_50"].iloc[-1])
+        rsi_d   = float(rsi_d_s.iloc[-1]) if not rsi_d_s.isna().all() else 50.0
+        rsi_dp  = float(rsi_d_s.iloc[-2]) if len(rsi_d_s.dropna()) >= 2 else rsi_d
 
-        # --- Trend ---
-        trend_entry = detect_trend(
-            data_entry['High'].tail(20).values,
-            data_entry['Low'].tail(20).values,
-            lookback=15
+        pivot_window = min(80, len(data_entry))
+        swing_e = detect_swing_structure(
+            data_entry.tail(pivot_window), left=3, right=3, min_pivots=4
         )
-        trend_1d = detect_trend(
-            data_1d['High'].tail(30).values,
-            data_1d['Low'].tail(30).values,
-            lookback=20
+        trend_entry = swing_e["trend"]
+
+        pivot_window_d = min(80, len(data_1d))
+        swing_d  = detect_swing_structure(
+            data_1d.tail(pivot_window_d), left=3, right=3, min_pivots=4
         )
+        trend_1d = swing_d["trend"]
 
-        # --- MA alignment ---
-        ma_align_entry = _ma_alignment(price_entry, dma20_entry, dma50_entry)
-        ma_align_1d = _ma_alignment(price_1d, dma20_1d, dma50_1d)
+        ma_e = _ma_alignment(price_e, dma20_e, dma50_e)
+        ma_d = _ma_alignment(price_d, dma20_d, dma50_d)
+        xo_e = _ma_crossover(dma20_e, dma50_e)
+        div = _detect_divergence(data_entry, rsi_e_s)
+        price_pos = _price_position(price_e, swing_e, threshold_pct=3.0)
+        vol = _volume_status(data_entry)
+        tf_lbl = "2H" if entry_timeframe == "2h" else ("4H" if entry_timeframe == "4h" else "1D")
 
-        # --- Crossover (entry TF) ---
-        crossover_entry = _ma_crossover(dma20_entry, dma50_entry)
-
-        # --- Divergence (entry TF) ---
-        divergence = _detect_divergence(data_entry, rsi_entry)
-
-        # --- NEW: Price position ---
-        recent_high, recent_low, price_position = _find_recent_swing_points(data_entry, lookback=20)
-
-        # --- NEW: Volume confirmation ---
-        volume_status = _check_volume_confirmation(data_entry, lookback=5)
-
-        tf_label = '2H' if entry_timeframe == '2h' else ('4H' if entry_timeframe == '4h' else '1D')
-
-        # Confirmation TF (not always 1D: in 4H+1H mode it is 1H conceptually; data_1d is still used)
         return {
-            'current_price': round(float(price_entry), 2),
-            'trend_entry': trend_entry,
-            'trend_1d': trend_1d,
-            'trend_conf': trend_1d,
-            'ma_alignment_entry': ma_align_entry,
-            'ma_alignment_1d': ma_align_1d,
-            'ma_alignment_conf': ma_align_1d,
-            'ma_crossover_entry': crossover_entry,
-            'rsi_entry': round(float(rsi_e), 1),
-            'rsi_entry_prev': round(float(rsi_e_prev), 1),
-            'rsi_1d': round(float(rsi_d), 1),
-            'rsi_1d_prev': round(float(rsi_d_prev), 1),
-            'rsi_conf': round(float(rsi_d), 1),
-            'rsi_conf_prev': round(float(rsi_d_prev), 1),
-            'divergence': divergence,
-            'price_position': price_position,
-            'recent_high': round(float(recent_high), 2) if recent_high else None,
-            'recent_low': round(float(recent_low), 2) if recent_low else None,
-            'volume_status': volume_status,
-            'entry_tf_label': tf_label,
+            "current_price":      round(price_e, 2),
+            "trend_entry":        trend_entry,
+            "trend_1d":           trend_1d,
+            "ma_alignment_entry": ma_e,
+            "ma_alignment_1d":    ma_d,
+            "ma_crossover_entry": xo_e,
+            "rsi_entry":          round(rsi_e, 1),
+            "rsi_entry_prev":     round(rsi_ep, 1),
+            "rsi_1d":             round(rsi_d, 1),
+            "rsi_1d_prev":        round(rsi_dp, 1),
+            "divergence":         div,
+            "price_position":     price_pos,
+            "last_hl_price":      swing_e.get("last_hl_price"),
+            "last_lh_price":      swing_e.get("last_lh_price"),
+            "volume_status":      vol,
+            "entry_tf_label":     tf_lbl,
         }
+
     except Exception:
         return None
 
 
-# ---------------------------------------------------------------------------
-# BULLISH scoring (V2 — with price position + volume)
-# ---------------------------------------------------------------------------
-def calculate_confluence_score_bullish(analysis_data):
+def calculate_confluence_score_bullish(analysis: dict) -> tuple:
     """
-    Enhanced bullish confluence score.
-    For bullish: want price Near Low (buying at HL support).
-    Max ~20 pts.
+    Bullish confluence.
+
+    **Core requirements (gates):**
+    - RSI rising on BOTH entry and confirmation timeframes
+    - MA alignment Bullish on BOTH timeframes
+    - Entry timeframe trend = Uptrend (HH/HL)
+    - Price near the last HL pivot on the entry timeframe
+
+    If any of these fail, the setup is treated as a failed bullish confluence and
+    returned with a strongly negative score so it will not rank in the top list.
     """
+    reasons: list = []
+
+    # --- Core signals used by gates ---
+    trend_entry = analysis["trend_entry"]
+    ma_entry    = analysis["ma_alignment_entry"]
+    ma_conf     = analysis["ma_alignment_1d"]
+
+    pos      = analysis.get("price_position", "Middle")
+    hl_price = analysis.get("last_hl_price")
+    lh_price = analysis.get("last_lh_price")
+
+    rsi_e   = analysis["rsi_entry"]
+    rsi_ep  = analysis["rsi_entry_prev"]
+    rsi_d   = analysis["rsi_1d"]
+    rsi_dp  = analysis["rsi_1d_prev"]
+
+    rising_entry = rsi_e > rsi_ep + 0.5
+    rising_conf  = rsi_d > rsi_dp + 0.5
+    ma_bull_entry = (ma_entry == "Bullish")
+    ma_bull_conf  = (ma_conf == "Bullish")
+    trend_ok      = (trend_entry == "Uptrend (HH/HL)")
+    price_near_hl = (pos == "Near HL")
+
+    core_fail_reasons = []
+    if not (rising_entry and rising_conf):
+        core_fail_reasons.append("RSI not rising on both entry and confirmation TFs")
+    if not (ma_bull_entry and ma_bull_conf):
+        core_fail_reasons.append("MA alignment not Bullish on both TFs")
+    if not trend_ok:
+        core_fail_reasons.append("Entry TF trend is not Uptrend (HH/HL)")
+    if not price_near_hl:
+        core_fail_reasons.append("Price not near HL pivot on entry TF")
+
+    if core_fail_reasons:
+        # Hard gate: treat as failed bullish setup so it never ranks in top confluence list
+        msg = "; ".join(core_fail_reasons)
+        return -5.0, [f"-5  Core bullish conditions failed: {msg}"]
+
+    # --- Detailed scoring (only for setups passing the gates) ---
     score = 0.0
-    reasons = []
 
-    # 1. TREND (entry TF) — 4 pts
-    t = analysis_data['trend_entry']
-    if t == 'Uptrend (HH/HL)':
-        score += 4; reasons.append("+4: Uptrend on entry TF")
-    elif t == 'Downtrend (LL/LH)':
-        score -= 3; reasons.append("-3: Downtrend on entry TF (against)")
+    # Trend on entry TF (higher TF for this confluence setup)
+    score += 4
+    reasons.append("+4  Uptrend (HH/HL) on entry TF")
+
+    # MA alignment on entry & confirmation TFs (both already Bullish by gate)
+    score += 3; reasons.append("+3  MA Bullish on entry TF")
+    score += 2; reasons.append("+2  MA Bullish on conf TF")
+
+    # Price relative to HL / LH pivot on entry TF
+    if pos == "Near HL":
+        score += 3
+        lbl = f"{hl_price:.2f}" if hl_price else "?"
+        reasons.append(f"+3  Price near HL pivot ({lbl}) — ideal BUY")
+    elif pos == "Near LH":
+        score -= 1
+        lbl = f"{lh_price:.2f}" if lh_price else "?"
+        reasons.append(f"−1  Price near LH pivot ({lbl}) — near resistance")
     else:
-        score += 0.5; reasons.append("+0.5: Sideways on entry TF")
+        score += 0.5; reasons.append("+0.5 Price in middle range")
 
-    # 2. TREND (1D) — 3 pts
-    t1 = analysis_data['trend_1d']
-    if t1 == 'Uptrend (HH/HL)':
-        score += 3; reasons.append("+3: Uptrend on 1D")
-    elif t1 == 'Downtrend (LL/LH)':
-        score -= 2; reasons.append("-2: Downtrend on 1D (against)")
-    else:
-        score += 0.5; reasons.append("+0.5: Sideways on 1D")
+    # RSI on entry TF
+    rising  = rising_entry
+    falling = rsi_e < rsi_ep - 0.5
+    if rising and 40 <= rsi_e <= 70:
+        score += 2;   reasons.append(f"+2  RSI rising in 40–70 zone ({rsi_e})")
+    elif rising:
+        score += 1;   reasons.append(f"+1  RSI rising ({rsi_e})")
+    elif falling:
+        score -= 1;   reasons.append(f"−1  RSI FALLING ({rsi_e}) — wrong for bullish")
+    if rsi_e > 70:
+        score -= 1;   reasons.append(f"−1  RSI overbought ({rsi_e})")
+    elif rsi_e < 30 and rising:
+        score += 0.5; reasons.append(f"+0.5 RSI oversold but turning up ({rsi_e})")
 
-    # 3. MA ALIGNMENT (entry TF) — 3 pts
-    ma = analysis_data['ma_alignment_entry']
-    if ma == 'Bullish':
-        score += 3; reasons.append("+3: Bullish MA alignment (entry TF)")
-    elif ma == 'Bearish':
-        score -= 2; reasons.append("-2: Bearish MA alignment (entry TF)")
+    # RSI on confirmation TF
+    rsid  = rsi_d
+    rsidp = rsi_dp
+    if rsid > rsidp + 0.5 and 40 <= rsid <= 70:
+        score += 1.5; reasons.append(f"+1.5 Conf RSI rising in 40–70 ({rsid})")
+    elif rsid > rsidp + 0.5:
+        score += 0.5; reasons.append(f"+0.5 Conf RSI rising ({rsid})")
+    elif rsid < rsidp - 0.5:
+        score -= 0.5; reasons.append(f"−0.5 Conf RSI falling ({rsid})")
+    if rsid > 70:
+        score -= 0.5; reasons.append(f"−0.5 Conf RSI overbought ({rsid})")
 
-    # 4. MA ALIGNMENT (1D) — 2 pts
-    ma1 = analysis_data['ma_alignment_1d']
-    if ma1 == 'Bullish':
-        score += 2; reasons.append("+2: Bullish MA alignment (1D)")
-    elif ma1 == 'Bearish':
-        score -= 1; reasons.append("-1: Bearish MA alignment (1D)")
+    # MA crossover & divergence / volume as supporting factors
+    xo = analysis["ma_crossover_entry"]
+    if xo == "Bullish Crossover":
+        score += 1.5; reasons.append("+1.5 Bullish MA crossover forming")
+    elif xo == "Bearish Crossover":
+        score -= 1;   reasons.append("−1  Bearish MA crossover forming")
 
-    # 5. PRICE POSITION — 2 pts (bullish wants Near Low = buying dip/HL)
-    pos = analysis_data.get('price_position', 'Unknown')
-    if pos == 'Near Low':
-        score += 2; reasons.append("+2: Price near recent low (good entry at HL)")
-    elif pos == 'Near High':
-        score -= 1; reasons.append("-1: Price near recent high (late entry)")
-    else:
-        score += 0.5; reasons.append("+0.5: Price in middle range")
+    div = analysis["divergence"]
+    if div == "Bullish":
+        score += 1.5; reasons.append("+1.5 Bullish RSI divergence")
+    elif div == "Bearish":
+        score -= 1;   reasons.append("−1  Bearish RSI divergence")
 
-    # 6. RSI (entry TF) — 2 pts
-    rsi = analysis_data['rsi_entry']
-    rsi_p = analysis_data['rsi_entry_prev']
-    if rsi > rsi_p and 40 <= rsi <= 70:
-        score += 2; reasons.append(f"+2: RSI rising in 40-70 zone (entry: {rsi})")
-    elif rsi > 70:
-        score -= 1; reasons.append(f"-1: RSI overbought (entry: {rsi})")
-    elif rsi < 30 and rsi > rsi_p:
-        score += 1.5; reasons.append(f"+1.5: RSI oversold but rising (entry: {rsi})")
-    elif rsi > rsi_p:
-        score += 1; reasons.append(f"+1: RSI rising (entry: {rsi})")
-    elif rsi < rsi_p:
-        score -= 0.5; reasons.append(f"-0.5: RSI falling (entry: {rsi})")
-
-    # 7. RSI (1D) — 1.5 pts
-    rsi_d = analysis_data['rsi_1d']
-    rsi_dp = analysis_data['rsi_1d_prev']
-    if rsi_d > rsi_dp and 40 <= rsi_d <= 70:
-        score += 1.5; reasons.append(f"+1.5: RSI rising in 40-70 zone (1D: {rsi_d})")
-    elif rsi_d > 70:
-        score -= 0.5; reasons.append(f"-0.5: RSI overbought (1D: {rsi_d})")
-    elif rsi_d > rsi_dp:
-        score += 0.5; reasons.append(f"+0.5: RSI rising (1D: {rsi_d})")
-
-    # 8. CROSSOVER (entry TF) — 1.5 pts
-    xo = analysis_data['ma_crossover_entry']
-    if xo == 'Bullish Crossover':
-        score += 1.5; reasons.append("+1.5: Bullish MA crossover forming")
-    elif xo == 'Bearish Crossover':
-        score -= 1; reasons.append("-1: Bearish MA crossover forming")
-
-    # 9. DIVERGENCE — 1.5 pts
-    div = analysis_data['divergence']
-    if div == 'Bullish':
-        score += 1.5; reasons.append("+1.5: Bullish RSI divergence")
-    elif div == 'Bearish':
-        score -= 1; reasons.append("-1: Bearish RSI divergence (against)")
-
-    # 10. VOLUME — 1 pt
-    vol = analysis_data.get('volume_status', 'N/A')
-    if vol == 'High':
-        score += 1; reasons.append("+1: High volume confirmation")
+    vol = analysis.get("volume_status", "N/A")
+    if vol == "High":
+        score += 1;   reasons.append("+1  High volume")
 
     return round(score, 2), reasons
 
 
-# ---------------------------------------------------------------------------
-# BEARISH scoring (V2 — CRITICAL FIX: entry at LH, not LL)
-# ---------------------------------------------------------------------------
-def calculate_confluence_score_bearish(analysis_data):
-    """
-    Enhanced bearish confluence score.
-
-    CRITICAL FIX: For SHORT entry we want price Near High (at LH resistance),
-    NOT at LL (too late — price already fell).
-    RSI at LH should be 50-70 turning down (not oversold).
-    Max ~20 pts.
-    """
+def calculate_confluence_score_bearish(analysis: dict) -> tuple:
+    """Bearish confluence. RSI falling = positive; rising = penalty. Near LH = +3."""
     score = 0.0
-    reasons = []
+    reasons: list = []
 
-    # 1. TREND (entry TF) — 4 pts
-    t = analysis_data['trend_entry']
-    if t == 'Downtrend (LL/LH)':
-        score += 4; reasons.append("+4: Downtrend on entry TF")
-    elif t == 'Uptrend (HH/HL)':
-        score -= 3; reasons.append("-3: Uptrend on entry TF (against)")
+    t = analysis["trend_entry"]
+    if t == "Downtrend (LL/LH)":
+        score += 4;  reasons.append("+4  Downtrend (LL/LH) on entry TF")
+    elif t == "Uptrend (HH/HL)":
+        score -= 3;  reasons.append("−3  Uptrend on entry TF — penalised")
     else:
-        score += 0.5; reasons.append("+0.5: Sideways on entry TF")
+        score += 0.5; reasons.append("+0.5 Sideways entry TF")
 
-    # 2. TREND (1D) — 3 pts
-    t1 = analysis_data['trend_1d']
-    if t1 == 'Downtrend (LL/LH)':
-        score += 3; reasons.append("+3: Downtrend on 1D")
-    elif t1 == 'Uptrend (HH/HL)':
-        score -= 2; reasons.append("-2: Uptrend on 1D (against)")
+    ma = analysis["ma_alignment_entry"]
+    if ma == "Bearish":
+        score += 3;  reasons.append("+3  MA Bearish on entry TF")
+    elif ma == "Bullish":
+        score -= 2;  reasons.append("−2  MA Bullish on entry TF")
+
+    ma1 = analysis["ma_alignment_1d"]
+    if ma1 == "Bearish":
+        score += 2;  reasons.append("+2  MA Bearish on conf TF")
+    elif ma1 == "Bullish":
+        score -= 1;   reasons.append("−1  MA Bullish on conf TF")
+
+    pos      = analysis.get("price_position", "Middle")
+    hl_price = analysis.get("last_hl_price")
+    lh_price = analysis.get("last_lh_price")
+    if pos == "Near LH":
+        score += 3
+        lbl = f"{lh_price:.2f}" if lh_price else "?"
+        reasons.append(f"+3  Price near LH pivot ({lbl}) — ideal SHORT")
+    elif pos == "Near HL":
+        score -= 2
+        lbl = f"{hl_price:.2f}" if hl_price else "?"
+        reasons.append(f"−2  Price near HL ({lbl}) — at support, too late to short")
     else:
-        score += 0.5; reasons.append("+0.5: Sideways on 1D")
+        score += 0.5; reasons.append("+0.5 Price in middle range")
 
-    # 3. MA ALIGNMENT (entry TF) — 3 pts
-    ma = analysis_data['ma_alignment_entry']
-    if ma == 'Bearish':
-        score += 3; reasons.append("+3: Bearish MA alignment (entry TF)")
-    elif ma == 'Bullish':
-        score -= 2; reasons.append("-2: Bullish MA alignment (entry TF)")
-
-    # 4. MA ALIGNMENT (1D) — 2 pts
-    ma1 = analysis_data['ma_alignment_1d']
-    if ma1 == 'Bearish':
-        score += 2; reasons.append("+2: Bearish MA alignment (1D)")
-    elif ma1 == 'Bullish':
-        score -= 1; reasons.append("-1: Bullish MA alignment (1D)")
-
-    # 5. PRICE POSITION (CRITICAL) — 3 pts for Near High
-    # For BEARISH: Near High = at LH resistance = IDEAL SHORT entry
-    #              Near Low  = at LL = TOO LATE, price already fell
-    pos = analysis_data.get('price_position', 'Unknown')
-    if pos == 'Near High':
-        score += 3; reasons.append("+3: Price near recent high (SHORT entry at LH)")
-    elif pos == 'Near Low':
-        score -= 2; reasons.append("-2: Price near recent low (too late, already at LL)")
-    else:
-        score += 0.5; reasons.append("+0.5: Price in middle range")
-
-    # 6. RSI (entry TF) — up to 2.5 pts (context-dependent on position)
-    rsi = analysis_data['rsi_entry']
-    rsi_p = analysis_data['rsi_entry_prev']
-
-    if pos == 'Near High':
-        # At LH resistance: want RSI 50-70 turning down (perfect SHORT setup)
-        if 50 <= rsi <= 70 and rsi < rsi_p:
-            score += 2.5; reasons.append(f"+2.5: RSI turning down from resistance zone (entry: {rsi})")
+    rsi  = analysis["rsi_entry"]
+    rsip = analysis["rsi_entry_prev"]
+    falling = rsi < rsip - 0.5
+    rising  = rsi > rsip + 0.5
+    if pos == "Near LH":
+        if 50 <= rsi <= 70 and falling:
+            score += 2.5; reasons.append(f"+2.5 RSI rolling down from resistance zone ({rsi})")
         elif 50 <= rsi <= 70:
-            score += 1.5; reasons.append(f"+1.5: RSI in resistance zone (entry: {rsi})")
+            score += 1.5; reasons.append(f"+1.5 RSI in resistance zone ({rsi})")
         elif rsi > 70:
-            score += 1; reasons.append(f"+1: RSI overbought at resistance (entry: {rsi})")
+            score += 1;   reasons.append(f"+1  RSI overbought at resistance ({rsi})")
         elif rsi < 30:
-            score -= 1.5; reasons.append(f"-1.5: RSI already oversold at 'high' (entry: {rsi})")
+            score -= 1.5; reasons.append(f"−1.5 RSI oversold at LH — suspicious ({rsi})")
+        elif rising:
+            score -= 1;   reasons.append(f"−1  RSI RISING at resistance ({rsi})")
     else:
-        # Not at ideal position
-        if rsi < rsi_p and 30 <= rsi <= 60:
-            score += 1.5; reasons.append(f"+1.5: RSI falling (entry: {rsi})")
-        elif rsi < 30:
-            score -= 1; reasons.append(f"-1: RSI oversold (late entry: {rsi})")
-        elif rsi < rsi_p:
-            score += 1; reasons.append(f"+1: RSI falling (entry: {rsi})")
-        elif rsi > rsi_p:
-            score -= 0.5; reasons.append(f"-0.5: RSI rising (against: {rsi})")
+        if falling and 30 <= rsi <= 60:
+            score += 2;   reasons.append(f"+2  RSI falling in 30–60 zone ({rsi})")
+        elif falling:
+            score += 1;   reasons.append(f"+1  RSI falling ({rsi})")
+        elif rising:
+            score -= 1;   reasons.append(f"−1  RSI RISING ({rsi}) — wrong for bearish")
+        if rsi < 30:
+            score -= 1;   reasons.append(f"−1  RSI oversold ({rsi}) — late entry")
 
-    # 7. RSI (1D) — 1.5 pts
-    rsi_d = analysis_data['rsi_1d']
-    rsi_dp = analysis_data['rsi_1d_prev']
-    if rsi_d < rsi_dp and 30 <= rsi_d <= 60:
-        score += 1.5; reasons.append(f"+1.5: RSI falling in 30-60 zone (1D: {rsi_d})")
-    elif rsi_d < 30:
-        score -= 0.5; reasons.append(f"-0.5: RSI oversold (1D: {rsi_d})")
-    elif rsi_d < rsi_dp:
-        score += 0.5; reasons.append(f"+0.5: RSI falling (1D: {rsi_d})")
+    rsid  = analysis["rsi_1d"]
+    rsidp = analysis["rsi_1d_prev"]
+    if rsid < rsidp - 0.5 and 30 <= rsid <= 60:
+        score += 1.5; reasons.append(f"+1.5 Conf RSI falling in 30–60 ({rsid})")
+    elif rsid < rsidp - 0.5:
+        score += 0.5; reasons.append(f"+0.5 Conf RSI falling ({rsid})")
+    elif rsid > rsidp + 0.5:
+        score -= 0.5; reasons.append(f"−0.5 Conf RSI rising ({rsid})")
+    if rsid < 30:
+        score -= 0.5; reasons.append(f"−0.5 Conf RSI oversold ({rsid})")
 
-    # 8. CROSSOVER (entry TF) — 1.5 pts
-    xo = analysis_data['ma_crossover_entry']
-    if xo == 'Bearish Crossover':
-        score += 1.5; reasons.append("+1.5: Bearish MA crossover forming")
-    elif xo == 'Bullish Crossover':
-        score -= 1; reasons.append("-1: Bullish MA crossover forming")
+    xo = analysis["ma_crossover_entry"]
+    if xo == "Bearish Crossover":
+        score += 1.5; reasons.append("+1.5 Bearish MA crossover forming")
+    elif xo == "Bullish Crossover":
+        score -= 1;   reasons.append("−1  Bullish MA crossover forming")
 
-    # 9. DIVERGENCE — 1.5 pts
-    div = analysis_data['divergence']
-    if div == 'Bearish':
-        score += 1.5; reasons.append("+1.5: Bearish RSI divergence")
-    elif div == 'Bullish':
-        score -= 1; reasons.append("-1: Bullish RSI divergence (against)")
+    div = analysis["divergence"]
+    if div == "Bearish":
+        score += 1.5; reasons.append("+1.5 Bearish RSI divergence")
+    elif div == "Bullish":
+        score -= 1;   reasons.append("−1  Bullish RSI divergence")
 
-    # 10. VOLUME — 1.5 pts at resistance, 0.5 otherwise
-    vol = analysis_data.get('volume_status', 'N/A')
-    if vol == 'High' and pos == 'Near High':
-        score += 1.5; reasons.append("+1.5: High volume at resistance (distribution)")
-    elif vol == 'High':
-        score += 0.5; reasons.append("+0.5: High volume")
+    vol = analysis.get("volume_status", "N/A")
+    if vol == "High" and pos == "Near LH":
+        score += 1.5; reasons.append("+1.5 High volume at LH resistance (distribution)")
+    elif vol == "High":
+        score += 0.5; reasons.append("+0.5 High volume")
 
     return round(score, 2), reasons
 
 
-# ---------------------------------------------------------------------------
-# Entry description generator (V2 — position-aware)
-# ---------------------------------------------------------------------------
-def generate_entry_description(analysis_data, score=None, is_bullish=True):
-    """Position-aware entry description."""
-    pos = analysis_data.get('price_position', 'Unknown')
-
-    # If score not passed, compute a rough one
-    if score is None:
-        score = 0
-
+def generate_entry_description(analysis: dict, score: float, is_bullish: bool = True) -> str:
+    pos = analysis.get("price_position", "Middle")
+    hl  = analysis.get("last_hl_price")
+    lh  = analysis.get("last_lh_price")
+    grade = (
+        "EXCELLENT" if score >= 12
+        else "GOOD"     if score >= 9
+        else "MODERATE" if score >= 5
+        else "WEAK"
+    )
     if is_bullish:
-        if score >= 12:
-            if pos == 'Near Low':
-                return "EXCELLENT: Uptrend + Price at support (HL forming) + Rising RSI"
-            return "EXCELLENT: Strong uptrend + Bullish alignment + Rising momentum"
-        elif score >= 9:
-            if pos == 'Near Low':
-                return "GOOD: Uptrend + Price near support (good entry for HL)"
-            return "GOOD: Uptrend with bullish structure developing"
-        elif score >= 5:
-            return "MODERATE: Some bullish signals, needs confirmation"
-        else:
-            return "WEAK: Insufficient bullish alignment, avoid or wait"
+        if pos == "Near HL":
+            ref = f" ({hl:.2f})" if hl else ""
+            return f"{grade}: Uptrend + Price at HL support{ref} + Rising RSI"
+        elif pos == "Near LH":
+            return f"{grade}: Uptrend but price near LH resistance — caution"
+        return f"{grade}: Strong uptrend + Bullish alignment + Rising momentum"
     else:
-        if score >= 12:
-            if pos == 'Near High':
-                return "EXCELLENT: Downtrend + Price at resistance (LH forming) + Bearish RSI"
-            return "EXCELLENT: Strong downtrend + Bearish alignment + Falling momentum"
-        elif score >= 9:
-            if pos == 'Near High':
-                return "GOOD: Downtrend + Price near resistance (good SHORT at LH)"
-            return "GOOD: Downtrend with bearish structure developing"
-        elif score >= 5:
-            if pos == 'Near Low':
-                return "TOO LATE: Price already fell to LL, missed SHORT entry"
-            return "MODERATE: Some bearish signals, needs confirmation"
-        else:
-            return "WEAK: Insufficient bearish alignment, avoid or wait"
-
-
-# ---------------------------------------------------------------------------
-# Convenience: compute both scores from raw data (for Historical Rankings)
-# ---------------------------------------------------------------------------
-def compute_confluence_scores(data_1h_or_entry, data_1d, entry_timeframe='2h'):
-    """
-    All-in-one: analyse + score both sides.
-    Returns (bullish_score, bearish_score, analysis_data) or (None, None, None).
-    """
-    analysis = analyze_stock_confluence(data_1h_or_entry, data_1d, entry_timeframe=entry_timeframe)
-    if analysis is None:
-        return None, None, None
-    b_score, _ = calculate_confluence_score_bullish(analysis)
-    s_score, _ = calculate_confluence_score_bearish(analysis)
-    return b_score, s_score, analysis
+        if pos == "Near LH":
+            ref = f" ({lh:.2f})" if lh else ""
+            return f"{grade}: Downtrend + Price at LH resistance{ref} + Falling RSI"
+        elif pos == "Near HL":
+            ref = f" ({hl:.2f})" if hl else ""
+            return f"TOO LATE: Price at HL{ref} — missed SHORT entry"
+        return f"{grade}: Downtrend + Bearish alignment + Falling momentum"
