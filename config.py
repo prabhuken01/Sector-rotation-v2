@@ -56,7 +56,7 @@ SECTOR_ETFS = {
     'Commodities': 'N/A',
     'Defence': 'DEFENCE.NS',
     'Energy': 'MOENERGY.NS',
-    'FMCG': 'ICICIFMCG.NS',
+    'FMCG': 'FMCGIETF.NS',
     'IT': 'ITBEES.NS',
     'Infra': 'INFRABEES.NS',
     'Media': 'N/A',
@@ -72,7 +72,7 @@ SECTOR_ETFS = {
 # Alternate ETF Symbols (Secondary choice, if primary unavailable)
 SECTOR_ETFS_ALTERNATE = {
     'Energy': 'CPSEETF.NS',
-    'FMCG': 'CONSUMBEES.NS',
+    'FMCG': 'ICICIFMCG.NS',
     'Infra': 'INFRAIETF.NS',
     'Metal': 'METALBEES.NS',
     'Pvt Bank': 'PVTBANIETF.NS'
