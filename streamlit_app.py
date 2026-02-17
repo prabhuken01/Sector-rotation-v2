@@ -421,8 +421,12 @@ def fetch_all_sector_data_cached(data_source_key, analysis_date_str, yf_interval
     failed_sectors = []
     
     for sector_name, symbol in data_source.items():
+        if not symbol or str(symbol).strip() == 'N/A':
+            continue
         try:
             alternate_symbol = alternates.get(sector_name) if alternates else None
+            if alternate_symbol and str(alternate_symbol).strip() == 'N/A':
+                alternate_symbol = None
             data, used_symbol = fetch_sector_data_with_alternate(
                 symbol, 
                 alternate_symbol=alternate_symbol,
@@ -3422,10 +3426,25 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
         st.warning("⚠️ Need at least 22 trading days of benchmark data for the 20-day table.")
         return
 
-    # Use the same universe as Sector-Company.xlsx Sheet2
+    # Use the same universe as Sector-Company.xlsx; fallback to Nifty 50 if empty (e.g. Cloud deploy without Excel)
     from company_symbols import SECTOR_COMPANIES
+    _breadth_nifty50 = [
+        'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
+        'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
+        'LT.NS', 'AXISBANK.NS', 'ASIANPAINT.NS', 'MARUTI.NS', 'TITAN.NS',
+        'NESTLEIND.NS', 'ULTRACEMCO.NS', 'WIPRO.NS', 'SUNPHARMA.NS', 'TATAMOTORS.NS',
+        'TECHM.NS', 'HCLTECH.NS', 'BAJFINANCE.NS', 'JSWSTEEL.NS', 'TATASTEEL.NS',
+        'POWERGRID.NS', 'NTPC.NS', 'ONGC.NS', 'COALINDIA.NS', 'ADANIENT.NS',
+        'ADANIPORTS.NS', 'GRASIM.NS', 'DIVISLAB.NS', 'CIPLA.NS', 'DRREDDY.NS',
+        'BAJAJFINSV.NS', 'M&M.NS', 'HEROMOTOCO.NS', 'EICHERMOT.NS', 'MARICO.NS',
+        'GODREJCP.NS', 'DABUR.NS', 'BRITANNIA.NS', 'HDFCLIFE.NS', 'SBILIFE.NS',
+        'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
+    ]
     universe_symbols = sorted({sym for sector_dict in SECTOR_COMPANIES.values() for sym in sector_dict.keys()})
+    if not universe_symbols:
+        universe_symbols = _breadth_nifty50
     n_stocks = len(universe_symbols)
+    _min_bars_breadth = 25
 
     st.markdown("### 📊 Market breadth")
     st.caption(
@@ -3437,14 +3456,21 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
 
     with st.spinner("Building 20-day market breadth table..."):
         end_dt = benchmark_data.index[-1]
-        # Use actual Nifty index (^NSEI) for Nifty column, not benchmark/ETF proxy
         nifty_index_data = fetch_sector_data('^NSEI', end_date=end_dt, interval='1d')
         symbols_dict = {s: s for s in universe_symbols}
         nifty_fetched, _ = fetch_all_sectors_parallel(symbols_dict, end_date=end_dt, interval='1d')
         nifty_closes = {}
         for sym, d in nifty_fetched.items():
-            if d is not None and len(d) >= 50:
+            if d is not None and len(d) >= _min_bars_breadth:
                 nifty_closes[sym] = d['Close']
+        if not nifty_closes and universe_symbols != _breadth_nifty50:
+            symbols_dict_fb = {s: s for s in _breadth_nifty50}
+            nifty_fetched, _ = fetch_all_sectors_parallel(symbols_dict_fb, end_date=end_dt, interval='1d')
+            for sym, d in nifty_fetched.items():
+                if d is not None and len(d) >= _min_bars_breadth:
+                    nifty_closes[sym] = d['Close']
+        if not nifty_closes:
+            st.warning("⚠️ Could not load price data for breadth universe. Table will show Nifty only. Check data source or try again later.")
 
         # Use last 20 business days (Mon–Fri) so no weekday is missing (e.g. Monday)
         last_date = pd.Timestamp(benchmark_data.index[-1]).date()

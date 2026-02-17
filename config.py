@@ -72,6 +72,7 @@ SECTOR_ETFS = {
 # Alternate ETF Symbols (Secondary choice, if primary unavailable)
 SECTOR_ETFS_ALTERNATE = {
     'Energy': 'CPSEETF.NS',
+    'FMCG': 'CONSUMBEES.NS',
     'Infra': 'INFRAIETF.NS',
     'Metal': 'METALBEES.NS',
     'Pvt Bank': 'PVTBANIETF.NS'
