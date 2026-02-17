@@ -28,26 +28,25 @@ SECTOR_COMPANIES = {
         'RATNAMANI.NS': {'weight': 8.9, 'name': 'Ratnamani Metals'},
         'JINDALSTEL.NS': {'weight': 7.8, 'name': 'Jindal Steel'},
         'VEDL.NS': {'weight': 6.4, 'name': 'Vedanta'},
-        'MOIL.NS': {'weight': 5.6, 'name': 'Manganese Ore India'},
     },
     'Defence': {
         'BDL.NS': {'weight': 28.5, 'name': 'Bharat Dynamics'},
         'HAL.NS': {'weight': 25.3, 'name': 'Hindustan Aeronautics'},
         'MAZAGON.NS': {'weight': 18.7, 'name': 'Mazagon Dock'},
-        'CONCOR.NS': {'weight': 12.8, 'name': 'Container Corporation'},
-        'TIINDIA.NS': {'weight': 8.9, 'name': 'Thermax India'},
+        'BEL.NS': {'weight': 12.8, 'name': 'Bharat Electronics'},
+        'CONCOR.NS': {'weight': 8.9, 'name': 'Container Corporation'},
+        'TIINDIA.NS': {'weight': 5.2, 'name': 'Thermax India'},
         'IEX.NS': {'weight': 3.2, 'name': 'Indian Energy'},
-        'NTPC.NS': {'weight': 2.6, 'name': 'NTPC'},
     },
     'Energy': {
         'RELIANCE.NS': {'weight': 35.2, 'name': 'Reliance Industries'},
         'NTPC.NS': {'weight': 18.9, 'name': 'NTPC Limited'},
         'POWERGRID.NS': {'weight': 12.3, 'name': 'Power Grid'},
         'IBREALEST.NS': {'weight': 8.7, 'name': 'IB Realtime'},
-        'MANAPPURAM.NS': {'weight': 6.5, 'name': 'Manappuram Finance'},
-        'BEL.NS': {'weight': 5.2, 'name': 'Bharat Electronics'},
-        'INDIGO.NS': {'weight': 4.1, 'name': 'IndiGo'},
-        'SBIN.NS': {'weight': 3.8, 'name': 'State Bank of India'},
+        'ONGC.NS': {'weight': 6.5, 'name': 'Oil and Natural Gas'},
+        'GAIL.NS': {'weight': 5.2, 'name': 'GAIL India'},
+        'IOC.NS': {'weight': 4.1, 'name': 'Indian Oil Corporation'},
+        'PETRONET.NS': {'weight': 3.8, 'name': 'Petronet LNG'},
     },
     'FMCG': {
         'ITC.NS': {'weight': 22.3, 'name': 'ITC Limited'},
@@ -80,14 +79,11 @@ SECTOR_COMPANIES = {
         'SCCL.NS': {'weight': 5.0, 'name': 'South Coast Commerce'},
     },
     'Media': {
-        'INDIGO.NS': {'weight': 22.1, 'name': 'IndiGo'},
-        'SONYLTV.NS': {'weight': 18.5, 'name': 'Sony TV'},
-        'STARTECH.NS': {'weight': 14.3, 'name': 'Star Tech'},
-        'ZEEL.NS': {'weight': 12.8, 'name': 'Zee Entertainment'},
-        'TVTODAY.NS': {'weight': 10.2, 'name': 'TV Today'},
-        'NETWORK18.NS': {'weight': 8.9, 'name': 'Network 18'},
-        'ICIBANK.NS': {'weight': 6.5, 'name': 'ICICI Bank'},
-        'HDFCBANK.NS': {'weight': 4.7, 'name': 'HDFC Bank'},
+        'SUNTV.NS': {'weight': 25.0, 'name': 'Sun TV Network'},
+        'ZEEL.NS': {'weight': 22.0, 'name': 'Zee Entertainment'},
+        'TVTODAY.NS': {'weight': 20.0, 'name': 'TV Today'},
+        'NETWORK18.NS': {'weight': 18.0, 'name': 'Network 18'},
+        'PVRINOX.NS': {'weight': 15.0, 'name': 'PVR INOX'},
     },
     'Metal': {
         'TATASTEEL.NS': {'weight': 28.9, 'name': 'Tata Steel'},
@@ -96,7 +92,6 @@ SECTOR_COMPANIES = {
         'NMDC.NS': {'weight': 12.3, 'name': 'NMDC Limited'},
         'VEDL.NS': {'weight': 8.6, 'name': 'Vedanta'},
         'JINDALSTEL.NS': {'weight': 3.2, 'name': 'Jindal Steel'},
-        'MOIL.NS': {'weight': 2.1, 'name': 'Manganese Ore India'},
     },
     'Fin Services': {
         # FINIETF = Financial Services Ex-Bank ETF - NBFC, Insurance, Capital Markets
@@ -104,6 +99,7 @@ SECTOR_COMPANIES = {
         'BAJFINANCE.NS': {'weight': 15.40, 'name': 'Bajaj Finance Ltd.'},
         'SHRIRAMFIN.NS': {'weight': 8.20, 'name': 'Shriram Finance Ltd.'},
         'BAJAJFINSV.NS': {'weight': 6.85, 'name': 'Bajaj Finserv Ltd.'},
+        'MANAPPURAM.NS': {'weight': 6.50, 'name': 'Manappuram Finance'},
         'BSE.NS': {'weight': 6.32, 'name': 'BSE Ltd.'},
         'JIOFIN.NS': {'weight': 5.68, 'name': 'Jio Financial Services Ltd.'},
         'SBILIFE.NS': {'weight': 5.37, 'name': 'SBI Life Insurance Company'},
@@ -218,6 +214,10 @@ def _build_sector_companies_from_df(df):
         if pd.isna(symbol) or (isinstance(symbol, str) and not str(symbol).strip()):
             continue
         symbol = str(symbol).strip()
+        # Exclude manganese ore (user removed from Excel)
+        name_str = (str(name) if not pd.isna(name) else '').lower()
+        if 'manganese' in name_str or 'manganese' in symbol.lower():
+            continue
         if sector not in result:
             result[sector] = {}
         if symbol in seen_symbols:
@@ -292,32 +292,37 @@ try:
     from config import SECTOR_COMPANY_EXCEL_PATH
 except Exception:
     SECTOR_COMPANY_EXCEL_PATH = None
+
+def _try_load_excel(path):
+    """Try loading from a given Excel path (Main, Sheet2, first sheet). Returns data or None."""
+    for sheet in ['Main', 'Sheet2', 0]:
+        data = load_sector_companies_from_excel(path, sheet_name=sheet)
+        if data is not None:
+            return data, sheet
+    return None, None
+
+# 1) Try configured path (e.g. E: drive)
+# 2) If that fails, fall back to repo-local Sector-Company.xlsx (for Streamlit Cloud)
+_base = os.path.dirname(os.path.abspath(__file__))
+_local_path = os.path.join(_base, 'Sector-Company.xlsx')
+
+_paths_to_try = []
 if SECTOR_COMPANY_EXCEL_PATH:
-    _excel_path_used = SECTOR_COMPANY_EXCEL_PATH
-else:
-    # Resolve relative to this file's folder so the correct Excel is used regardless of cwd
-    _base = os.path.dirname(os.path.abspath(__file__))
-    _excel_path_used = os.path.join(_base, 'Sector-Company.xlsx')
-_excel_data = load_sector_companies_from_excel(_excel_path_used, sheet_name='Main')
-if _excel_data is not None:
-    SECTOR_COMPANIES = _excel_data
-    _loaded_source = "Sector-Company.xlsx (Main)"
-    SECTOR_COMPANY_EXCEL_PATH_USED = _excel_path_used
-    print("[OK] Loaded sector-company data from", _excel_path_used)
-else:
-    _excel_data = load_sector_companies_from_excel(_excel_path_used, sheet_name='Sheet2')
+    _paths_to_try.append(SECTOR_COMPANY_EXCEL_PATH)
+if _local_path not in _paths_to_try:
+    _paths_to_try.append(_local_path)
+
+for _try_path in _paths_to_try:
+    _excel_data, _sheet_used = _try_load_excel(_try_path)
     if _excel_data is not None:
         SECTOR_COMPANIES = _excel_data
-        _loaded_source = "Sector-Company.xlsx (Sheet2)"
-        SECTOR_COMPANY_EXCEL_PATH_USED = _excel_path_used
-        print("[OK] Loaded sector-company data from", _excel_path_used)
-    else:
-        _excel_data = load_sector_companies_from_excel(_excel_path_used, sheet_name=0)
-        if _excel_data is not None:
-            SECTOR_COMPANIES = _excel_data
-            _loaded_source = 'Sector-Company.xlsx (first sheet)'
-            SECTOR_COMPANY_EXCEL_PATH_USED = _excel_path_used
-            print("[OK] Loaded sector-company data from", _excel_path_used)
+        _loaded_source = f"Sector-Company.xlsx ({_sheet_used})"
+        _excel_path_used = _try_path
+        SECTOR_COMPANY_EXCEL_PATH_USED = _try_path
+        print("[OK] Loaded sector-company data from", _try_path, f"(sheet: {_sheet_used})")
+        break
+else:
+    print("[WARN] Could not load Sector-Company.xlsx from any path; using hardcoded fallback")
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +362,7 @@ def reload_sector_companies_from_excel():
     """
     Re-read Sector-Company.xlsx and update SECTOR_COMPANIES in place.
     Use after editing the Excel so the app shows new names without restart.
+    Tries configured path first, then repo-local fallback.
     Returns (True, path) on success, (False, error_msg) on failure.
     """
     global SECTOR_COMPANIES, SECTOR_COMPANY_EXCEL_PATH_USED
@@ -364,14 +370,17 @@ def reload_sector_companies_from_excel():
         from config import SECTOR_COMPANY_EXCEL_PATH
     except Exception:
         SECTOR_COMPANY_EXCEL_PATH = None
-    path = SECTOR_COMPANY_EXCEL_PATH if SECTOR_COMPANY_EXCEL_PATH else os.path.join(os.path.dirname(os.path.abspath(__file__)), 'Sector-Company.xlsx')
-    data = load_sector_companies_from_excel(path, sheet_name='Main')
-    if data is None:
-        data = load_sector_companies_from_excel(path, sheet_name='Sheet2')
-    if data is None:
-        data = load_sector_companies_from_excel(path, sheet_name=0)
-    if data is not None:
-        SECTOR_COMPANIES = data
-        SECTOR_COMPANY_EXCEL_PATH_USED = path
-        return (True, path)
+    _base = os.path.dirname(os.path.abspath(__file__))
+    _local = os.path.join(_base, 'Sector-Company.xlsx')
+    paths = []
+    if SECTOR_COMPANY_EXCEL_PATH:
+        paths.append(SECTOR_COMPANY_EXCEL_PATH)
+    if _local not in paths:
+        paths.append(_local)
+    for path in paths:
+        data, _ = _try_load_excel(path)
+        if data is not None:
+            SECTOR_COMPANIES = data
+            SECTOR_COMPANY_EXCEL_PATH_USED = path
+            return (True, path)
     return (False, "Sector-Company.xlsx not found or invalid")

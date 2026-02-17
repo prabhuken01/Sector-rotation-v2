@@ -2,11 +2,11 @@
 """
 NSE Market Sector Analysis Tool - Streamlit Web Interface
 Enhanced with configurable weights, ETF proxy, and improved aesthetics
-Version: 2.3.1 - Confluence / breadth fixes (Feb 2026)
+Version: 2.3.2 - Sector mapping fix, screener directional gating (Feb 2026)
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.3.1"
+APP_VERSION = "2.3.2"
 
 import os
 import streamlit as st
@@ -2212,6 +2212,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     
     from indicators import calculate_rsi, calculate_adx, calculate_z_score, calculate_cmf, calculate_mansfield_rs
     from company_symbols import SECTOR_COMPANIES
+    from confluence_fixed import _GATE_FAIL_SCORE
 
     def _is_trending_mode(mw):
         return (mw.get('CMF', 0) != 0 and mw.get('RSI', 0) != 0 and
@@ -2233,36 +2234,34 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     # Synced with Part 3 via session_state (unique key to avoid duplicate widget key across tabs)
     hist_conf_sector_filter = st.radio(
         "Confluence sector universe (synced with Part 3):",
-        options=["Top 4 Bullish Sectors (RSI+CMF)", "Bottom 4 Bearish Sectors (RSI+CMF)", "Universal (All Sectors)"],
+        options=["Top 4 + Bottom 6 (per Momentum Ranking)", "Universal (All Sectors)"],
         index=st.session_state.get("_conf_sector_idx", 0),
         key="hist_conf_sector_filter",
     )
     st.session_state["_conf_sector_idx"] = [
-        "Top 4 Bullish Sectors (RSI+CMF)",
-        "Bottom 4 Bearish Sectors (RSI+CMF)",
+        "Top 4 + Bottom 6 (per Momentum Ranking)",
         "Universal (All Sectors)",
     ].index(hist_conf_sector_filter)
 
-    top_hist_conf_sectors  = None   # for bullish filter
-    bot_hist_conf_sectors  = None   # for bearish filter
+    top_hist_conf_sectors  = None
+    bot_hist_conf_sectors  = None
 
     if sector_data_dict and momentum_weights:
         try:
             from confluence_fixed import get_bottom_n_sectors_by_momentum
-            if hist_conf_sector_filter == "Top 4 Bullish Sectors (RSI+CMF)":
+            if hist_conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
                 top_hist_conf_sectors = get_top_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=4)
-                st.success(f"**Bullish sectors (current date):** {', '.join(top_hist_conf_sectors or [])}")
-            elif hist_conf_sector_filter == "Bottom 4 Bearish Sectors (RSI+CMF)":
-                bot_hist_conf_sectors = get_bottom_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=4)
-                st.warning(f"**Bearish sectors (current date):** {', '.join(bot_hist_conf_sectors or [])}")
+                bot_hist_conf_sectors = get_bottom_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=6)
+                if top_hist_conf_sectors:
+                    st.success(f"**Bullish (current date, top 4):** {', '.join(top_hist_conf_sectors)}")
+                if bot_hist_conf_sectors:
+                    st.warning(f"**Bearish (current date, bottom 6):** {', '.join(bot_hist_conf_sectors)}")
         except Exception:
             pass
-    st.caption("**Top 4 / Bottom 4** in the table are computed **per date** from the same Momentum Ranking (ADX, RS Rating, RSI, DI Spread) as the Momentum tab for that date.")
+    st.caption("**Confluence pertains to top 4 sectors (bullish) and bottom 6 sectors (bearish) per Momentum Ranking for that date.** Table rows are computed **per date** from the same Momentum Ranking (ADX, RS Rating, RSI, DI Spread) as the Momentum tab.")
 
-    if hist_conf_sector_filter == "Top 4 Bullish Sectors (RSI+CMF)":
-        hist_conf_sector_code = 'top4'
-    elif hist_conf_sector_filter == "Bottom 4 Bearish Sectors (RSI+CMF)":
-        hist_conf_sector_code = 'bot4'
+    if hist_conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
+        hist_conf_sector_code = 'top4_bot6'
     else:
         hist_conf_sector_code = 'universal'
 
@@ -2405,6 +2404,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                         rsi = calculate_rsi(subset)
                         adx, _, _, di_spread = calculate_adx(subset)
                         adx_z = calculate_z_score(adx.dropna())
+                        cmf = calculate_cmf(subset)
                         sr = subset['Close'].pct_change().dropna()
                         br = bench_sub['Close'].pct_change().dropna()
                         common = sr.index.intersection(br.index)
@@ -2416,37 +2416,57 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                                 rs_rating = max(0, min(10, 5 + (cr - cb) * 25))
                         rsi_val = rsi.iloc[-1] if not rsi.isna().all() else 50
                         di_val = di_spread.iloc[-1] if not di_spread.isna().all() else 0
+                        cmf_val = cmf.iloc[-1] if not cmf.isna().all() else 0
                         sector_scores.append({
                             'sector': sect_name,
-                            'rsi': rsi_val, 'adx_z': adx_z if not pd.isna(adx_z) else 0,
-                            'rs_rating': rs_rating, 'di_spread': di_val
+                            'rsi': rsi_val,
+                            'adx_z': adx_z if not pd.isna(adx_z) else 0,
+                            'rs_rating': rs_rating,
+                            'di_spread': di_val,
+                            'cmf': cmf_val,
                         })
                     except Exception:
                         continue
                 
                 top_4_this_date = None
-                bot_4_this_date = None
+                bot_6_this_date = None
                 if sector_scores:
                     df_sec = pd.DataFrame(sector_scores)
-                    for c in ['ADX_Z', 'RS_Rating', 'RSI', 'DI_Spread']:
-                        col = c.lower().replace('_', ' ').title() if c == 'DI_Spread' else c
-                        if c == 'DI_Spread':
-                            df_sec['DI_Spread'] = df_sec['di_spread']
-                        df_sec[c + '_Rank'] = df_sec[c.lower() if c != 'DI_Spread' else 'di_spread'].rank(ascending=False, method='average')
-                    tw = sum(momentum_weights.values())
-                    df_sec['Score'] = (
-                        df_sec['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / tw +
-                        df_sec['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / tw +
-                        df_sec['RSI_Rank'] * momentum_weights.get('RSI', 30) / tw +
-                        df_sec['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / tw
-                    )
-                    df_sec = df_sec.sort_values('Score', ascending=True)
+                    use_trending = _is_trending_mode(momentum_weights)
+                    if use_trending and 'rsi' in df_sec.columns and 'cmf' in df_sec.columns and len(df_sec) > 1:
+                        # Trending mode: 50% Z(RSI) + 50% Z(CMF) cross-sectional, same idea as Momentum tab
+                        rsi_mean, rsi_std = df_sec['rsi'].mean(), df_sec['rsi'].std()
+                        cmf_mean, cmf_std = df_sec['cmf'].mean(), df_sec['cmf'].std()
+                        rsi_z = (df_sec['rsi'] - rsi_mean) / rsi_std if rsi_std and not pd.isna(rsi_std) else pd.Series(0.0, index=df_sec.index)
+                        cmf_z = (df_sec['cmf'] - cmf_mean) / cmf_std if cmf_std and not pd.isna(cmf_std) else pd.Series(0.0, index=df_sec.index)
+                        rsi_z = rsi_z.fillna(0.0)
+                        cmf_z = cmf_z.fillna(0.0)
+                        df_sec['Score'] = 0.5 * rsi_z + 0.5 * cmf_z
+                        # Higher Score = stronger momentum → sort descending
+                        df_sec = df_sec.sort_values('Score', ascending=False)
+                    else:
+                        # Historical / mixed mode: rank-based momentum (same weights as main Momentum tab)
+                        for c in ['ADX_Z', 'RS_Rating', 'RSI', 'DI_Spread']:
+                            col = c.lower().replace('_', ' ').title() if c == 'DI_Spread' else c
+                            if c == 'DI_Spread':
+                                df_sec['DI_Spread'] = df_sec['di_spread']
+                            df_sec[c + '_Rank'] = df_sec[c.lower() if c != 'DI_Spread' else 'di_spread'].rank(ascending=False, method='average')
+                        tw = sum(momentum_weights.values()) or 1
+                        df_sec['Score'] = (
+                            df_sec['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / tw +
+                            df_sec['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / tw +
+                            df_sec['RSI_Rank'] * momentum_weights.get('RSI', 30) / tw +
+                            df_sec['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / tw
+                        )
+                        # Lower weighted average rank = better → sort ascending
+                        df_sec = df_sec.sort_values('Score', ascending=True)
+
                     top2 = df_sec.head(2)['sector'].tolist()
                     row['Momentum #1 Sector'] = top2[0] if len(top2) >= 1 else ''
                     row['Momentum #2 Sector'] = top2[1] if len(top2) >= 2 else ''
-                    # Per-date Top 4 / Bottom 4 from same Momentum Ranking (for confluence sector filter)
+                    # Per-date Top 4 / Bottom 6 from same Momentum Ranking (for confluence sector filter)
                     top_4_this_date = df_sec.head(4)['sector'].tolist()
-                    bot_4_this_date = df_sec.tail(4)['sector'].tolist()
+                    bot_6_this_date = df_sec.tail(6)['sector'].tolist()
                 else:
                     row['Momentum #1 Sector'] = ''
                     row['Momentum #2 Sector'] = ''
@@ -2502,16 +2522,16 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     conf_bear_list = []   # (sym, sector, name, bear_score, d, _idx)
                     confluence_details = {}  # sym -> details dict
                     for (sym, sector, name, _s, d, _idx) in screener_list:
-                        # (a) Sector filter — per-date Top/Bottom 4 from Momentum Ranking (same as Momentum tab for this date)
+                        # (a) Sector filter — per-date Top 4 (bullish) / Bottom 6 (bearish) from Momentum Ranking
                         bull_sector_ok = (
                             hist_conf_sector_filter == "Universal (All Sectors)"
                             or (top_4_this_date and sector in top_4_this_date)
-                            or (top_4_this_date is None and bot_4_this_date is None)
+                            or (top_4_this_date is None and bot_6_this_date is None)
                         )
                         bear_sector_ok = (
                             hist_conf_sector_filter == "Universal (All Sectors)"
-                            or (bot_4_this_date and sector in bot_4_this_date)
-                            or (top_4_this_date is None and bot_4_this_date is None)
+                            or (bot_6_this_date and sector in bot_6_this_date)
+                            or (top_4_this_date is None and bot_6_this_date is None)
                         )
                         if not bull_sector_ok and not bear_sector_ok:
                             continue
@@ -2526,9 +2546,9 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                             conf_data_entry, data_1d=conf_data_1d, timeframe=hist_conf_tf_code
                         )
                         if b_score is not None:
-                            if bull_sector_ok:
+                            if bull_sector_ok and b_score > _GATE_FAIL_SCORE:
                                 conf_bull_list.append((sym, sector, name, b_score, d, _idx))
-                            if bear_sector_ok:
+                            if bear_sector_ok and s_score is not None and s_score > _GATE_FAIL_SCORE:
                                 conf_bear_list.append((sym, sector, name, s_score, d, _idx))
                             if c_details:
                                 confluence_details[sym] = c_details
@@ -4125,7 +4145,7 @@ def _compute_confluence_score(data_entry_raw, data_1d=None, timeframe='2h'):
 def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_data_dict=None, momentum_weights=None, df_momentum=None):
     """
     Stock Screener (MA+RSI+VWAP) on sector-company universe (from Sector-Company.xlsx, sheet Main).
-    When df_momentum is provided, Top 4 / Bottom 4 sectors are taken from the Momentum Ranking tab (same date).
+    Sector filter: **Top 4 + Bottom 6 (per Momentum Ranking)** = stocks from top 4 sectors (bullish) + bottom 6 sectors (bearish); **Universal** = all sectors.
 
     Scoring: 1 pt each for RSI (1W/1D/1H) up, 1 pt each for Price > 8/20/50 SMA, + VWAP (1H). RSI divergence not used.
     Columns:
@@ -4155,18 +4175,13 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
     with col_toggle:
         sector_filter = st.radio(
             "Select sector universe:",
-            options=["Top 4 Bullish Sectors (RSI+CMF)", "Bottom 4 Bearish Sectors (RSI+CMF)", "Universal (All Sectors)"],
+            options=["Top 4 + Bottom 6 (per Momentum Ranking)", "Universal (All Sectors)"],
             index=st.session_state.get("_conf_sector_idx", 0),
             key="stock_screener_sector_filter",
-            help=(
-                "**Top 4 Bullish:** Stocks from 4 sectors with strongest RSI+CMF.  \n"
-                "**Bottom 4 Bearish:** Stocks from 4 weakest sectors (money flowing OUT).  \n"
-                "**Universal:** All sectors."
-            ),
+            help="**Top 4 + Bottom 6:** Bullish from top 4 sectors, bearish from bottom 6 (per Momentum Ranking). **Universal:** All sectors.",
         )
         st.session_state["_conf_sector_idx"] = [
-            "Top 4 Bullish Sectors (RSI+CMF)",
-            "Bottom 4 Bearish Sectors (RSI+CMF)",
+            "Top 4 + Bottom 6 (per Momentum Ranking)",
             "Universal (All Sectors)",
         ].index(sector_filter)
 
@@ -4174,73 +4189,58 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
     bot_sectors = None
 
     def _top_bottom_from_df(d):
-        """Get top 4 and bottom 4 sector names from Momentum-tab df. Returns (top_list, bottom_list) or (None, None)."""
+        """Get top 4 and bottom 6 sector names from Momentum-tab df. Returns (top_list, bottom_list) or (None, None)."""
         if d is None or d.empty or 'Sector' not in d.columns:
             return None, None
         try:
             score_col = 'Momentum_Score' if 'Momentum_Score' in d.columns else None
             if score_col is None:
                 return None, None
-            # Ensure numeric for sort (in case of string formatting)
             scores = pd.to_numeric(d[score_col], errors='coerce')
             if scores.isna().all():
                 return None, None
             sorted_df = d.assign(_ms=scores).sort_values('_ms', ascending=False)
             top = sorted_df.head(4)['Sector'].tolist()
-            bot = sorted_df.tail(4)['Sector'].tolist()
+            bot = sorted_df.tail(6)['Sector'].tolist()
             return top, bot
         except Exception:
             return None, None
 
     with col_info:
-        # Prefer Momentum Ranking tab outcome (same date) when available
         top_from_df, bot_from_df = _top_bottom_from_df(df_momentum)
         if top_from_df is not None:
-            if sector_filter == "Top 4 Bullish Sectors (RSI+CMF)":
+            if sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
                 top_sectors = top_from_df
-                st.info("**🎯 Top 4 Bullish:** from **Momentum Ranking** tab (ADX, RS Rating, RSI, DI Spread) for this date.")
-                if top_sectors:
-                    st.success(f"**✅ Sectors:** {', '.join(top_sectors)}")
-            elif sector_filter == "Bottom 4 Bearish Sectors (RSI+CMF)":
                 bot_sectors = bot_from_df
-                st.info("**⚠️ Bottom 4 Bearish:** from **Momentum Ranking** tab (weakest 4) for this date.")
+                st.info("**Confluence pertains to top 4 sectors (bullish) and bottom 6 sectors (bearish) per Momentum Ranking** for this date.")
+                if top_sectors:
+                    st.success(f"**✅ Bullish (top 4):** {', '.join(top_sectors)}")
                 if bot_sectors:
-                    st.warning(f"**Sectors:** {', '.join(bot_sectors)}")
+                    st.warning(f"**⚠️ Bearish (bottom 6):** {', '.join(bot_sectors)}")
             else:
                 st.info("**📊 Universal:** Scanning all stocks from all sectors.")
         elif sector_data_dict and momentum_weights:
             try:
                 from confluence_fixed import get_bottom_n_sectors_by_momentum
-                if sector_filter == "Top 4 Bullish Sectors (RSI+CMF)":
-                    top_sectors = get_top_n_sectors_by_momentum(
-                        sector_data_dict, momentum_weights, n=4,
-                    )
-                    st.info("**🎯 Top 4 Bullish:** sectors by RSI+CMF (Momentum tab not available).")
+                if sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
+                    top_sectors = get_top_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=4)
+                    bot_sectors = get_bottom_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=6)
+                    st.info("**Confluence pertains to top 4 (bullish) and bottom 6 (bearish) sectors** per Momentum Ranking.")
                     if top_sectors:
-                        st.success(f"**✅ Sectors:** {', '.join(top_sectors)}")
-                elif sector_filter == "Bottom 4 Bearish Sectors (RSI+CMF)":
-                    bot_sectors = get_bottom_n_sectors_by_momentum(
-                        sector_data_dict, momentum_weights, n=4,
-                    )
-                    st.info("**⚠️ Bottom 4 Bearish:** weakest sectors by RSI+CMF.")
+                        st.success(f"**✅ Bullish:** {', '.join(top_sectors)}")
                     if bot_sectors:
-                        st.warning(f"**Sectors:** {', '.join(bot_sectors)}")
+                        st.warning(f"**⚠️ Bearish:** {', '.join(bot_sectors)}")
                 else:
                     st.info("**📊 Universal:** Scanning all stocks from all sectors.")
             except Exception:
-                # Retry from Momentum tab df if available (e.g. column type or timing)
                 top_retry, bot_retry = _top_bottom_from_df(df_momentum)
-                if top_retry is not None:
-                    if sector_filter == "Top 4 Bullish Sectors (RSI+CMF)":
-                        top_sectors = top_retry
-                        st.info("**🎯 Top 4 Bullish:** from **Momentum Ranking** tab (fallback).")
-                        if top_sectors:
-                            st.success(f"**✅ Sectors:** {', '.join(top_sectors)}")
-                    elif sector_filter == "Bottom 4 Bearish Sectors (RSI+CMF)":
-                        bot_sectors = bot_retry
-                        st.info("**⚠️ Bottom 4 Bearish:** from **Momentum Ranking** tab (fallback).")
-                        if bot_sectors:
-                            st.warning(f"**Sectors:** {', '.join(bot_sectors)}")
+                if top_retry is not None and sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
+                    top_sectors, bot_sectors = top_retry, bot_retry
+                    st.info("**Confluence pertains to top 4 + bottom 6 sectors** (fallback).")
+                    if top_sectors:
+                        st.success(f"**✅ Bullish:** {', '.join(top_sectors)}")
+                    if bot_sectors:
+                        st.warning(f"**⚠️ Bearish:** {', '.join(bot_sectors)}")
                 else:
                     st.warning("⚠️ Could not determine sectors — using all sectors.")
         else:
@@ -4272,10 +4272,8 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
     # BUILD UNIVERSE WITH SECTOR FILTER
     # ============================================================
     sectors_to_analyze = None
-    if sector_filter == "Top 4 Bullish Sectors (RSI+CMF)" and top_sectors:
-        sectors_to_analyze = set(top_sectors)
-    elif sector_filter == "Bottom 4 Bearish Sectors (RSI+CMF)" and bot_sectors:
-        sectors_to_analyze = set(bot_sectors)
+    if sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)" and (top_sectors or bot_sectors):
+        sectors_to_analyze = set(top_sectors or []) | set(bot_sectors or [])
 
     universe = []
     for sector, syms in SECTOR_COMPANIES.items():
@@ -4285,7 +4283,7 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
             universe.append((sector, sym, info.get("name", sym)))
 
     if sectors_to_analyze:
-        label = "Top 4 Bullish" if sector_filter == "Top 4 Bullish Sectors (RSI+CMF)" else "Bottom 4 Bearish"
+        label = "Top 4 + Bottom 6" if sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)" else "Universal"
         st.markdown(f"### 📊 Stock Screener ({len(universe)} Stocks from {len(sectors_to_analyze)} {label} Sectors)")
     else:
         st.markdown(f"### 📊 Stock Screener ({len(universe)} Stocks from All Sectors)")
@@ -4483,8 +4481,15 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
     df = pd.DataFrame(results)
     df_sorted = df.sort_values(["Final score", "Symbol"], ascending=[False, True])
 
-    top_bullish = df_sorted.head(10)
-    top_bearish = df_sorted.tail(10).iloc[::-1]
+    # When "Top 4 + Bottom 6": Bullish = top 10 from top 4 sectors only; Bearish = bottom 10 from bottom 6 sectors only (synced with Historical Rankings)
+    if sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)" and (top_sectors or bot_sectors):
+        bull_candidates = df_sorted[df_sorted["Sector"].isin(top_sectors or [])] if top_sectors else pd.DataFrame()
+        bear_candidates = df_sorted[df_sorted["Sector"].isin(bot_sectors or [])] if bot_sectors else pd.DataFrame()
+        top_bullish = bull_candidates.head(10) if not bull_candidates.empty else df_sorted.head(10)
+        top_bearish = (bear_candidates.tail(10).iloc[::-1] if not bear_candidates.empty else df_sorted.tail(10).iloc[::-1])
+    else:
+        top_bullish = df_sorted.head(10)
+        top_bearish = df_sorted.tail(10).iloc[::-1]
 
     def sentiment_color(score):
         if pd.isna(score):
@@ -4507,7 +4512,7 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
 
     st.caption(
         "**Scoring (MA+RSI+VWAP):** Same as Historical Rankings. Score = 1 pt each RSI (1W/1D/1H) up + 1 pt each Price > 8/20/50 SMA + VWAP (1H). "
-        "**MA+RSI+VWAP:** 1 pt each for RSI (1W/1D/1H) up, 1 pt each for Price > 8/20/50 SMA, + VWAP (1H). RSI divergence not used. Tie-break: by Symbol. Top 10 = Bullish, bottom 10 = Bearish."
+        "**Sector scope:** When \"Top 4 + Bottom 6\" is selected, tables include stocks from **top 4 sectors (bullish) and bottom 6 sectors (bearish)** per Momentum Ranking; \"Universal\" = all sectors. Tie-break: by Symbol. Top 10 = Bullish, bottom 10 = Bearish."
     )
 
     # DataFrame for Part 3 (Fibonacci) and Part 4 (Confluence): must have Symbol, Sector, Company Name
@@ -4753,6 +4758,7 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
     # PART 3: INDIVIDUAL STOCK RANKING - CONFLUENCE ANALYSIS (FIXED)
     # ============================================================
     st.markdown("## 🏆 PART 3: Individual Stock Ranking - Confluence Analysis")
+    st.caption("**Logic summary (v3.1):** Confluence uses **top 4 sectors (bullish) and bottom 6 sectors (bearish)** per Momentum Ranking when that filter is selected. Only stocks with score > gate-fail threshold are shown in Top 8 tables; rejected stocks appear in the Excel Rejected sheet.")
     st.markdown("---")
 
     from confluence_fixed import (
@@ -4760,9 +4766,11 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
         calculate_confluence_score_bullish,
         calculate_confluence_score_bearish,
         generate_entry_description,
+        build_confluence_excel,
+        _GATE_FAIL_SCORE,
     )
 
-    # --- Sector universe filter for confluence analysis (Top 4 vs All) ---
+    # --- Sector universe: Top 4 (bullish) + Bottom 6 (bearish) per Momentum Ranking ---
     st.markdown("### 🎯 Sector Selection for Confluence Analysis")
 
     col_toggle_conf, col_info_conf = st.columns([1, 2])
@@ -4770,57 +4778,53 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
     with col_toggle_conf:
         conf_sector_filter = st.radio(
             "Confluence sector universe (synced with Historical Rankings):",
-            options=["Top 4 Bullish Sectors (RSI+CMF)", "Bottom 4 Bearish Sectors (RSI+CMF)", "Universal (All Sectors)"],
+            options=["Top 4 + Bottom 6 (per Momentum Ranking)", "Universal (All Sectors)"],
             index=st.session_state.get("_conf_sector_idx", 0),
             key="part3_conf_sector_filter",
         )
         st.session_state["_conf_sector_idx"] = [
-            "Top 4 Bullish Sectors (RSI+CMF)",
-            "Bottom 4 Bearish Sectors (RSI+CMF)",
+            "Top 4 + Bottom 6 (per Momentum Ranking)",
             "Universal (All Sectors)",
         ].index(conf_sector_filter)
 
-    top_conf_sectors = None   # bullish universe
-    bot_conf_sectors = None   # bearish universe
+    top_conf_sectors = None
+    bot_conf_sectors = None
 
     with col_info_conf:
-        # Use same resilient Momentum-tab outcome as sector filter above
         top_conf_from_df, bot_conf_from_df = _top_bottom_from_df(df_momentum)
         if top_conf_from_df is not None:
-            if conf_sector_filter == "Top 4 Bullish Sectors (RSI+CMF)":
+            if conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
                 top_conf_sectors = top_conf_from_df
-                st.info("**Bullish universe:** top 4 from **Momentum Ranking** (this date).")
-                st.success(f"**✅ Bullish Sectors:** {', '.join(top_conf_sectors or [])}")
-            elif conf_sector_filter == "Bottom 4 Bearish Sectors (RSI+CMF)":
                 bot_conf_sectors = bot_conf_from_df
-                st.info("**Bearish universe:** bottom 4 from **Momentum Ranking** (this date).")
-                st.warning(f"**⚠️ Bearish Sectors:** {', '.join(bot_conf_sectors or [])}")
+                st.info("**Confluence pertains to top 4 sectors (bullish) and bottom 6 sectors (bearish) per Momentum Ranking** for this date.")
+                if top_conf_sectors:
+                    st.success(f"**✅ Bullish (top 4):** {', '.join(top_conf_sectors)}")
+                if bot_conf_sectors:
+                    st.warning(f"**⚠️ Bearish (bottom 6):** {', '.join(bot_conf_sectors)}")
             else:
                 st.info("**Universal:** all stocks from all sectors.")
         elif sector_data_dict and momentum_weights:
             try:
                 from confluence_fixed import get_bottom_n_sectors_by_momentum
-                if conf_sector_filter == "Top 4 Bullish Sectors (RSI+CMF)":
+                if conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
                     top_conf_sectors = get_top_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=4)
-                    st.info("**Bullish universe:** top 4 momentum sectors (RSI+CMF).")
-                    st.success(f"**✅ Bullish Sectors:** {', '.join(top_conf_sectors or [])}")
-                elif conf_sector_filter == "Bottom 4 Bearish Sectors (RSI+CMF)":
-                    bot_conf_sectors = get_bottom_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=4)
-                    st.info("**Bearish universe:** bottom 4 momentum sectors (RSI+CMF).")
-                    st.warning(f"**⚠️ Bearish Sectors:** {', '.join(bot_conf_sectors or [])}")
+                    bot_conf_sectors = get_bottom_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=6)
+                    st.info("**Confluence pertains to top 4 (bullish) and bottom 6 (bearish) sectors** per Momentum Ranking.")
+                    if top_conf_sectors:
+                        st.success(f"**✅ Bullish:** {', '.join(top_conf_sectors)}")
+                    if bot_conf_sectors:
+                        st.warning(f"**⚠️ Bearish:** {', '.join(bot_conf_sectors)}")
                 else:
                     st.info("**Universal:** all stocks from all sectors.")
             except Exception:
                 top_retry, bot_retry = _top_bottom_from_df(df_momentum)
-                if top_retry is not None:
-                    if conf_sector_filter == "Top 4 Bullish Sectors (RSI+CMF)":
-                        top_conf_sectors = top_retry
-                        st.info("**Bullish universe:** top 4 from **Momentum Ranking** (fallback).")
-                        st.success(f"**✅ Bullish Sectors:** {', '.join(top_conf_sectors or [])}")
-                    elif conf_sector_filter == "Bottom 4 Bearish Sectors (RSI+CMF)":
-                        bot_conf_sectors = bot_retry
-                        st.info("**Bearish universe:** bottom 4 from **Momentum Ranking** (fallback).")
-                        st.warning(f"**⚠️ Bearish Sectors:** {', '.join(bot_conf_sectors or [])}")
+                if top_retry is not None and conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
+                    top_conf_sectors, bot_conf_sectors = top_retry, bot_retry
+                    st.info("**Confluence pertains to top 4 + bottom 6 sectors** (fallback).")
+                    if top_conf_sectors:
+                        st.success(f"**✅ Bullish:** {', '.join(top_conf_sectors)}")
+                    if bot_conf_sectors:
+                        st.warning(f"**⚠️ Bearish:** {', '.join(bot_conf_sectors)}")
                 else:
                     st.warning("⚠️ Could not resolve sector lists — using all sectors.")
         else:
@@ -4881,23 +4885,17 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
         sector = row['Sector']
         company_name = row['Company Name']
 
-        # (a+b) Sector filtering — separate lists for bullish and bearish
-        # When sector lists couldn't be resolved (None), treat as all sectors so confluence still runs
+        # (a+b) Sector filtering — Top 4 (bullish) + Bottom 6 (bearish) or Universal
         use_all_bull = (
             conf_sector_filter == "Universal (All Sectors)"
-            or (conf_sector_filter == "Top 4 Bullish Sectors (RSI+CMF)" and not top_conf_sectors)
-            or (conf_sector_filter == "Bottom 4 Bearish Sectors (RSI+CMF)" and not bot_conf_sectors)
+            or (conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)" and not top_conf_sectors)
         )
         use_all_bear = (
             conf_sector_filter == "Universal (All Sectors)"
-            or (conf_sector_filter == "Bottom 4 Bearish Sectors (RSI+CMF)" and not bot_conf_sectors)
+            or (conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)" and not bot_conf_sectors)
         )
         bull_ok = use_all_bull or (top_conf_sectors and sector in top_conf_sectors)
-        bear_ok = (
-            use_all_bear
-            or (bot_conf_sectors and sector in bot_conf_sectors)
-            or conf_sector_filter == "Top 4 Bullish Sectors (RSI+CMF)"  # bearish table still runs
-        )
+        bear_ok = use_all_bear or (bot_conf_sectors and sector in bot_conf_sectors)
         if not bull_ok and not bear_ok:
             continue
 
@@ -4965,9 +4963,10 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
                 'Price Pos.': analysis_data.get('price_position', 'Unknown'),
             }
 
-            if bull_ok:
+            # v3.1: only include stocks that pass Phase-1 gates (score > _GATE_FAIL_SCORE)
+            if bull_ok and bullish_score > _GATE_FAIL_SCORE:
                 stock_results_bullish.append({**common, 'Score': int(round(bullish_score)), 'Description': bullish_desc})
-            if bear_ok:
+            if bear_ok and bearish_score > _GATE_FAIL_SCORE:
                 stock_results_bearish.append({**common, 'Score': int(round(bearish_score)), 'Description': bearish_desc})
 
         except Exception:
@@ -5010,7 +5009,7 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
 
         # --- Display Bullish ---
         st.markdown(f"### 🟢 Top 8 Bullish by Confluence ({conf_tf_label})")
-        st.caption("Score ≥ 12 = excellent, ≥ 9 = good. **Price Pos. 'Near HL'** = ideal BUY at pivot support.")
+        st.caption("Only stocks **passing Phase-1 gates** (score > -5) are included. Score ≥ 12 = excellent, ≥ 9 = good. **Price Pos. 'Near HL'** = ideal BUY at pivot support.")
 
         def _color_bull(val):
             try:
@@ -5049,7 +5048,7 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
 
         # --- Display Bearish ---
         st.markdown(f"### 🔴 Top 8 Bearish by Confluence ({conf_tf_label})")
-        st.caption("Score ≥ 12 = excellent, ≥ 9 = good. **Price Pos. 'Near LH'** = ideal SHORT at pivot resistance.")
+        st.caption("Only stocks **passing Phase-1 gates** (score > -5) are included. Score ≥ 12 = excellent, ≥ 9 = good. **Price Pos. 'Near LH'** = ideal SHORT at pivot resistance.")
 
         def _color_bear(val):
             try:
@@ -5104,10 +5103,65 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
         if bear_too_late > 0:
             st.warning(f"⚠️ {bear_too_late} bearish setup(s) are at 'Near HL' — TOO LATE for SHORT (price at support).")
 
-        st.success(f"✅ Confluence analysis complete! Analyzed {len(stock_results_bullish)} stocks on {conf_tf_label}.")
+        st.success(f"✅ Confluence analysis complete! Analyzed {len(stock_results_bullish) + len(stock_results_bearish)} stocks on {conf_tf_label} (only stocks passing Phase-1 gates shown in tables).")
 
-        # Interpretation guide (V2: max ~20 pts)
-        with st.expander("ℹ️ Score Interpretation Guide (V2)"):
+        # ── Download button ────────────────────────────────────────────────────
+        st.markdown("### 📥 Download Confluence Summary")
+
+        _analysis_date_str = (
+            analysis_date.strftime('%Y-%m-%d')
+            if hasattr(analysis_date, 'strftime')
+            else str(analysis_date)[:10]
+        )
+
+        try:
+            _dl_cols = ['Rank', 'Sector', 'Symbol', 'Company',
+                        f'Trend ({entry_label})', f'Trend ({conf_label})',
+                        f'MA Align ({entry_label})', f'MA Align ({conf_label})',
+                        f'RSI ({entry_label})', f'RSI ({conf_label})',
+                        f'Setup ({entry_label})', 'Divergence', 'Price Pos.',
+                        'Score', 'Description']
+            _dl_bull = df_bullish[_dl_cols].copy() if all(c in df_bullish.columns for c in _dl_cols) else df_bullish.copy()
+            _dl_bear = df_bearish[_dl_cols].copy() if all(c in df_bearish.columns for c in _dl_cols) else df_bearish.copy()
+
+            _excel_bytes = build_confluence_excel(
+                df_bull        = _dl_bull,
+                df_bear        = _dl_bear,
+                timeframe_label= conf_tf_label,
+                analysis_date  = _analysis_date_str,
+                sector_filter  = conf_sector_filter,
+            )
+
+            _bull_pass = len(df_bullish[df_bullish['Score'] > _GATE_FAIL_SCORE])
+            _bear_pass = len(df_bearish[df_bearish['Score'] > _GATE_FAIL_SCORE])
+            _bull_rej  = len(df_bullish) - _bull_pass
+            _bear_rej  = len(df_bearish) - _bear_pass
+
+            col_dl1, col_dl2 = st.columns([1, 2])
+            with col_dl1:
+                st.download_button(
+                    label     = f"⬇️ Download Excel ({conf_tf_label})",
+                    data      = _excel_bytes,
+                    file_name = f"confluence_{conf_tf_label.replace(' ','_')}_{_analysis_date_str}.xlsx",
+                    mime      = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type      = "primary",
+                    key       = "confluence_download_excel",
+                )
+            with col_dl2:
+                st.info(
+                    f"**Excel contains 4 sheets:**  \n"
+                    f"① Summary (gate rules + key metrics)  \n"
+                    f"② 🟢 Top Bullish — **{_bull_pass}** passed ({_bull_rej} rejected)  \n"
+                    f"③ 🔴 Top Bearish — **{_bear_pass}** passed ({_bear_rej} rejected)  \n"
+                    f"④ ⛔ Rejected — stocks that failed Phase 1 gates"
+                )
+        except Exception as _dl_err:
+            st.warning(f"⚠️ Download not available: {_dl_err}")
+
+        st.markdown("---")
+
+        # Interpretation guide (v3.1)
+        with st.expander("ℹ️ Score Interpretation Guide (v3.1)"):
             st.markdown("""
 **Max score ≈ 20 pts** per side (10 factors across entry TF + 1D).
 
@@ -5116,14 +5170,14 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
 - **9–12:** 🟢 Good / strong — solid entry opportunity, most factors aligned
 - **5–9:** 🟡 Moderate — some confirmation needed, mixed signals
 - **< 5:** 🔴 Weak — high conflict, AVOID
-- **< 0:** 🔴 Opposite setup — aligned for the other direction
+- **≤ -5 (rejected):** ⛔ Failed Phase-1 gates — not shown in Top 8 tables; see Rejected sheet in Excel.
 
 **Price Position:**
 - **Near HL** = within 3% of last confirmed pivot LOW → ideal for **Bullish** (buy at HL support)
 - **Near LH** = within 3% of last confirmed pivot HIGH → ideal for **Bearish** (short at LH resistance)
 - Bearish at "Near HL" = **TOO LATE** (price at support)
 
-**V3 logic:** Pivot-based HH/HL/LH/LL (Pine-Script style); separate bullish/bearish scoring; RSI direction enforced (rising for bull, falling for bear); bearish from Bottom 4 sectors option; shared TF/sector state with Historical Rankings.
+**v3.1 logic:** Phase-1 hard gates for bullish (Uptrend required, RSI rising & <70 required, MA not Bearish required). Middle price position is **allowed** (+1 pt). Near HL = +3 (ideal), Middle = +1 (acceptable), Near LH = −1 (caution, not rejected unless RSI also falling). Graduated RSI zone scoring: 40–55 = +2.5 (sweet spot), 55–65 = +2, 65–70 = +1. Rejected stocks shown in ⛔ Rejected sheet of the Excel download. Confluence pertains to **top 4 sectors (bullish) and bottom 6 sectors (bearish)** per Momentum Ranking when that filter is selected.
 """)
 
         # --- Last 30 days: individual parameter lookback per stock ---
