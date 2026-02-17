@@ -1,6 +1,14 @@
-## Confluence Logic – Version 2.3.1
+## Confluence Logic – Version 2.3.2
 
-This document summarizes the **core logic** used for confluence scoring and sector selection in v2.3.1.
+This document summarizes the **core logic** used for confluence scoring and sector selection in v2.3.2 (and v2.3.1).
+
+### 0. Sector–company mapping (Stock Screener & Confluence)
+
+- **Primary source:** `Sector-Company.xlsx` (sheet **Main**). Path is configurable; app loads it at startup and shows the path in the UI. Use **Sector Companies** tab → **Reload from Excel** after editing the file.
+- **Fallback:** If the Excel file is missing or fails to load, the app uses the static mapping in `company_symbols.py`. In the fallback:
+  - **Energy** contains only energy/oil & gas names (e.g. Reliance, NTPC, Power Grid, ONGC, GAIL, Indian Oil, Petronet). Manappuram Finance and Bharat Electronics are **not** under Energy.
+  - **Manappuram Finance** (`MANAPPURAM.NS`) is under **Fin Services** (NBFC).
+  - **Bharat Electronics** (`BEL.NS`) is under **Defence**.
 
 ### 1. Sector universe for Confluence (Stock Screener & Historical Rankings)
 
@@ -11,12 +19,15 @@ This document summarizes the **core logic** used for confluence scoring and sect
 
 2. **Stock Screener (current day)**
    - When `df_momentum` is available (the main analysis result):
-     - **Top 4 Bullish**: first 4 sectors by `Momentum_Score` (descending).
-     - **Bottom 4 Bearish**: last 4 sectors by `Momentum_Score` (descending).
-   - These lists drive:
-     - The **Screener sector universe** (which sectors to scan).
-     - The **Confluence sector universe** in the Screener tab.
-   - If `df_momentum` is not available, the Screener falls back to **RSI+CMF Z‑score** per sector.
+     - **Top 4 (bullish):** first 4 sectors by `Momentum_Score` (descending).
+     - **Bottom 6 (bearish):** last 6 sectors by `Momentum_Score` (descending).
+   - **Sector filter option:** **"Top 4 + Bottom 6 (per Momentum Ranking)"** or **"Universal (All Sectors)"**.
+   - When **Top 4 + Bottom 6** is selected:
+     - The **screener universe** is stocks from those 10 sectors (top 4 ∪ bottom 6).
+     - **Top 10 Bullish** = top 10 by MA+RSI+VWAP score from **top 4 sectors only**.
+     - **Top 10 Bearish** = bottom 10 by score from **bottom 6 sectors only** (same logic as Historical Rankings).
+   - Confluence in the Screener tab uses the same top 4 (bullish) and bottom 6 (bearish) sector lists.
+   - If `df_momentum` is not available, the Screener falls back to **RSI+CMF Z‑score** per sector to derive top 4 and bottom 6.
 
 3. **Historical Rankings (per date)**
    - For **each date** in the 30‑day table:
@@ -26,12 +37,12 @@ This document summarizes the **core logic** used for confluence scoring and sect
         - **Historical / Mixed mode**: rank‑based weighted average of **ADX_Z, RS_Rating, RSI, DI_Spread (and CMF if weighted)**; lower weighted rank is better.
      3. Sort sectors by this `Score` to obtain:
         - `Momentum #1 Sector`, `Momentum #2 Sector` for that date.
-        - **Top 4** and **Bottom 4** sectors for that date:
-          - **Top 4 Bullish sectors**: best 4 by `Score` for that date.
-          - **Bottom 4 Bearish sectors**: worst 4 by `Score` for that date.
-   - The **Historical Confluence** filter uses these date‑specific Top 4 / Bottom 4 lists so that:
-     - Bullish confluence only considers stocks from that date’s Top 4 sectors (when Top 4 filter is selected).
-     - Bearish confluence only considers stocks from that date’s Bottom 4 sectors (when Bottom 4 filter is selected).
+        - **Top 4** and **Bottom 6** sectors for that date:
+          - **Top 4 (bullish):** best 4 by `Score` for that date.
+          - **Bottom 6 (bearish):** worst 6 by `Score` for that date.
+   - The **Historical Confluence** filter uses these date‑specific Top 4 / Bottom 6 lists so that:
+     - Bullish confluence only considers stocks from that date’s **Top 4** sectors.
+     - Bearish confluence only considers stocks from that date’s **Bottom 6** sectors.
 
 ### 2. Bullish Confluence Scoring (v2.3.1)
 
@@ -110,4 +121,17 @@ For setups passing all gates, additional points are added as follows:
 
 The final score is rounded to 2 decimals and used to rank bullish confluence candidates.  
 Only stocks satisfying the **core gates** (RSI up on both TFs, MA Bullish on both, Uptrend HH/HL with price near HL) can receive a positive confluence score.
+
+---
+
+### Changelog
+
+**v2.3.2**
+- Version set to **2.3.2**.
+- **Confluence section (Part 3)** already uses **top 4 sectors for bullish** and **bottom 6 sectors for bearish**: only stocks in `top_conf_sectors` are appended to Top 8 Bullish, and only stocks in `bot_conf_sectors` to Top 8 Bearish (with gate filter score > -5). No code change needed there.
+- **Stock Screener MA+RSI+VWAP tables:** **Top 10 Bullish** = top 10 by score from **top 4 sectors** only; **Top 10 Bearish** = bottom 10 from **bottom 6 sectors** only (in sync with Confluence and Historical Rankings).
+
+**v2.3.1**
+- **Sector–company mapping:** Primary source is **Sector-Company.xlsx**. Static fallback in `company_symbols.py` corrected: **Energy** no longer contains Manappuram Finance or Bharat Electronics; Manappuram is in **Fin Services**, BEL in **Defence**. Energy fallback uses only energy/oil & gas names (e.g. Reliance, NTPC, Power Grid, ONGC, GAIL, IOC, Petronet).
+- **Confluence & Historical Rankings:** Sector options are **"Top 4 + Bottom 6 (per Momentum Ranking)"** and **"Universal (All Sectors)"**; no separate "top 4 only" / "bottom 4 only" radios. Bottom count is **6** (bearish), not 4.
 

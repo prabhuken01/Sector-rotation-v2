@@ -2,11 +2,11 @@
 """
 NSE Market Sector Analysis Tool - Streamlit Web Interface
 Enhanced with configurable weights, ETF proxy, and improved aesthetics
-Version: 2.3.1 - Confluence / breadth fixes (Feb 2026)
+Version: 2.3.2 - Sector mapping fix, screener directional gating (Feb 2026)
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.3.1"
+APP_VERSION = "2.3.2"
 
 import os
 import streamlit as st
@@ -4481,8 +4481,15 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
     df = pd.DataFrame(results)
     df_sorted = df.sort_values(["Final score", "Symbol"], ascending=[False, True])
 
-    top_bullish = df_sorted.head(10)
-    top_bearish = df_sorted.tail(10).iloc[::-1]
+    # When "Top 4 + Bottom 6": Bullish = top 10 from top 4 sectors only; Bearish = bottom 10 from bottom 6 sectors only (synced with Historical Rankings)
+    if sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)" and (top_sectors or bot_sectors):
+        bull_candidates = df_sorted[df_sorted["Sector"].isin(top_sectors or [])] if top_sectors else pd.DataFrame()
+        bear_candidates = df_sorted[df_sorted["Sector"].isin(bot_sectors or [])] if bot_sectors else pd.DataFrame()
+        top_bullish = bull_candidates.head(10) if not bull_candidates.empty else df_sorted.head(10)
+        top_bearish = (bear_candidates.tail(10).iloc[::-1] if not bear_candidates.empty else df_sorted.tail(10).iloc[::-1])
+    else:
+        top_bullish = df_sorted.head(10)
+        top_bearish = df_sorted.tail(10).iloc[::-1]
 
     def sentiment_color(score):
         if pd.isna(score):
