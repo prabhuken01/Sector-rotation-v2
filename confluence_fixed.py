@@ -29,8 +29,12 @@ Fixes applied in this version
 """
 
 from __future__ import annotations
+import io
 import pandas as pd
 import numpy as np
+
+# v3.1: score below this = failed Phase-1 gates (excluded from Top 8 / Excel passed lists)
+_GATE_FAIL_SCORE = -5.0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -614,3 +618,56 @@ def generate_entry_description(analysis: dict, score: float, is_bullish: bool = 
             ref = f" ({hl:.2f})" if hl else ""
             return f"TOO LATE: Price at HL{ref} — missed SHORT entry"
         return f"{grade}: Downtrend + Bearish alignment + Falling momentum"
+
+
+def build_confluence_excel(
+    df_bull: pd.DataFrame,
+    df_bear: pd.DataFrame,
+    timeframe_label: str,
+    analysis_date: str,
+    sector_filter: str,
+) -> bytes:
+    """
+    Build an Excel workbook with 4 sheets: Summary, Top Bullish, Top Bearish, Rejected.
+    Returns the file as bytes for download.
+    """
+    buf = io.BytesIO()
+    try:
+        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+            # Sheet 1: Summary
+            summary = pd.DataFrame([
+                {"Key": "Timeframe", "Value": timeframe_label},
+                {"Key": "Analysis date", "Value": analysis_date},
+                {"Key": "Sector filter", "Value": sector_filter},
+                {"Key": "Gate fail score (below = rejected)", "Value": _GATE_FAIL_SCORE},
+                {"Key": "Bullish passed", "Value": int((pd.to_numeric(df_bull["Score"], errors="coerce") > _GATE_FAIL_SCORE).sum()) if "Score" in df_bull.columns else len(df_bull)},
+                {"Key": "Bearish passed", "Value": int((pd.to_numeric(df_bear["Score"], errors="coerce") > _GATE_FAIL_SCORE).sum()) if "Score" in df_bear.columns else len(df_bear)},
+            ])
+            summary.to_excel(writer, sheet_name="Summary", index=False)
+
+            # Sheet 2: Top Bullish (passed only)
+            score_bull = pd.to_numeric(df_bull["Score"], errors="coerce") if "Score" in df_bull.columns else pd.Series(dtype=float)
+            bull_pass = df_bull[score_bull > _GATE_FAIL_SCORE] if "Score" in df_bull.columns and len(score_bull) else df_bull
+            if not bull_pass.empty:
+                bull_pass.to_excel(writer, sheet_name="Top Bullish", index=False)
+            else:
+                pd.DataFrame(columns=df_bull.columns if not df_bull.empty else ["Sector", "Symbol", "Company", "Score", "Description"]).to_excel(writer, sheet_name="Top Bullish", index=False)
+
+            # Sheet 3: Top Bearish (passed only)
+            score_bear = pd.to_numeric(df_bear["Score"], errors="coerce") if "Score" in df_bear.columns else pd.Series(dtype=float)
+            bear_pass = df_bear[score_bear > _GATE_FAIL_SCORE] if "Score" in df_bear.columns and len(score_bear) else df_bear
+            if not bear_pass.empty:
+                bear_pass.to_excel(writer, sheet_name="Top Bearish", index=False)
+            else:
+                pd.DataFrame(columns=df_bear.columns if not df_bear.empty else ["Sector", "Symbol", "Company", "Score", "Description"]).to_excel(writer, sheet_name="Top Bearish", index=False)
+
+            # Sheet 4: Rejected (placeholder; rejected stocks are those not in passed lists)
+            rejected_note = pd.DataFrame([
+                {"Note": "Stocks that failed Phase-1 gates (score <= " + str(_GATE_FAIL_SCORE) + ") are excluded from Top Bullish / Top Bearish sheets above."},
+            ])
+            rejected_note.to_excel(writer, sheet_name="Rejected", index=False)
+        buf.seek(0)
+        return buf.getvalue()
+    except Exception:
+        buf.seek(0)
+        return buf.getvalue()
