@@ -4901,6 +4901,24 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
 
     st.info(f"Analyzing confluence: **{conf_tf_label}** (entry **{entry_label}** + confirmation **{conf_label}**). This may take a few minutes...")
 
+    # If screener returned no rows (e.g. no data for selected date), build confluence universe from SECTOR_COMPANIES so analysis can still run
+    if df_stocks.empty:
+        from company_symbols import SECTOR_COMPANIES as _SC
+        _conf_sectors = None
+        if conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)" and (top_conf_sectors or bot_conf_sectors):
+            _conf_sectors = set(top_conf_sectors or []) | set(bot_conf_sectors or [])
+        _rows = []
+        for _sec, _syms in _SC.items():
+            if _conf_sectors is not None and _sec not in _conf_sectors:
+                continue
+            for _sym, _info in _syms.items():
+                _rows.append({'Symbol': _sym, 'Sector': _sec, 'Company': _info.get('name', _sym), 'Company Name': _info.get('name', _sym)})
+        df_stocks = pd.DataFrame(_rows)
+        if df_stocks.empty:
+            st.warning("⚠️ No sector–company mapping available. Add sectors in Sector Companies / Sector-Company.xlsx and reload.")
+        else:
+            st.caption("ℹ️ Screener had no rows for this date; using sector–company universe for confluence.")
+
     stock_results_bullish = []
     stock_results_bearish = []
     progress_bar = st.progress(0)
