@@ -2,11 +2,11 @@
 """
 NSE Market Sector Analysis Tool - Streamlit Web Interface
 Enhanced with configurable weights, ETF proxy, and improved aesthetics
-Version: 2.3.7 - Market breadth fix, Historical/Stock Screener sync, win-ratio by pick (Feb 2026)
+Version: 2.3.8 - Stock screener export fix, market breadth simplified (Feb 2026)
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.3.7"
+APP_VERSION = "2.3.8"
 
 import os
 import io
@@ -2302,7 +2302,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         # Load historical rankings cache (CSV) so we only compute missing dates
         cache_dir = 'data_cache'
         os.makedirs(cache_dir, exist_ok=True)
-        cache_path = os.path.join(cache_dir, f'historical_rankings_cache_v10_{hist_conf_tf_code}_{hist_conf_sector_code}.csv')
+        cache_path = os.path.join(cache_dir, f'historical_rankings_cache_v11_{hist_conf_tf_code}_{hist_conf_sector_code}.csv')
         cache_by_date = {}
         if os.path.isfile(cache_path):
             try:
@@ -3422,35 +3422,8 @@ def display_market_breadth_block(benchmark_data, analysis_date=None):
             nifty_closes[sym] = data['Close']
     advances = 0
     declines = 0
-    ref_date = None
-    if hasattr(benchmark_data, 'index') and len(benchmark_data.index) > 0:
-        ref_date = pd.Timestamp(benchmark_data.index[-1])
-        if getattr(ref_date, 'tz', None) is not None:
-            try:
-                ref_date = ref_date.tz_localize(None)
-            except Exception:
-                pass
-        if hasattr(ref_date, 'normalize'):
-            ref_date = ref_date.normalize()
-    if ref_date is not None and nifty_closes:
-        for sym, series in nifty_closes.items():
-            try:
-                s_idx = series.index
-                if hasattr(s_idx, 'normalize'):
-                    s_idx = s_idx.normalize()
-                idx = s_idx.get_indexer([ref_date], method='ffill')[0]
-                if idx < 0 or idx >= len(series) or idx == 0:
-                    continue
-                close_t = float(series.iloc[idx])
-                close_prev = float(series.iloc[idx - 1])
-                if close_t > close_prev:
-                    advances += 1
-                elif close_t < close_prev:
-                    declines += 1
-            except Exception:
-                continue
-    # Fallback: use last two bars per symbol so we always get a number when data exists
-    if (advances + declines) == 0 and nifty_closes:
+    # Use last two bars directly (most reliable for advance/decline)
+    if nifty_closes:
         for sym, series in nifty_closes.items():
             if len(series) < 2:
                 continue
@@ -3464,6 +3437,7 @@ def display_market_breadth_block(benchmark_data, analysis_date=None):
             except Exception:
                 continue
     total_ad = advances + declines
+    unchanged = len(nifty_closes) - total_ad if nifty_closes else 0
     advance_total_pct = round((advances / total_ad * 100), 1) if total_ad else None
 
     # Display Market Breadth metrics (always show Advances, Declines, Advance/Total %)
@@ -4265,6 +4239,14 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
     """
     from datetime import datetime as dt
     from company_symbols import SECTOR_COMPANIES, SECTOR_COMPANY_EXCEL_PATH_USED
+
+    # Initialize variables used in export section
+    historical_logs = []
+    fib_results = []
+    stock_results = []
+    df_results = pd.DataFrame()
+    df_top10 = pd.DataFrame()
+    total_market_stocks = 0
 
     st.markdown("---")
     st.header("📊 Stock Screener")
@@ -5505,21 +5487,31 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
     
     # Prepare Excel export with all data
     excel_buffer = BytesIO()
+    sheets_written = 0
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
         # Market Overview logs
         if historical_logs:
             df_logs = pd.DataFrame(historical_logs)
             df_logs.to_excel(writer, sheet_name='Market Overview Logs', index=False)
+            sheets_written += 1
         
         # Fibonacci results
         if fib_results:
             df_fib_export = pd.DataFrame(fib_results)
             df_fib_export.to_excel(writer, sheet_name='Fibonacci Analysis', index=False)
+            sheets_written += 1
         
-        # Confluence results
-        if stock_results:
+        # Confluence results (use stock_results_bullish if available)
+        if not df_results.empty:
             df_results.to_excel(writer, sheet_name='Confluence Analysis - All', index=False)
+            sheets_written += 1
+        if not df_top10.empty:
             df_top10.to_excel(writer, sheet_name='Confluence Analysis - Top 10', index=False)
+            sheets_written += 1
+        
+        # Ensure at least one sheet exists
+        if sheets_written == 0:
+            pd.DataFrame({'Info': ['No analysis data available for this date']}).to_excel(writer, sheet_name='Summary', index=False)
     
     excel_buffer.seek(0)
     
@@ -5530,7 +5522,7 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
         mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
     
-    st.success(f"✅ Complete analysis finished! Total stocks analyzed: {total_market_stocks}")
+    st.success(f"✅ Complete analysis finished!")
 
 
 def main():
