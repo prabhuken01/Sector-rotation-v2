@@ -2,11 +2,11 @@
 """
 NSE Market Sector Analysis Tool - Streamlit Web Interface
 Enhanced with configurable weights, ETF proxy, and improved aesthetics
-Version: 2.3.4 - FMCG ETF fix, market breadth fallback (Feb 2026)
+Version: 2.3.5 - Confluence fallback when screener has no rows (Feb 2026)
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.3.4"
+APP_VERSION = "2.3.5"
 
 import os
 import streamlit as st
@@ -39,6 +39,9 @@ def get_top_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=4):
         Number of top sectors to return (default 4).
 
     Returns
+
+
+    
     -------
     list
         Top N sector names sorted by combined RSI+CMF momentum score.

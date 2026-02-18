@@ -1,6 +1,6 @@
-## Confluence Logic – Version 2.3.2
+## Confluence Logic – Version 2.3.5
 
-This document summarizes the **core logic** used for confluence scoring and sector selection in v2.3.2 (and v2.3.1).
+This document summarizes the **core logic** used for confluence scoring and sector selection in v2.3.5 (and v2.3.1–2.3.4).
 
 ### 0. Sector–company mapping (Stock Screener & Confluence)
 
@@ -28,6 +28,7 @@ This document summarizes the **core logic** used for confluence scoring and sect
      - **Top 10 Bearish** = bottom 10 by score from **bottom 6 sectors only** (same logic as Historical Rankings).
    - Confluence in the Screener tab uses the same top 4 (bullish) and bottom 6 (bearish) sector lists.
    - If `df_momentum` is not available, the Screener falls back to **RSI+CMF Z‑score** per sector to derive top 4 and bottom 6.
+   - **Confluence fallback (v2.3.5):** If the Stock Screener returns **no rows** for the selected date (e.g. no data, all fetches failed), Part 3 Confluence builds its stock universe from **SECTOR_COMPANIES** using the same sector filter (Top 4 + Bottom 6 or Universal). So Confluence can still run and show Top 8 Bullish/Bearish; a caption notes *"Screener had no rows for this date; using sector–company universe for confluence."*
 
 3. **Historical Rankings (per date)**
    - For **each date** in the 30‑day table:
@@ -125,6 +126,10 @@ Only stocks satisfying the **core gates** (RSI up on both TFs, MA Bullish on bot
 ---
 
 ### Changelog
+
+**v2.3.5**
+- Version set to **2.3.5**.
+- **Confluence when screener has no rows:** If the Stock Screener returns zero rows for the selected date, Part 3 Confluence builds `df_stocks` from **SECTOR_COMPANIES** (Top 4 + Bottom 6 or Universal) so confluence analysis still runs and Top 8 Bullish/Bearish can show. A caption indicates when this fallback is used.
 
 **v2.3.2**
 - Version set to **2.3.2**.
