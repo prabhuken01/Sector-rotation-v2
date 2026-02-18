@@ -2,13 +2,15 @@
 """
 NSE Market Sector Analysis Tool - Streamlit Web Interface
 Enhanced with configurable weights, ETF proxy, and improved aesthetics
-Version: 2.3.2 - Sector mapping fix, screener directional gating (Feb 2026)
+Version: 2.3.8 - Stock screener export fix, market breadth simplified (Feb 2026)
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.3.2"
+APP_VERSION = "2.3.8"
 
 import os
+import io
+from io import BytesIO
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
@@ -39,6 +41,9 @@ def get_top_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=4):
         Number of top sectors to return (default 4).
 
     Returns
+
+
+    
     -------
     list
         Top N sector names sorted by combined RSI+CMF momentum score.
@@ -421,8 +426,12 @@ def fetch_all_sector_data_cached(data_source_key, analysis_date_str, yf_interval
     failed_sectors = []
     
     for sector_name, symbol in data_source.items():
+        if not symbol or str(symbol).strip() == 'N/A':
+            continue
         try:
             alternate_symbol = alternates.get(sector_name) if alternates else None
+            if alternate_symbol and str(alternate_symbol).strip() == 'N/A':
+                alternate_symbol = None
             data, used_symbol = fetch_sector_data_with_alternate(
                 symbol, 
                 alternate_symbol=alternate_symbol,
@@ -2293,7 +2302,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         # Load historical rankings cache (CSV) so we only compute missing dates
         cache_dir = 'data_cache'
         os.makedirs(cache_dir, exist_ok=True)
-        cache_path = os.path.join(cache_dir, f'historical_rankings_cache_v10_{hist_conf_tf_code}_{hist_conf_sector_code}.csv')
+        cache_path = os.path.join(cache_dir, f'historical_rankings_cache_v11_{hist_conf_tf_code}_{hist_conf_sector_code}.csv')
         cache_by_date = {}
         if os.path.isfile(cache_path):
             try:
@@ -2538,12 +2547,17 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                         if hist_conf_tf_code == '1d':
                             conf_data_entry = d.iloc[: _idx + 1] if _idx + 1 <= len(d) else d
                             conf_data_1d = conf_data_entry
+                            _conf_tf_used = hist_conf_tf_code
                         else:
-                            # 2h or 4h: use 1H data, resampled in confluence module
+                            # 2h or 4h: use 1H data; same as Stock Screener — require min bars, no 1D fallback so Historical matches Part 3
+                            min_bars = 80 if hist_conf_tf_code == '4h' else 40
                             conf_data_entry = company_hourly.get(sym) if company_hourly else None
                             conf_data_1d = d.iloc[: _idx + 1] if _idx + 1 <= len(d) else d
+                            if conf_data_entry is None or len(conf_data_entry) < min_bars:
+                                continue  # skip so Confluence Bullish #1/#2 stay in sync with Stock Screener
+                            _conf_tf_used = hist_conf_tf_code
                         b_score, s_score, c_details = _compute_confluence_score(
-                            conf_data_entry, data_1d=conf_data_1d, timeframe=hist_conf_tf_code
+                            conf_data_entry, data_1d=conf_data_1d, timeframe=_conf_tf_used
                         )
                         if b_score is not None:
                             if bull_sector_ok and b_score > _GATE_FAIL_SCORE:
@@ -2755,6 +2769,31 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     df_conf_bull.style.apply(style_bull, axis=1).format(fmt, na_rep=''),
                     use_container_width=True, hide_index=True
                 )
+                # Win-ratio summary (past 30 days): separate for Bullish #1 and Bullish #2 (no sampling)
+                w1 = df_primary.get('Conf Bull #1 1W %')
+                w2 = df_primary.get('Conf Bull #2 1W %')
+                list_1 = pd.to_numeric(w1, errors='coerce').dropna().tolist() if w1 is not None else []
+                list_2 = pd.to_numeric(w2, errors='coerce').dropna().tolist() if w2 is not None else []
+                n1, n2 = len(list_1), len(list_2)
+                st.markdown("**Historical analysis — Confluence Bullish next 1-week return (past 30 days)**")
+                rows_win = []
+                if n1 > 0:
+                    win_1_a = sum(1 for x in list_1 if float(x) >= 1.0) / n1 * 100
+                    win_15_a = sum(1 for x in list_1 if float(x) >= 1.5) / n1 * 100
+                    win_2_a = sum(1 for x in list_1 if float(x) >= 2.0) / n1 * 100
+                    rows_win.append({"Pick": "Bullish #1", "Sample size": n1, ">= 1.0%": f"{win_1_a:.1f}%", ">= 1.5%": f"{win_15_a:.1f}%", ">= 2.0%": f"{win_2_a:.1f}%"})
+                else:
+                    rows_win.append({"Pick": "Bullish #1", "Sample size": 0, ">= 1.0%": "N/A", ">= 1.5%": "N/A", ">= 2.0%": "N/A"})
+                if n2 > 0:
+                    win_1_b = sum(1 for x in list_2 if float(x) >= 1.0) / n2 * 100
+                    win_15_b = sum(1 for x in list_2 if float(x) >= 1.5) / n2 * 100
+                    win_2_b = sum(1 for x in list_2 if float(x) >= 2.0) / n2 * 100
+                    rows_win.append({"Pick": "Bullish #2", "Sample size": n2, ">= 1.0%": f"{win_1_b:.1f}%", ">= 1.5%": f"{win_15_b:.1f}%", ">= 2.0%": f"{win_2_b:.1f}%"})
+                else:
+                    rows_win.append({"Pick": "Bullish #2", "Sample size": 0, ">= 1.0%": "N/A", ">= 1.5%": "N/A", ">= 2.0%": "N/A"})
+                df_win = pd.DataFrame(rows_win)
+                st.dataframe(df_win, use_container_width=True, hide_index=True)
+                st.caption("Win ratio = % of days (past 30) that pick achieved at least the given return in the next one week. Bullish #1 and Bullish #2 computed separately (no sampling).")
 
             if len(conf_bear_present) >= 4:
                 st.markdown(f"#### 🔴 Confluence Bearish #1/#2 ({hist_conf_tf_label}, Advance/Total, % 10 DMA, CMP)")
@@ -3371,36 +3410,48 @@ def display_market_breadth_block(benchmark_data, analysis_date=None):
     if nifty_index_data is not None and len(nifty_index_data) > 0:
         nifty_price = float(nifty_index_data['Close'].iloc[-1])
     
-    # Fetch Nifty 50 constituents in parallel for Advance/Total
+    # Fetch Nifty 50 constituents in parallel for Advance/Total (no end_dt so we get latest)
     symbols_dict = {sym: sym for sym in NIFTY50_SYMBOLS[:50]}
     breadth_data, _ = fetch_all_sectors_parallel(symbols_dict, end_date=end_dt, interval='1d')
-    
+    if not breadth_data and end_dt is not None:
+        breadth_data, _ = fetch_all_sectors_parallel(symbols_dict, end_date=None, interval='1d')
+    # Build Close series per symbol (same pattern as Market Breadth tab)
+    nifty_closes = {}
+    for sym, data in (breadth_data or {}).items():
+        if data is not None and len(data) >= 2 and 'Close' in data.columns:
+            nifty_closes[sym] = data['Close']
     advances = 0
     declines = 0
-    for sym, data in breadth_data.items():
-        if data is not None and len(data) >= 2:
-            close_t = data['Close'].iloc[-1]
-            close_prev = data['Close'].iloc[-2]
-            if close_t > close_prev:
-                advances += 1
-            elif close_t < close_prev:
-                declines += 1
-    
+    # Use last two bars directly (most reliable for advance/decline)
+    if nifty_closes:
+        for sym, series in nifty_closes.items():
+            if len(series) < 2:
+                continue
+            try:
+                close_t = float(series.iloc[-1])
+                close_prev = float(series.iloc[-2])
+                if close_t > close_prev:
+                    advances += 1
+                elif close_t < close_prev:
+                    declines += 1
+            except Exception:
+                continue
     total_ad = advances + declines
+    unchanged = len(nifty_closes) - total_ad if nifty_closes else 0
     advance_total_pct = round((advances / total_ad * 100), 1) if total_ad else None
-    
-    # Display Market Breadth metrics
+
+    # Display Market Breadth metrics (always show Advances, Declines, Advance/Total %)
     st.markdown("### 📈 Market Breadth (Nifty 50)")
     bc1, bc2, bc3, bc4 = st.columns(4)
     with bc1:
         nifty_display = f"₹{int(round(nifty_price, 0)):,}" if nifty_price is not None else "N/A"
         st.metric("Nifty 50", nifty_display)
     with bc2:
-        st.metric("Advances", advances if total_ad else "-")
+        st.metric("Advances", advances if total_ad else "0")
     with bc3:
-        st.metric("Declines", declines if total_ad else "-")
+        st.metric("Declines", declines if total_ad else "0")
     with bc4:
-        val = f"{advance_total_pct}%" if advance_total_pct is not None else "-"
+        val = f"{advance_total_pct}%" if advance_total_pct is not None else "N/A"
         delta = None
         if advance_total_pct is not None:
             if advance_total_pct > 60:
@@ -3408,6 +3459,8 @@ def display_market_breadth_block(benchmark_data, analysis_date=None):
             elif advance_total_pct < 40:
                 delta = "Bearish"
         st.metric("Advance/Total %", val, delta=delta)
+    if not total_ad and (breadth_data or nifty_closes):
+        st.caption("Advance/Decline could not be computed for the last trading day. Check data delay or try again.")
     st.markdown("---")
 
 
@@ -3422,10 +3475,25 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
         st.warning("⚠️ Need at least 22 trading days of benchmark data for the 20-day table.")
         return
 
-    # Use the same universe as Sector-Company.xlsx Sheet2
+    # Use the same universe as Sector-Company.xlsx; fallback to Nifty 50 if empty (e.g. Cloud deploy without Excel)
     from company_symbols import SECTOR_COMPANIES
+    _breadth_nifty50 = [
+        'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
+        'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
+        'LT.NS', 'AXISBANK.NS', 'ASIANPAINT.NS', 'MARUTI.NS', 'TITAN.NS',
+        'NESTLEIND.NS', 'ULTRACEMCO.NS', 'WIPRO.NS', 'SUNPHARMA.NS', 'TATAMOTORS.NS',
+        'TECHM.NS', 'HCLTECH.NS', 'BAJFINANCE.NS', 'JSWSTEEL.NS', 'TATASTEEL.NS',
+        'POWERGRID.NS', 'NTPC.NS', 'ONGC.NS', 'COALINDIA.NS', 'ADANIENT.NS',
+        'ADANIPORTS.NS', 'GRASIM.NS', 'DIVISLAB.NS', 'CIPLA.NS', 'DRREDDY.NS',
+        'BAJAJFINSV.NS', 'M&M.NS', 'HEROMOTOCO.NS', 'EICHERMOT.NS', 'MARICO.NS',
+        'GODREJCP.NS', 'DABUR.NS', 'BRITANNIA.NS', 'HDFCLIFE.NS', 'SBILIFE.NS',
+        'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
+    ]
     universe_symbols = sorted({sym for sector_dict in SECTOR_COMPANIES.values() for sym in sector_dict.keys()})
+    if not universe_symbols:
+        universe_symbols = _breadth_nifty50
     n_stocks = len(universe_symbols)
+    _min_bars_breadth = 25
 
     st.markdown("### 📊 Market breadth")
     st.caption(
@@ -3437,19 +3505,28 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
 
     with st.spinner("Building 20-day market breadth table..."):
         end_dt = benchmark_data.index[-1]
-        # Use actual Nifty index (^NSEI) for Nifty column, not benchmark/ETF proxy
         nifty_index_data = fetch_sector_data('^NSEI', end_date=end_dt, interval='1d')
         symbols_dict = {s: s for s in universe_symbols}
         nifty_fetched, _ = fetch_all_sectors_parallel(symbols_dict, end_date=end_dt, interval='1d')
         nifty_closes = {}
         for sym, d in nifty_fetched.items():
-            if d is not None and len(d) >= 50:
+            if d is not None and len(d) >= _min_bars_breadth:
                 nifty_closes[sym] = d['Close']
+        if not nifty_closes and universe_symbols != _breadth_nifty50:
+            symbols_dict_fb = {s: s for s in _breadth_nifty50}
+            nifty_fetched, _ = fetch_all_sectors_parallel(symbols_dict_fb, end_date=end_dt, interval='1d')
+            for sym, d in nifty_fetched.items():
+                if d is not None and len(d) >= _min_bars_breadth:
+                    nifty_closes[sym] = d['Close']
+        if not nifty_closes:
+            st.warning("⚠️ Could not load price data for breadth universe. Table will show Nifty only. Check data source or try again later.")
 
-        # Use last 20 business days (Mon–Fri) so no weekday is missing (e.g. Monday)
-        last_date = pd.Timestamp(benchmark_data.index[-1]).date()
-        dates_20 = pd.bdate_range(end=last_date, periods=20, freq='B').tolist()
+        # Use last 20 business days (Mon–Fri). Always include T (current/latest trading day).
+        t_date = pd.Timestamp(benchmark_data.index[-1]).normalize().date()
+        dates_20 = pd.bdate_range(end=t_date, periods=20, freq='B').tolist()
         dates_20 = list(reversed(dates_20))  # oldest first, current day last
+        if dates_20 and dates_20[-1].date() != t_date:
+            dates_20 = dates_20[:-1] + [pd.Timestamp(t_date)]
         table_rows = []
 
         for i, date_t in enumerate(dates_20):
@@ -3473,7 +3550,10 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
 
             for sym, series in nifty_closes.items():
                 try:
-                    idx = series.index.get_indexer([date_t], method='ffill')[0]
+                    # Normalize index to tz-naive dates so get_indexer matches (avoid datetime vs Timestamp mismatch)
+                    series_dates = series.index.tz_localize(None).normalize() if series.index.tz is not None else series.index.normalize()
+                    date_ts = pd.Timestamp(date_t).normalize()
+                    idx = series_dates.get_indexer([date_ts], method='ffill')[0]
                     if idx < 0 or idx >= len(series) or idx == 0:
                         continue
                     close_t = series.iloc[idx]
@@ -3514,7 +3594,9 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
 
             try:
                 if nifty_index_data is not None and len(nifty_index_data) > 0:
-                    nifty_idx = nifty_index_data.index.get_indexer([date_t], method='ffill')[0]
+                    nifty_dates = nifty_index_data.index.tz_localize(None).normalize() if nifty_index_data.index.tz is not None else nifty_index_data.index.normalize()
+                    date_ts_nifty = pd.Timestamp(date_t).normalize()
+                    nifty_idx = nifty_dates.get_indexer([date_ts_nifty], method='ffill')[0]
                     if 0 <= nifty_idx < len(nifty_index_data):
                         nifty_close = nifty_index_data['Close'].iloc[nifty_idx]
                         row['Nifty'] = int(round(nifty_close, 0))
@@ -4161,6 +4243,14 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
     """
     from datetime import datetime as dt
     from company_symbols import SECTOR_COMPANIES, SECTOR_COMPANY_EXCEL_PATH_USED
+
+    # Initialize variables used in export section
+    historical_logs = []
+    fib_results = []
+    stock_results = []
+    df_results = pd.DataFrame()
+    df_top10 = pd.DataFrame()
+    total_market_stocks = 0
 
     st.markdown("---")
     st.header("📊 Stock Screener")
@@ -4875,6 +4965,24 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
 
     st.info(f"Analyzing confluence: **{conf_tf_label}** (entry **{entry_label}** + confirmation **{conf_label}**). This may take a few minutes...")
 
+    # If screener returned no rows (e.g. no data for selected date), build confluence universe from SECTOR_COMPANIES so analysis can still run
+    if df_stocks.empty:
+        from company_symbols import SECTOR_COMPANIES as _SC
+        _conf_sectors = None
+        if conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)" and (top_conf_sectors or bot_conf_sectors):
+            _conf_sectors = set(top_conf_sectors or []) | set(bot_conf_sectors or [])
+        _rows = []
+        for _sec, _syms in _SC.items():
+            if _conf_sectors is not None and _sec not in _conf_sectors:
+                continue
+            for _sym, _info in _syms.items():
+                _rows.append({'Symbol': _sym, 'Sector': _sec, 'Company': _info.get('name', _sym), 'Company Name': _info.get('name', _sym)})
+        df_stocks = pd.DataFrame(_rows)
+        if df_stocks.empty:
+            st.warning("⚠️ No sector–company mapping available. Add sectors in Sector Companies / Sector-Company.xlsx and reload.")
+        else:
+            st.caption("ℹ️ Screener had no rows for this date; using sector–company universe for confluence.")
+
     stock_results_bullish = []
     stock_results_bearish = []
     progress_bar = st.progress(0)
@@ -5383,21 +5491,31 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
     
     # Prepare Excel export with all data
     excel_buffer = BytesIO()
+    sheets_written = 0
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
         # Market Overview logs
         if historical_logs:
             df_logs = pd.DataFrame(historical_logs)
             df_logs.to_excel(writer, sheet_name='Market Overview Logs', index=False)
+            sheets_written += 1
         
         # Fibonacci results
         if fib_results:
             df_fib_export = pd.DataFrame(fib_results)
             df_fib_export.to_excel(writer, sheet_name='Fibonacci Analysis', index=False)
+            sheets_written += 1
         
-        # Confluence results
-        if stock_results:
+        # Confluence results (use stock_results_bullish if available)
+        if not df_results.empty:
             df_results.to_excel(writer, sheet_name='Confluence Analysis - All', index=False)
+            sheets_written += 1
+        if not df_top10.empty:
             df_top10.to_excel(writer, sheet_name='Confluence Analysis - Top 10', index=False)
+            sheets_written += 1
+        
+        # Ensure at least one sheet exists
+        if sheets_written == 0:
+            pd.DataFrame({'Info': ['No analysis data available for this date']}).to_excel(writer, sheet_name='Summary', index=False)
     
     excel_buffer.seek(0)
     
@@ -5408,7 +5526,7 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
         mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
     
-    st.success(f"✅ Complete analysis finished! Total stocks analyzed: {total_market_stocks}")
+    st.success(f"✅ Complete analysis finished!")
 
 
 def main():
