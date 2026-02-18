@@ -2,11 +2,11 @@
 """
 NSE Market Sector Analysis Tool - Streamlit Web Interface
 Enhanced with configurable weights, ETF proxy, and improved aesthetics
-Version: 2.3.8 - Stock screener export fix, market breadth simplified (Feb 2026)
+Version: 2.3.9 - Market breadth T always includes today when trading day (Feb 2026)
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.3.8"
+APP_VERSION = "2.3.9"
 
 import os
 import io
@@ -3521,8 +3521,11 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
         if not nifty_closes:
             st.warning("⚠️ Could not load price data for breadth universe. Table will show Nifty only. Check data source or try again later.")
 
-        # Use last 20 business days (Mon–Fri). Always include T (current/latest trading day).
-        t_date = pd.Timestamp(benchmark_data.index[-1]).normalize().date()
+        # Use last 20 business days. T = current trading day: always include today when it's a trading day (e.g. Feb 18).
+        last_in_data = pd.Timestamp(benchmark_data.index[-1]).normalize().date()
+        today = pd.Timestamp.now().normalize().date()
+        is_today_business = pd.Timestamp(today).dayofweek < 5  # Mon=0, Fri=4
+        t_date = max(last_in_data, today) if is_today_business else last_in_data
         dates_20 = pd.bdate_range(end=t_date, periods=20, freq='B').tolist()
         dates_20 = list(reversed(dates_20))  # oldest first, current day last
         if dates_20 and dates_20[-1].date() != t_date:
