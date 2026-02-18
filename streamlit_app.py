@@ -3492,9 +3492,6 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
     universe_symbols = sorted({sym for sector_dict in SECTOR_COMPANIES.values() for sym in sector_dict.keys()})
     if not universe_symbols:
         universe_symbols = _breadth_nifty50
-    # Use Nifty 50 for breadth when universe is large to avoid timeout / no data (e.g. on Cloud)
-    if len(universe_symbols) > 80:
-        universe_symbols = _breadth_nifty50
     n_stocks = len(universe_symbols)
     _min_bars_breadth = 25
 
