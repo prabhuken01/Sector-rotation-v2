@@ -5604,11 +5604,11 @@ def main():
         benchmark_data = sector_data.get('Nifty 50') if sector_data else None
         display_market_breadth_block(benchmark_data, analysis_date)
         
-        # Create tabs (9 total: Momentum, Market breadth, Stock Analysis, Reversal, Interpretation, Company Momentum, Company Reversals, Historical, Data Sources)
+        # Create tabs (9 total: Market breadth first, then Momentum, Stock Screener, ...)
         try:
             tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
-                "📈 Momentum Ranking",
                 "📊 Market breadth",
+                "📈 Momentum Ranking",
                 "📊 Stock Screener",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
@@ -5624,17 +5624,17 @@ def main():
             
             with tab1:
                 try:
-                    display_momentum_tab(df, sector_data, benchmark_data, enable_color_coding)
-                    display_tooltip_legend()
+                    display_market_breadth_tab(benchmark_data, analysis_date, sector_data, momentum_weights)
                 except Exception as e:
-                    st.error(f"❌ Error displaying momentum tab: {str(e)}")
+                    st.error(f"❌ Error displaying market breadth tab: {str(e)}")
                     st.text(traceback.format_exc())
             
             with tab2:
                 try:
-                    display_market_breadth_tab(benchmark_data, analysis_date, sector_data, momentum_weights)
+                    display_momentum_tab(df, sector_data, benchmark_data, enable_color_coding)
+                    display_tooltip_legend()
                 except Exception as e:
-                    st.error(f"❌ Error displaying market breadth tab: {str(e)}")
+                    st.error(f"❌ Error displaying momentum tab: {str(e)}")
                     st.text(traceback.format_exc())
             
             with tab3:
