@@ -2,11 +2,11 @@
 """
 NSE Market Sector Analysis Tool - Streamlit Web Interface
 Enhanced with configurable weights, ETF proxy, and improved aesthetics
-Version: 2.3.6 - Confluence tweaks, win-ratio table, market breadth fix (Feb 2026)
+Version: 2.3.7 - Market breadth fix, Historical/Stock Screener sync, win-ratio by pick (Feb 2026)
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.3.6"
+APP_VERSION = "2.3.7"
 
 import os
 import io
@@ -2549,14 +2549,13 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                             conf_data_1d = conf_data_entry
                             _conf_tf_used = hist_conf_tf_code
                         else:
-                            # 2h or 4h: use 1H data; if hourly missing, fall back to 1D so confluence still returns a result
+                            # 2h or 4h: use 1H data; same as Stock Screener — require min bars, no 1D fallback so Historical matches Part 3
+                            min_bars = 80 if hist_conf_tf_code == '4h' else 40
                             conf_data_entry = company_hourly.get(sym) if company_hourly else None
                             conf_data_1d = d.iloc[: _idx + 1] if _idx + 1 <= len(d) else d
-                            if conf_data_entry is None or len(conf_data_entry) < 40:
-                                conf_data_entry = d.iloc[: _idx + 1] if _idx + 1 <= len(d) else d
-                                _conf_tf_used = '1d'
-                            else:
-                                _conf_tf_used = hist_conf_tf_code
+                            if conf_data_entry is None or len(conf_data_entry) < min_bars:
+                                continue  # skip so Confluence Bullish #1/#2 stay in sync with Stock Screener
+                            _conf_tf_used = hist_conf_tf_code
                         b_score, s_score, c_details = _compute_confluence_score(
                             conf_data_entry, data_1d=conf_data_1d, timeframe=_conf_tf_used
                         )
@@ -2770,27 +2769,31 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     df_conf_bull.style.apply(style_bull, axis=1).format(fmt, na_rep=''),
                     use_container_width=True, hide_index=True
                 )
-                # Win-ratio summary (past 30 days): % of Confluence Bullish picks that hit 1%, 1.5%, 2% in next 1 week
+                # Win-ratio summary (past 30 days): separate for Bullish #1 and Bullish #2 (no sampling)
                 w1 = df_primary.get('Conf Bull #1 1W %')
                 w2 = df_primary.get('Conf Bull #2 1W %')
-                all_1w = []
-                if w1 is not None:
-                    all_1w.extend(pd.to_numeric(w1, errors='coerce').dropna().tolist())
-                if w2 is not None:
-                    all_1w.extend(pd.to_numeric(w2, errors='coerce').dropna().tolist())
-                n = len(all_1w)
-                if n > 0:
-                    win_1 = sum(1 for x in all_1w if float(x) >= 1.0) / n * 100
-                    win_15 = sum(1 for x in all_1w if float(x) >= 1.5) / n * 100
-                    win_2 = sum(1 for x in all_1w if float(x) >= 2.0) / n * 100
-                    st.markdown("**Historical analysis — Confluence Bullish next 1-week return (past 30 days)**")
-                    df_win = pd.DataFrame({
-                        "Return threshold (next 1W)": [">= 1.0%", ">= 1.5%", ">= 2.0%"],
-                        "% win ratio": [f"{win_1:.1f}%", f"{win_15:.1f}%", f"{win_2:.1f}%"],
-                        "Sample size (picks)": [n, n, n],
-                    })
-                    st.dataframe(df_win, use_container_width=True, hide_index=True)
-                    st.caption("Win ratio = % of Confluence Bullish #1/#2 picks (past 30 days) that achieved at least the given return in the next one week.")
+                list_1 = pd.to_numeric(w1, errors='coerce').dropna().tolist() if w1 is not None else []
+                list_2 = pd.to_numeric(w2, errors='coerce').dropna().tolist() if w2 is not None else []
+                n1, n2 = len(list_1), len(list_2)
+                st.markdown("**Historical analysis — Confluence Bullish next 1-week return (past 30 days)**")
+                rows_win = []
+                if n1 > 0:
+                    win_1_a = sum(1 for x in list_1 if float(x) >= 1.0) / n1 * 100
+                    win_15_a = sum(1 for x in list_1 if float(x) >= 1.5) / n1 * 100
+                    win_2_a = sum(1 for x in list_1 if float(x) >= 2.0) / n1 * 100
+                    rows_win.append({"Pick": "Bullish #1", "Sample size": n1, ">= 1.0%": f"{win_1_a:.1f}%", ">= 1.5%": f"{win_15_a:.1f}%", ">= 2.0%": f"{win_2_a:.1f}%"})
+                else:
+                    rows_win.append({"Pick": "Bullish #1", "Sample size": 0, ">= 1.0%": "N/A", ">= 1.5%": "N/A", ">= 2.0%": "N/A"})
+                if n2 > 0:
+                    win_1_b = sum(1 for x in list_2 if float(x) >= 1.0) / n2 * 100
+                    win_15_b = sum(1 for x in list_2 if float(x) >= 1.5) / n2 * 100
+                    win_2_b = sum(1 for x in list_2 if float(x) >= 2.0) / n2 * 100
+                    rows_win.append({"Pick": "Bullish #2", "Sample size": n2, ">= 1.0%": f"{win_1_b:.1f}%", ">= 1.5%": f"{win_15_b:.1f}%", ">= 2.0%": f"{win_2_b:.1f}%"})
+                else:
+                    rows_win.append({"Pick": "Bullish #2", "Sample size": 0, ">= 1.0%": "N/A", ">= 1.5%": "N/A", ">= 2.0%": "N/A"})
+                df_win = pd.DataFrame(rows_win)
+                st.dataframe(df_win, use_container_width=True, hide_index=True)
+                st.caption("Win ratio = % of days (past 30) that pick achieved at least the given return in the next one week. Bullish #1 and Bullish #2 computed separately (no sampling).")
 
             if len(conf_bear_present) >= 4:
                 st.markdown(f"#### 🔴 Confluence Bearish #1/#2 ({hist_conf_tf_label}, Advance/Total, % 10 DMA, CMP)")
@@ -3407,35 +3410,46 @@ def display_market_breadth_block(benchmark_data, analysis_date=None):
     if nifty_index_data is not None and len(nifty_index_data) > 0:
         nifty_price = float(nifty_index_data['Close'].iloc[-1])
     
-    # Fetch Nifty 50 constituents in parallel for Advance/Total
+    # Fetch Nifty 50 constituents in parallel for Advance/Total (no end_dt so we get latest)
     symbols_dict = {sym: sym for sym in NIFTY50_SYMBOLS[:50]}
     breadth_data, _ = fetch_all_sectors_parallel(symbols_dict, end_date=end_dt, interval='1d')
+    if not breadth_data and end_dt is not None:
+        breadth_data, _ = fetch_all_sectors_parallel(symbols_dict, end_date=None, interval='1d')
     # Build Close series per symbol (same pattern as Market Breadth tab)
     nifty_closes = {}
     for sym, data in (breadth_data or {}).items():
         if data is not None and len(data) >= 2 and 'Close' in data.columns:
             nifty_closes[sym] = data['Close']
-    # Use last trading date from benchmark so advance/decline is for a full day
     advances = 0
     declines = 0
     ref_date = None
     if hasattr(benchmark_data, 'index') and len(benchmark_data.index) > 0:
         ref_date = pd.Timestamp(benchmark_data.index[-1])
+        if getattr(ref_date, 'tz', None) is not None:
+            try:
+                ref_date = ref_date.tz_localize(None)
+            except Exception:
+                pass
+        if hasattr(ref_date, 'normalize'):
+            ref_date = ref_date.normalize()
     if ref_date is not None and nifty_closes:
         for sym, series in nifty_closes.items():
             try:
-                idx = series.index.get_indexer([ref_date], method='ffill')[0]
+                s_idx = series.index
+                if hasattr(s_idx, 'normalize'):
+                    s_idx = s_idx.normalize()
+                idx = s_idx.get_indexer([ref_date], method='ffill')[0]
                 if idx < 0 or idx >= len(series) or idx == 0:
                     continue
-                close_t = series.iloc[idx]
-                close_prev = series.iloc[idx - 1]
+                close_t = float(series.iloc[idx])
+                close_prev = float(series.iloc[idx - 1])
                 if close_t > close_prev:
                     advances += 1
                 elif close_t < close_prev:
                     declines += 1
             except Exception:
                 continue
-    # Fallback: if no ref_date or still zero, use last two bars per symbol
+    # Fallback: use last two bars per symbol so we always get a number when data exists
     if (advances + declines) == 0 and nifty_closes:
         for sym, series in nifty_closes.items():
             if len(series) < 2:
