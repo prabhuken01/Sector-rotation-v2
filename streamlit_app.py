@@ -2,11 +2,11 @@
 """
 NSE Market Sector Analysis Tool - Streamlit Web Interface
 Enhanced with configurable weights, ETF proxy, and improved aesthetics
-Version: 2.3.8 - Stock screener export fix, market breadth simplified (Feb 2026)
+Version: 2.3.9 - Market breadth T always includes today when trading day (Feb 2026)
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.3.8"
+APP_VERSION = "2.3.9"
 
 import os
 import io
@@ -3521,10 +3521,15 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
         if not nifty_closes:
             st.warning("⚠️ Could not load price data for breadth universe. Table will show Nifty only. Check data source or try again later.")
 
-        # Use last 20 business days (Mon–Fri) so no weekday is missing (e.g. Monday)
-        last_date = pd.Timestamp(benchmark_data.index[-1]).date()
-        dates_20 = pd.bdate_range(end=last_date, periods=20, freq='B').tolist()
+        # Use last 20 business days. T = current trading day: always include today when it's a trading day (e.g. Feb 18).
+        last_in_data = pd.Timestamp(benchmark_data.index[-1]).normalize().date()
+        today = pd.Timestamp.now().normalize().date()
+        is_today_business = pd.Timestamp(today).dayofweek < 5  # Mon=0, Fri=4
+        t_date = max(last_in_data, today) if is_today_business else last_in_data
+        dates_20 = pd.bdate_range(end=t_date, periods=20, freq='B').tolist()
         dates_20 = list(reversed(dates_20))  # oldest first, current day last
+        if dates_20 and dates_20[-1].date() != t_date:
+            dates_20 = dates_20[:-1] + [pd.Timestamp(t_date)]
         table_rows = []
 
         for i, date_t in enumerate(dates_20):
@@ -3548,7 +3553,7 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
 
             for sym, series in nifty_closes.items():
                 try:
-                    # Normalize series index to tz-naive dates for reliable matching
+                    # Normalize index to tz-naive dates so get_indexer matches (avoid datetime vs Timestamp mismatch)
                     series_dates = series.index.tz_localize(None).normalize() if series.index.tz is not None else series.index.normalize()
                     date_ts = pd.Timestamp(date_t).normalize()
                     idx = series_dates.get_indexer([date_ts], method='ffill')[0]
@@ -5599,11 +5604,11 @@ def main():
         benchmark_data = sector_data.get('Nifty 50') if sector_data else None
         display_market_breadth_block(benchmark_data, analysis_date)
         
-        # Create tabs (9 total: Momentum, Market breadth, Stock Analysis, Reversal, Interpretation, Company Momentum, Company Reversals, Historical, Data Sources)
+        # Create tabs (9 total: Market breadth first, then Momentum, Stock Screener, ...)
         try:
             tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
-                "📈 Momentum Ranking",
                 "📊 Market breadth",
+                "📈 Momentum Ranking",
                 "📊 Stock Screener",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
@@ -5619,17 +5624,17 @@ def main():
             
             with tab1:
                 try:
-                    display_momentum_tab(df, sector_data, benchmark_data, enable_color_coding)
-                    display_tooltip_legend()
+                    display_market_breadth_tab(benchmark_data, analysis_date, sector_data, momentum_weights)
                 except Exception as e:
-                    st.error(f"❌ Error displaying momentum tab: {str(e)}")
+                    st.error(f"❌ Error displaying market breadth tab: {str(e)}")
                     st.text(traceback.format_exc())
             
             with tab2:
                 try:
-                    display_market_breadth_tab(benchmark_data, analysis_date, sector_data, momentum_weights)
+                    display_momentum_tab(df, sector_data, benchmark_data, enable_color_coding)
+                    display_tooltip_legend()
                 except Exception as e:
-                    st.error(f"❌ Error displaying market breadth tab: {str(e)}")
+                    st.error(f"❌ Error displaying momentum tab: {str(e)}")
                     st.text(traceback.format_exc())
             
             with tab3:
