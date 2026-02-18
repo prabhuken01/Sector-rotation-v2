@@ -130,6 +130,8 @@ Only stocks satisfying the **core gates** (RSI up on both TFs, MA Bullish on bot
 **v2.3.5**
 - Version set to **2.3.5**.
 - **Confluence when screener has no rows:** If the Stock Screener returns zero rows for the selected date, Part 3 Confluence builds `df_stocks` from **SECTOR_COMPANIES** (Top 4 + Bottom 6 or Universal) so confluence analysis still runs and Top 8 Bullish/Bearish can show. A caption indicates when this fallback is used.
+- **Market breadth tab:** When the sector–company universe has more than 80 symbols, the breadth tab uses **Nifty 50** for the fetch so the table reliably returns Advance/Total % and % above 10 DMA (avoids timeout / empty data on large universes or Cloud).
+- **Historical Rankings confluence:** When 4H or 2H is selected but hourly data is missing or too thin for a symbol/date, confluence falls back to **1D** for that row so the Confluence Bear #1/#2 (and Bull) columns still show results instead of mostly None.
 
 **v2.3.2**
 - Version set to **2.3.2**.

@@ -371,6 +371,7 @@ def analyze_stock_confluence(
             "last_lh_price":      swing_e.get("last_lh_price"),
             "volume_status":      vol,
             "entry_tf_label":     tf_lbl,
+            "entry_timeframe":    entry_timeframe,
         }
 
     except Exception:
@@ -382,15 +383,15 @@ def calculate_confluence_score_bullish(analysis: dict) -> tuple:
     Bullish confluence.
 
     **Core requirements (gates):**
-    - RSI rising on BOTH entry and confirmation timeframes
-    - MA alignment Bullish on BOTH timeframes
-    - Entry timeframe trend = Uptrend (HH/HL)
-    - Price near the last HL pivot on the entry timeframe
+    - RSI rising on confirmation TF; entry TF RSI required only when entry is not 4H (4H RSI not used).
+    - MA alignment Bullish on BOTH timeframes.
+    - Entry TF trend = Uptrend (HH/HL) only when entry is not 1H (1H trend not considered).
+    - Price near HL is scoring-only (not a hard gate) so some stocks always pass.
 
-    If any of these fail, the setup is treated as a failed bullish confluence and
-    returned with a strongly negative score so it will not rank in the top list.
+    If core gates fail, the setup gets a strongly negative score and does not rank in the top list.
     """
     reasons: list = []
+    entry_tf = (analysis.get("entry_timeframe") or "").lower()
 
     # --- Core signals used by gates ---
     trend_entry = analysis["trend_entry"]
@@ -413,27 +414,32 @@ def calculate_confluence_score_bullish(analysis: dict) -> tuple:
     trend_ok      = (trend_entry == "Uptrend (HH/HL)")
     price_near_hl = (pos == "Near HL")
 
+    # 1H trend not considered; 4H RSI not used (only confirmation RSI required when entry is 4H)
+    use_trend_gate = (entry_tf != "1h")
+    use_entry_rsi_gate = (entry_tf != "4h")
+
     core_fail_reasons = []
-    if not (rising_entry and rising_conf):
+    if use_entry_rsi_gate and not (rising_entry and rising_conf):
         core_fail_reasons.append("RSI not rising on both entry and confirmation TFs")
+    elif not use_entry_rsi_gate and not rising_conf:
+        core_fail_reasons.append("RSI not rising on confirmation TF")
     if not (ma_bull_entry and ma_bull_conf):
         core_fail_reasons.append("MA alignment not Bullish on both TFs")
-    if not trend_ok:
+    if use_trend_gate and not trend_ok:
         core_fail_reasons.append("Entry TF trend is not Uptrend (HH/HL)")
-    if not price_near_hl:
-        core_fail_reasons.append("Price not near HL pivot on entry TF")
+    # Price near HL is no longer a hard gate so that some stocks can pass
 
     if core_fail_reasons:
-        # Hard gate: treat as failed bullish setup so it never ranks in top confluence list
         msg = "; ".join(core_fail_reasons)
         return -5.0, [f"-5  Core bullish conditions failed: {msg}"]
 
     # --- Detailed scoring (only for setups passing the gates) ---
     score = 0.0
 
-    # Trend on entry TF (higher TF for this confluence setup)
-    score += 4
-    reasons.append("+4  Uptrend (HH/HL) on entry TF")
+    # Trend on entry TF — only when not 1H (1H trend not considered)
+    if use_trend_gate and trend_ok:
+        score += 4
+        reasons.append("+4  Uptrend (HH/HL) on entry TF")
 
     # MA alignment on entry & confirmation TFs (both already Bullish by gate)
     score += 3; reasons.append("+3  MA Bullish on entry TF")
@@ -451,19 +457,20 @@ def calculate_confluence_score_bullish(analysis: dict) -> tuple:
     else:
         score += 0.5; reasons.append("+0.5 Price in middle range")
 
-    # RSI on entry TF
-    rising  = rising_entry
-    falling = rsi_e < rsi_ep - 0.5
-    if rising and 40 <= rsi_e <= 70:
-        score += 2;   reasons.append(f"+2  RSI rising in 40–70 zone ({rsi_e})")
-    elif rising:
-        score += 1;   reasons.append(f"+1  RSI rising ({rsi_e})")
-    elif falling:
-        score -= 1;   reasons.append(f"−1  RSI FALLING ({rsi_e}) — wrong for bullish")
-    if rsi_e > 70:
-        score -= 1;   reasons.append(f"−1  RSI overbought ({rsi_e})")
-    elif rsi_e < 30 and rising:
-        score += 0.5; reasons.append(f"+0.5 RSI oversold but turning up ({rsi_e})")
+    # RSI on entry TF — skip when entry is 4H (RSI 4H not needed)
+    if use_entry_rsi_gate:
+        rising  = rising_entry
+        falling = rsi_e < rsi_ep - 0.5
+        if rising and 40 <= rsi_e <= 70:
+            score += 2;   reasons.append(f"+2  RSI rising in 40–70 zone ({rsi_e})")
+        elif rising:
+            score += 1;   reasons.append(f"+1  RSI rising ({rsi_e})")
+        elif falling:
+            score -= 1;   reasons.append(f"−1  RSI FALLING ({rsi_e}) — wrong for bullish")
+        if rsi_e > 70:
+            score -= 1;   reasons.append(f"−1  RSI overbought ({rsi_e})")
+        elif rsi_e < 30 and rising:
+            score += 0.5; reasons.append(f"+0.5 RSI oversold but turning up ({rsi_e})")
 
     # RSI on confirmation TF
     rsid  = rsi_d
@@ -498,17 +505,21 @@ def calculate_confluence_score_bullish(analysis: dict) -> tuple:
 
 
 def calculate_confluence_score_bearish(analysis: dict) -> tuple:
-    """Bearish confluence. RSI falling = positive; rising = penalty. Near LH = +3."""
+    """Bearish confluence. RSI falling = positive; rising = penalty. Near LH = +3. 1H trend and 4H RSI not used."""
     score = 0.0
     reasons: list = []
+    entry_tf = (analysis.get("entry_timeframe") or "").lower()
+    use_trend = (entry_tf != "1h")
+    use_entry_rsi = (entry_tf != "4h")
 
-    t = analysis["trend_entry"]
-    if t == "Downtrend (LL/LH)":
-        score += 4;  reasons.append("+4  Downtrend (LL/LH) on entry TF")
-    elif t == "Uptrend (HH/HL)":
-        score -= 3;  reasons.append("−3  Uptrend on entry TF — penalised")
-    else:
-        score += 0.5; reasons.append("+0.5 Sideways entry TF")
+    if use_trend:
+        t = analysis["trend_entry"]
+        if t == "Downtrend (LL/LH)":
+            score += 4;  reasons.append("+4  Downtrend (LL/LH) on entry TF")
+        elif t == "Uptrend (HH/HL)":
+            score -= 3;  reasons.append("−3  Uptrend on entry TF — penalised")
+        else:
+            score += 0.5; reasons.append("+0.5 Sideways entry TF")
 
     ma = analysis["ma_alignment_entry"]
     if ma == "Bearish":
@@ -536,30 +547,31 @@ def calculate_confluence_score_bearish(analysis: dict) -> tuple:
     else:
         score += 0.5; reasons.append("+0.5 Price in middle range")
 
-    rsi  = analysis["rsi_entry"]
-    rsip = analysis["rsi_entry_prev"]
-    falling = rsi < rsip - 0.5
-    rising  = rsi > rsip + 0.5
-    if pos == "Near LH":
-        if 50 <= rsi <= 70 and falling:
-            score += 2.5; reasons.append(f"+2.5 RSI rolling down from resistance zone ({rsi})")
-        elif 50 <= rsi <= 70:
-            score += 1.5; reasons.append(f"+1.5 RSI in resistance zone ({rsi})")
-        elif rsi > 70:
-            score += 1;   reasons.append(f"+1  RSI overbought at resistance ({rsi})")
-        elif rsi < 30:
-            score -= 1.5; reasons.append(f"−1.5 RSI oversold at LH — suspicious ({rsi})")
-        elif rising:
-            score -= 1;   reasons.append(f"−1  RSI RISING at resistance ({rsi})")
-    else:
-        if falling and 30 <= rsi <= 60:
-            score += 2;   reasons.append(f"+2  RSI falling in 30–60 zone ({rsi})")
-        elif falling:
-            score += 1;   reasons.append(f"+1  RSI falling ({rsi})")
-        elif rising:
-            score -= 1;   reasons.append(f"−1  RSI RISING ({rsi}) — wrong for bearish")
-        if rsi < 30:
-            score -= 1;   reasons.append(f"−1  RSI oversold ({rsi}) — late entry")
+    if use_entry_rsi:
+        rsi  = analysis["rsi_entry"]
+        rsip = analysis["rsi_entry_prev"]
+        falling = rsi < rsip - 0.5
+        rising  = rsi > rsip + 0.5
+        if pos == "Near LH":
+            if 50 <= rsi <= 70 and falling:
+                score += 2.5; reasons.append(f"+2.5 RSI rolling down from resistance zone ({rsi})")
+            elif 50 <= rsi <= 70:
+                score += 1.5; reasons.append(f"+1.5 RSI in resistance zone ({rsi})")
+            elif rsi > 70:
+                score += 1;   reasons.append(f"+1  RSI overbought at resistance ({rsi})")
+            elif rsi < 30:
+                score -= 1.5; reasons.append(f"−1.5 RSI oversold at LH — suspicious ({rsi})")
+            elif rising:
+                score -= 1;   reasons.append(f"−1  RSI RISING at resistance ({rsi})")
+        else:
+            if falling and 30 <= rsi <= 60:
+                score += 2;   reasons.append(f"+2  RSI falling in 30–60 zone ({rsi})")
+            elif falling:
+                score += 1;   reasons.append(f"+1  RSI falling ({rsi})")
+            elif rising:
+                score -= 1;   reasons.append(f"−1  RSI RISING ({rsi}) — wrong for bearish")
+            if rsi < 30:
+                score -= 1;   reasons.append(f"−1  RSI oversold ({rsi}) — late entry")
 
     rsid  = analysis["rsi_1d"]
     rsidp = analysis["rsi_1d_prev"]
