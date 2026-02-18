@@ -3551,8 +3551,10 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
 
             for sym, series in nifty_closes.items():
                 try:
-                    date_ts = pd.Timestamp(date_t)
-                    idx = series.index.get_indexer([date_ts], method='ffill')[0]
+                    # Normalize series index to tz-naive dates for reliable matching
+                    series_dates = series.index.tz_localize(None).normalize() if series.index.tz is not None else series.index.normalize()
+                    date_ts = pd.Timestamp(date_t).normalize()
+                    idx = series_dates.get_indexer([date_ts], method='ffill')[0]
                     if idx < 0 or idx >= len(series) or idx == 0:
                         continue
                     close_t = series.iloc[idx]
@@ -3593,7 +3595,9 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
 
             try:
                 if nifty_index_data is not None and len(nifty_index_data) > 0:
-                    nifty_idx = nifty_index_data.index.get_indexer([pd.Timestamp(date_t)], method='ffill')[0]
+                    nifty_dates = nifty_index_data.index.tz_localize(None).normalize() if nifty_index_data.index.tz is not None else nifty_index_data.index.normalize()
+                    date_ts_nifty = pd.Timestamp(date_t).normalize()
+                    nifty_idx = nifty_dates.get_indexer([date_ts_nifty], method='ffill')[0]
                     if 0 <= nifty_idx < len(nifty_index_data):
                         nifty_close = nifty_index_data['Close'].iloc[nifty_idx]
                         row['Nifty'] = int(round(nifty_close, 0))
