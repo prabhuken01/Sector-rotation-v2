@@ -2,11 +2,11 @@
 """
 NSE Market Sector Analysis Tool - Streamlit Web Interface
 Enhanced with configurable weights, ETF proxy, and improved aesthetics
-Version: 2.3.9 - Market breadth T always includes today when trading day (Feb 2026)
+Version: 2.4.0 - Confluence pivot 10/10 (Pine), reject at LH/HH for bullish; pivot note in Stock Screener (Feb 2026)
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.3.9"
+APP_VERSION = "2.4.0"
 
 import os
 import io
@@ -4965,6 +4965,7 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
 
 **Max score ≈ 20 pts** per side. **≥ 12** = excellent, **≥ 9** = good/strong, **5–9** = moderate, **< 5** = weak/avoid. **Negative** = opposite setup.
 """)
+    st.caption("**Pivot (HH/HL/LH/LL):** Pivot highs and lows use **left=10, right=10** bars (aligned with TradingView Pine script «Pivot Points High Low»). Bullish setups with price **at Near LH** (at HH/resistance) are **rejected** (score −5) and do not appear in Top 8 Bullish.")
 
     st.info(f"Analyzing confluence: **{conf_tf_label}** (entry **{entry_label}** + confirmation **{conf_label}**). This may take a few minutes...")
 
