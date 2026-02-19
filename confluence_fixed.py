@@ -26,6 +26,7 @@ Fixes applied in this version
 
 (e) HH / HL / LH / LL reconstruction via detect_swing_structure()
     (Python port of the Pine-Script "Pivot Points High Low" indicator).
+    Pivot lengths: left=10, right=10 to match Pine default (ta.pivothigh(10,10) / ta.pivotlow(10,10)).
 """
 
 from __future__ import annotations
@@ -55,8 +56,8 @@ def _calculate_rsi_from_df(data: pd.DataFrame, period: int = 14) -> pd.Series:
 
 def _pivot_highs_lows(
     data: pd.DataFrame,
-    left: int = 3,
-    right: int = 3,
+    left: int = 10,
+    right: int = 10,
 ) -> tuple[list[tuple[int, float]], list[tuple[int, float]]]:
     """
     Detect pivot highs and pivot lows.
@@ -89,8 +90,8 @@ def _pivot_highs_lows(
 
 def detect_swing_structure(
     data: pd.DataFrame,
-    left: int = 3,
-    right: int = 3,
+    left: int = 10,
+    right: int = 10,
     min_pivots: int = 4,
 ) -> dict:
     """
@@ -334,15 +335,16 @@ def analyze_stock_confluence(
         rsi_d   = float(rsi_d_s.iloc[-1]) if not rsi_d_s.isna().all() else 50.0
         rsi_dp  = float(rsi_d_s.iloc[-2]) if len(rsi_d_s.dropna()) >= 2 else rsi_d
 
-        pivot_window = min(80, len(data_entry))
+        # Pivot 10/10 to match Pine "Pivot Points High Low" (ta.pivothigh(10,10), ta.pivotlow(10,10))
+        pivot_window = min(100, len(data_entry))
         swing_e = detect_swing_structure(
-            data_entry.tail(pivot_window), left=3, right=3, min_pivots=4
+            data_entry.tail(pivot_window), left=10, right=10, min_pivots=4
         )
         trend_entry = swing_e["trend"]
 
-        pivot_window_d = min(80, len(data_1d))
+        pivot_window_d = min(100, len(data_1d))
         swing_d  = detect_swing_structure(
-            data_1d.tail(pivot_window_d), left=3, right=3, min_pivots=4
+            data_1d.tail(pivot_window_d), left=10, right=10, min_pivots=4
         )
         trend_1d = swing_d["trend"]
 
@@ -427,7 +429,9 @@ def calculate_confluence_score_bullish(analysis: dict) -> tuple:
         core_fail_reasons.append("MA alignment not Bullish on both TFs")
     if use_trend_gate and not trend_ok:
         core_fail_reasons.append("Entry TF trend is not Uptrend (HH/HL)")
-    # Price near HL is no longer a hard gate so that some stocks can pass
+    # Price at LH/HH (resistance) = not ideal for bullish entry — reject so we don't pick "at HH" stocks
+    if pos == "Near LH":
+        core_fail_reasons.append("Price at LH/HH (resistance) — not ideal for bullish entry")
 
     if core_fail_reasons:
         msg = "; ".join(core_fail_reasons)

@@ -2,6 +2,54 @@
 
 This document summarizes the **core logic** used for confluence scoring and sector selection in v2.3.5 (and v2.3.1–2.3.4).
 
+---
+
+### Confluence flow (confluence_2_3_1) — step-by-step
+
+Use this flow to verify behaviour when debugging or changing code.
+
+1. **Pivot points (HH/HL/LH/LL source)**  
+   - Implemented in `confluence_fixed.py`: `_pivot_highs_lows()` and `detect_swing_structure()`.  
+   - **Aligned with TradingView:** Same logic as Pine script *Pivot Points High Low*: `ta.pivothigh(10, 10)` and `ta.pivotlow(10, 10)`.  
+   - **Parameters:** `left=10`, `right=10` (not 3/3). A bar is a **pivot high** if its High is the unique maximum in the window `[i-10 … i+10]`; **pivot low** if its Low is the unique minimum in that window.  
+   - **Window:** Last 100 bars of entry TF and last 100 bars of 1D are used for pivot detection (`pivot_window` / `pivot_window_d`).
+
+2. **Swing structure (trend label)**  
+   - From the list of pivot highs (ph) and pivot lows (pl):  
+     - Count **HH** = consecutive pivot highs where each high > previous; **LH** = each high < previous.  
+     - Count **HL** = consecutive pivot lows where each low > previous; **LL** = each low < previous.  
+   - **Trend:**  
+     - `Uptrend (HH/HL)` if ≥55% of pivot-high pairs are HH and ≥55% of pivot-low pairs are HL.  
+     - `Downtrend (LL/LH)` if ≥55% are LL and LH.  
+     - Else `Sideways`.  
+   - **Outputs:** `last_hl_price` = most recent pivot low (HL candidate); `last_lh_price` = most recent pivot high (LH candidate).
+
+3. **Price position (vs pivots)**  
+   - **Near HL:** Current price within 3% of `last_hl_price` → ideal **bullish** entry (buy at support).  
+   - **Near LH:** Current price within 3% of `last_lh_price` → at resistance / **at HH** → ideal **bearish** entry; **not** ideal for bullish.  
+   - **Middle:** Neither.  
+   - If within 3% of both, choose the closer pivot.
+
+4. **Bullish gates (all must pass)**  
+   - RSI rising on confirmation TF; and on entry TF when entry ≠ 4H.  
+   - MA alignment Bullish on **both** entry and confirmation TFs.  
+   - Entry TF trend = **Uptrend (HH/HL)** (when entry ≠ 1H; 1H trend not used).  
+   - **Price must NOT be at LH/HH:** If `price_position == "Near LH"` → **fail** (score -5). So stocks at HH are never picked as Confluence Bullish.  
+   - (Price near HL is not required to pass the gate; it only adds +3 in scoring.)
+
+5. **Bullish scoring (after gates)**  
+   - Trend Uptrend (HH/HL): +4. MA entry: +3, MA conf: +2.  
+   - Near HL: +3; Near LH: −1 (but Near LH already failed gate); Middle: +0.5.  
+   - RSI entry (when used): rising 40–70 +2, rising else +1, falling −1; RSI > 70 −1; RSI < 30 rising +0.5.  
+   - RSI conf: rising 40–70 +1.5, rising else +0.5, falling −0.5; RSI > 70 −0.5.  
+   - MA crossover, divergence, volume as in §2.2 below.
+
+6. **Bearish**  
+   - Same pivot/swing logic. Gates require RSI falling, MA Bearish, trend Downtrend (LL/LH) when applicable.  
+   - Ideal entry: **Near LH** (short at resistance). Price at **Near HL** = “TOO LATE” for short (at support).
+
+---
+
 ### 0. Sector–company mapping (Stock Screener & Confluence)
 
 - **Primary source:** `Sector-Company.xlsx` (sheet **Main**). Path is configurable; app loads it at startup and shows the path in the UI. Use **Sector Companies** tab → **Reload from Excel** after editing the file.
@@ -64,13 +112,14 @@ For a bullish setup to be considered valid:
 3. **Trend on higher timeframe (entry TF)**
    - Entry‑timeframe trend from `detect_swing_structure` must be:
      - `trend_entry == "Uptrend (HH/HL)"`.
-   - This requires a consistent HH/HL pattern in the pivot structure.
+   - Pivots use **left=10, right=10** (Pine “Pivot Points High Low” default).
 
-4. **Recent pivot = Higher Low (HL) and price near HL**
-   - From the same pivot structure:
-     - `price_position == "Near HL"` (price within ~3% of last HL pivot).
+4. **Price must NOT be at LH/HH (resistance)**
+   - If `price_position == "Near LH"` (price within ~3% of last pivot high) → **fail**. Stocks at HH are not ideal for bullish entry and are excluded.
 
-If **any** of the above fail, the function returns:
+5. **Price near HL** is scoring-only (not a gate); some stocks pass without it.
+
+If **any** of the above gates fail, the function returns:
 
 ```text
 score  = -5.0
@@ -121,11 +170,16 @@ For setups passing all gates, additional points are added as follows:
    - `+1` if recent volume is significantly above the recent average (`volume_status == "High"`).
 
 The final score is rounded to 2 decimals and used to rank bullish confluence candidates.  
-Only stocks satisfying the **core gates** (RSI up on both TFs, MA Bullish on both, Uptrend HH/HL with price near HL) can receive a positive confluence score.
+Only stocks satisfying the **core gates** (RSI up where required, MA Bullish on both, Uptrend HH/HL, and price **not** at Near LH/HH) can receive a positive confluence score.
 
 ---
 
 ### Changelog
+
+**v2.3.9 (confluence_2_3_1 flow)**
+- **Pivot lengths:** Pivot high/low detection now uses **left=10, right=10** to match TradingView Pine script “Pivot Points High Low” (`ta.pivothigh(10,10)`, `ta.pivotlow(10,10)`). Previously 3/3, which produced noisier pivots and could misclassify HH/HL.
+- **Bullish gate:** If **price position = Near LH** (price within 3% of last pivot high = at HH/resistance), the setup **fails** (score -5). Confluence Bullish no longer picks stocks that are at HH on the chart.
+- **Flow doc:** Added “Confluence flow (confluence_2_3_1)” section above for step-by-step verification.
 
 **v2.3.5**
 - Version set to **2.3.5**.
