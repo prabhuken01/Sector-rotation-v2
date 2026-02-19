@@ -380,20 +380,22 @@ def analyze_stock_confluence(
         return None
 
 
-def calculate_confluence_score_bullish(analysis: dict) -> tuple:
+def _default_bullish_gate_options():
+    return {"rsi_rising": True, "ma_bullish_both": True, "uptrend_hh_hl": True, "not_near_lh": True}
+
+
+def calculate_confluence_score_bullish(analysis: dict, gate_options: dict | None = None) -> tuple:
     """
-    Bullish confluence.
-
-    **Core requirements (gates):**
-    - RSI rising on confirmation TF; entry TF RSI required only when entry is not 4H (4H RSI not used).
-    - MA alignment Bullish on BOTH timeframes.
-    - Entry TF trend = Uptrend (HH/HL) only when entry is not 1H (1H trend not considered).
-    - Price near HL is scoring-only (not a hard gate) so some stocks always pass.
-
-    If core gates fail, the setup gets a strongly negative score and does not rank in the top list.
+    Bullish confluence. gate_options: rsi_rising, ma_bullish_both, uptrend_hh_hl, not_near_lh.
+    When a key is True (default), that gate is applied; when False, the gate is skipped.
     """
     reasons: list = []
     entry_tf = (analysis.get("entry_timeframe") or "").lower()
+    opts = gate_options if gate_options is not None else _default_bullish_gate_options()
+    gate_rsi = opts.get("rsi_rising", True)
+    gate_ma = opts.get("ma_bullish_both", True)
+    gate_trend = opts.get("uptrend_hh_hl", True)
+    gate_not_lh = opts.get("not_near_lh", True)
 
     # --- Core signals used by gates ---
     trend_entry = analysis["trend_entry"]
@@ -414,23 +416,20 @@ def calculate_confluence_score_bullish(analysis: dict) -> tuple:
     ma_bull_entry = (ma_entry == "Bullish")
     ma_bull_conf  = (ma_conf == "Bullish")
     trend_ok      = (trend_entry == "Uptrend (HH/HL)")
-    price_near_hl = (pos == "Near HL")
-
-    # 1H trend not considered; 4H RSI not used (only confirmation RSI required when entry is 4H)
     use_trend_gate = (entry_tf != "1h")
     use_entry_rsi_gate = (entry_tf != "4h")
 
     core_fail_reasons = []
-    if use_entry_rsi_gate and not (rising_entry and rising_conf):
-        core_fail_reasons.append("RSI not rising on both entry and confirmation TFs")
-    elif not use_entry_rsi_gate and not rising_conf:
-        core_fail_reasons.append("RSI not rising on confirmation TF")
-    if not (ma_bull_entry and ma_bull_conf):
+    if gate_rsi:
+        if use_entry_rsi_gate and not (rising_entry and rising_conf):
+            core_fail_reasons.append("RSI not rising on both entry and confirmation TFs")
+        elif not use_entry_rsi_gate and not rising_conf:
+            core_fail_reasons.append("RSI not rising on confirmation TF")
+    if gate_ma and not (ma_bull_entry and ma_bull_conf):
         core_fail_reasons.append("MA alignment not Bullish on both TFs")
-    if use_trend_gate and not trend_ok:
+    if gate_trend and use_trend_gate and not trend_ok:
         core_fail_reasons.append("Entry TF trend is not Uptrend (HH/HL)")
-    # Price at LH/HH (resistance) = not ideal for bullish entry — reject so we don't pick "at HH" stocks
-    if pos == "Near LH":
+    if gate_not_lh and pos == "Near LH":
         core_fail_reasons.append("Price at LH/HH (resistance) — not ideal for bullish entry")
 
     if core_fail_reasons:
@@ -508,14 +507,47 @@ def calculate_confluence_score_bullish(analysis: dict) -> tuple:
     return round(score, 2), reasons
 
 
-def calculate_confluence_score_bearish(analysis: dict) -> tuple:
-    """Bearish confluence. RSI falling = positive; rising = penalty. Near LH = +3. 1H trend and 4H RSI not used."""
+def _default_bearish_gate_options():
+    return {"rsi_falling": True, "ma_bearish_both": True, "downtrend_ll_lh": True, "not_near_hl": True}
+
+
+def calculate_confluence_score_bearish(analysis: dict, gate_options: dict | None = None) -> tuple:
+    """Bearish confluence. gate_options: rsi_falling, ma_bearish_both, downtrend_ll_lh, not_near_hl. When True, gate applied (fail -5 if not met)."""
     score = 0.0
     reasons: list = []
     entry_tf = (analysis.get("entry_timeframe") or "").lower()
-    use_trend = (entry_tf != "1h")
-    use_entry_rsi = (entry_tf != "4h")
+    opts = gate_options if gate_options is not None else _default_bearish_gate_options()
+    gate_rsi = opts.get("rsi_falling", True)
+    gate_ma = opts.get("ma_bearish_both", True)
+    gate_trend = opts.get("downtrend_ll_lh", True)
+    gate_not_hl = opts.get("not_near_hl", True)
 
+    # Optional gates: if enabled and condition not met, return -5
+    ma_entry = analysis["ma_alignment_entry"]
+    ma_conf = analysis["ma_alignment_1d"]
+    pos = analysis.get("price_position", "Middle")
+    rsi_e = analysis["rsi_entry"]
+    rsi_ep = analysis["rsi_entry_prev"]
+    rsi_d = analysis["rsi_1d"]
+    rsi_dp = analysis["rsi_1d_prev"]
+    falling_entry = rsi_e < rsi_ep - 0.5
+    falling_conf = rsi_d < rsi_dp - 0.5
+    use_entry_rsi = (entry_tf != "4h")
+    if gate_rsi:
+        if use_entry_rsi and not (falling_entry and falling_conf):
+            return -5.0, ["-5  Bearish gate: RSI not falling on both entry and confirmation TFs"]
+        elif not use_entry_rsi and not falling_conf:
+            return -5.0, ["-5  Bearish gate: RSI not falling on confirmation TF"]
+    if gate_ma and not (ma_entry == "Bearish" and ma_conf == "Bearish"):
+        return -5.0, ["-5  Bearish gate: MA not Bearish on both TFs"]
+    if gate_trend and (entry_tf != "1h"):
+        t = analysis["trend_entry"]
+        if t != "Downtrend (LL/LH)":
+            return -5.0, [f"-5  Bearish gate: Entry TF trend is not Downtrend (LL/LH) (got {t})"]
+    if gate_not_hl and pos == "Near HL":
+        return -5.0, ["-5  Bearish gate: Price at Near HL (support) — too late to short"]
+
+    use_trend = (entry_tf != "1h")
     if use_trend:
         t = analysis["trend_entry"]
         if t == "Downtrend (LL/LH)":
