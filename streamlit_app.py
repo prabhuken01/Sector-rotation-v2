@@ -2,11 +2,11 @@
 """
 NSE Market Sector Analysis Tool - Streamlit Web Interface
 Enhanced with configurable weights, ETF proxy, and improved aesthetics
-Version: 2.4.0 - Confluence pivot 10/10 (Pine), reject at LH/HH for bullish; pivot note in Stock Screener (Feb 2026)
+Version: 2.4.1 - Confluence v3.1: gates/filter/score breakdown in Stock Screener; market breadth no duplicate date (Feb 2026)
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.4.1"
 
 import os
 import io
@@ -3530,6 +3530,15 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
         dates_20 = list(reversed(dates_20))  # oldest first, current day last
         if dates_20 and dates_20[-1].date() != t_date:
             dates_20 = dates_20[:-1] + [pd.Timestamp(t_date)]
+        # De-duplicate by date so latest date is not shown twice
+        seen_d = set()
+        dates_20_unique = []
+        for d in dates_20:
+            k = d.date() if hasattr(d, 'date') else d
+            if k not in seen_d:
+                seen_d.add(k)
+                dates_20_unique.append(d)
+        dates_20 = dates_20_unique
         table_rows = []
 
         for i, date_t in enumerate(dates_20):
@@ -4967,6 +4976,21 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
 """)
     st.caption("**Pivot (HH/HL/LH/LL):** Pivot highs and lows use **left=10, right=10** bars (aligned with TradingView Pine script «Pivot Points High Low»). Bullish setups with price **at Near LH** (at HH/resistance) are **rejected** (score −5) and do not appear in Top 8 Bullish.")
 
+    with st.expander("📋 (a) Gates (v3.1) — must all pass"):
+        st.markdown("""
+Stocks that **fail any gate** get score **−5** and are **excluded** from Top 8.
+
+**Bullish gates:** (1) RSI **rising** on confirmation TF (and on entry TF when entry ≠ 4H). (2) MA alignment **Bullish** on **both** entry and confirmation TFs. (3) Entry TF trend = **Uptrend (HH/HL)** when entry ≠ 1H. (4) Price must **not** be at **Near LH** (at HH/resistance).
+
+**Bearish:** Same pivot/trend logic; score > −5 to appear in Top 8 Bearish. Ideal: RSI falling, MA Bearish, Downtrend (LL/LH), Price Near LH.
+""")
+    with st.expander("📋 (b) Filter for scoring"):
+        st.markdown("""
+**Universe:** Top 4 sectors (bullish) + Bottom 6 sectors (bearish) per Momentum Ranking, or Universal (All Sectors).
+
+**Included in tables:** Only stocks with **score > −5** (passed Phase-1 gates). **Ranking:** By score (descending). Top 8 Bullish and Top 8 Bearish shown.
+""")
+
     st.info(f"Analyzing confluence: **{conf_tf_label}** (entry **{entry_label}** + confirmation **{conf_label}**). This may take a few minutes...")
 
     # If screener returned no rows (e.g. no data for selected date), build confluence universe from SECTOR_COMPANIES so analysis can still run
@@ -5075,11 +5099,11 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
                 'Price Pos.': analysis_data.get('price_position', 'Unknown'),
             }
 
-            # v3.1: only include stocks that pass Phase-1 gates (score > _GATE_FAIL_SCORE)
+            # v3.1: only include stocks that pass Phase-1 gates (score > _GATE_FAIL_SCORE); store reasons for per-weight breakdown
             if bull_ok and bullish_score > _GATE_FAIL_SCORE:
-                stock_results_bullish.append({**common, 'Score': int(round(bullish_score)), 'Description': bullish_desc})
+                stock_results_bullish.append({**common, 'Score': int(round(bullish_score)), 'Description': bullish_desc, 'Score breakdown': bullish_reasons})
             if bear_ok and bearish_score > _GATE_FAIL_SCORE:
-                stock_results_bearish.append({**common, 'Score': int(round(bearish_score)), 'Description': bearish_desc})
+                stock_results_bearish.append({**common, 'Score': int(round(bearish_score)), 'Description': bearish_desc, 'Score breakdown': bearish_reasons})
 
         except Exception:
             continue
@@ -5146,7 +5170,7 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
             use_container_width=True, hide_index=True
         )
 
-        # Breakdown for top 3 bullish
+        # Breakdown for top 3 bullish (c) per-weight score breakdown
         with st.expander("📊 Scoring breakdown — Top 3 Bullish"):
             for i in range(min(3, len(df_bull8))):
                 r = df_bull8.iloc[i]
@@ -5154,6 +5178,12 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
                 st.markdown(f"  - {r['Description']}")
                 st.markdown(f"  - Trend: {entry_label}={r[f'Trend ({entry_label})']}, {conf_label}={r[f'Trend ({conf_label})']}")
                 st.markdown(f"  - MA: {r[f'MA Align ({entry_label})']}, {r[f'MA Align ({conf_label})']} | RSI: {r[f'RSI ({entry_label})']}, {r[f'RSI ({conf_label})']}")
+                if 'Score breakdown' in df_bullish.columns and i < len(df_bullish):
+                    breakdown = df_bullish.iloc[i].get('Score breakdown', [])
+                    if breakdown:
+                        st.markdown("  **Score breakdown (per weight):**")
+                        for line in breakdown:
+                            st.markdown(f"  - {line}")
                 if i < 2: st.markdown("---")
 
         st.markdown("---")
@@ -5185,7 +5215,7 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
             use_container_width=True, hide_index=True
         )
 
-        # Breakdown for top 3 bearish
+        # Breakdown for top 3 bearish (c) per-weight score breakdown
         with st.expander("📊 Scoring breakdown — Top 3 Bearish"):
             for i in range(min(3, len(df_bear8))):
                 r = df_bear8.iloc[i]
@@ -5193,6 +5223,12 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
                 st.markdown(f"  - {r['Description']}")
                 st.markdown(f"  - Trend: {entry_label}={r[f'Trend ({entry_label})']}, {conf_label}={r[f'Trend ({conf_label})']}")
                 st.markdown(f"  - MA: {r[f'MA Align ({entry_label})']}, {r[f'MA Align ({conf_label})']} | RSI: {r[f'RSI ({entry_label})']}, {r[f'RSI ({conf_label})']}")
+                if 'Score breakdown' in df_bearish.columns and i < len(df_bearish):
+                    breakdown = df_bearish.iloc[i].get('Score breakdown', [])
+                    if breakdown:
+                        st.markdown("  **Score breakdown (per weight):**")
+                        for line in breakdown:
+                            st.markdown(f"  - {line}")
                 if i < 2: st.markdown("---")
 
         # Key insights
