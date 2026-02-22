@@ -6,7 +6,7 @@ Version: 2.4.2 - Confluence gates: user toggles for Bullish/Bearish in sidebar; 
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.4.6"
+APP_VERSION = "2.4.7"
 
 import os
 import io
@@ -2413,6 +2413,25 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                 'Conf Bear #2 1D %', 'Conf Bear #2 2D %', 'Conf Bear #2 3D %', 'Conf Bear #2 1W %',
             ]
 
+            # Pre-compute fixed top4/bottom6 from df_momentum (same as Stock Screener uses today)
+            # This ensures Historical Rankings always uses the SAME sector filter as Stock Screener
+            top_4_fixed = None
+            bot_6_fixed = None
+            try:
+                _t4, _b6 = _top_bottom_from_df(df_momentum)
+                if _t4 is not None and hist_conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
+                    top_4_fixed = _t4
+                    bot_6_fixed = _b6
+                    st.caption(f"📌 **Sectors synced with Stock Screener** | Bullish top 4: **{', '.join(top_4_fixed)}** | Bearish bottom 6: **{', '.join(bot_6_fixed)}**")
+            except Exception:
+                pass
+
+            # Snapshot time: follow Stock Screener's selection (stored in session_state)
+            _hist_snap_h = st.session_state.get("_screener_snap_h", 14)
+            _hist_snap_m = st.session_state.get("_screener_snap_m", 15)
+            _hist_snap_label = f"{_hist_snap_h:02d}:{_hist_snap_m:02d} IST"
+            st.caption(f"⏱️ **1H snapshot time:** {_hist_snap_label} (synced with Stock Screener)")
+
             total_dates = len(dates_10)
             for di, date_t in enumerate(dates_10):
                 progress_bar.progress((di + 1) / total_dates)
@@ -2535,19 +2554,20 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     top2 = df_sec.head(2)['sector'].tolist()
                     row['Momentum #1 Sector'] = top2[0] if len(top2) >= 1 else ''
                     row['Momentum #2 Sector'] = top2[1] if len(top2) >= 2 else ''
-                    # Per-date Top 4 / Bottom 6 from same Momentum Ranking (for confluence sector filter)
-                    top_4_this_date = df_sec.head(4)['sector'].tolist()
-                    bot_6_this_date = df_sec.tail(6)['sector'].tolist()
+                    # Sector gate: use df_momentum-derived top4/bottom6 (same as Stock Screener) for sync.
+                    # Fall back to per-date computation only if df_momentum sectors unavailable.
+                    top_4_this_date = top_4_fixed if top_4_fixed is not None else df_sec.head(4)['sector'].tolist()
+                    bot_6_this_date = bot_6_fixed if bot_6_fixed is not None else df_sec.tail(6)['sector'].tolist()
                 else:
                     row['Momentum #1 Sector'] = ''
                     row['Momentum #2 Sector'] = ''
                 
                 # c) d) Bullish #1, #2 and e) f) Bearish #1, #2 — same scoring as Stock Screener
                 company_hourly, _ = fetch_all_sectors_parallel(company_symbols_dict, end_date=date_t, interval='1h')
-                # Historical dates: snap to 2:15 PM bar (pre-close) if available, else keep last bar
+                # Snap to the same time as Stock Screener (_hist_snap_h/_hist_snap_m, default 2:15 PM)
                 if company_hourly:
                     company_hourly = {
-                        sym: _slice_hourly_to_snapshot(h, 14, 15)[0]
+                        sym: _slice_hourly_to_snapshot(h, _hist_snap_h, _hist_snap_m)[0]
                         for sym, h in company_hourly.items()
                         if h is not None
                     }
@@ -4634,7 +4654,7 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
             if sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
                 top_sectors = top_from_df
                 bot_sectors = bot_from_df
-                st.info("**Confluence pertains to top 4 sectors (bullish) and bottom 6 sectors (bearish) per Momentum Ranking** for this date.")
+                st.info("**Momentum Ranking** selects top 4 bullish sectors and bottom 6 bearish sectors for this date.")
                 if top_sectors:
                     st.success(f"**✅ Bullish (top 4):** {', '.join(top_sectors)}")
                 if bot_sectors:
@@ -4647,7 +4667,7 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
                 if sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
                     top_sectors = get_top_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=4)
                     bot_sectors = get_bottom_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=6)
-                    st.info("**Confluence pertains to top 4 (bullish) and bottom 6 (bearish) sectors** per Momentum Ranking.")
+                    st.info("**Momentum Ranking** selects top 4 bullish sectors and bottom 6 bearish sectors for this date.")
                     if top_sectors:
                         st.success(f"**✅ Bullish:** {', '.join(top_sectors)}")
                     if bot_sectors:
@@ -4658,7 +4678,7 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
                 top_retry, bot_retry = _top_bottom_from_df(df_momentum)
                 if top_retry is not None and sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
                     top_sectors, bot_sectors = top_retry, bot_retry
-                    st.info("**Confluence pertains to top 4 + bottom 6 sectors** (fallback).")
+                    st.info("**Momentum Ranking** selects top 4 bullish / bottom 6 bearish sectors (fallback).")
                     if top_sectors:
                         st.success(f"**✅ Bullish:** {', '.join(top_sectors)}")
                     if bot_sectors:
@@ -4742,6 +4762,9 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
         help="Selects which intraday bar to use for RSI(1H), VWAP, and MA8(1H) calculations. Falls back to last available bar if the chosen time bar is absent."
     )
     _snap_h, _snap_m = _snap_opts[_snap_choice]
+    # Share snapshot time with Historical Rankings so both tabs always use the same bar
+    st.session_state["_screener_snap_h"] = _snap_h
+    st.session_state["_screener_snap_m"] = _snap_m
 
     if not universe:
         st.warning("⚠️ No companies found in Sector-Company universe.")
@@ -5011,8 +5034,10 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
         bull = bull.drop(columns=["Bearish Score"])
     bull["Sentiment"] = bull["Bullish Score"].apply(sentiment_color)
     num_cols_bull = [c for c in bull.columns if bull[c].dtype in ['float64', 'float32', 'int64', 'int32']]
+    _fmt_bull = {c: '{:.1f}' for c in ['Price', 'Bullish Score'] if c in bull.columns}
+    _fmt_bull.update({c: '{:.0f}' for c in ['RSI (1W)', 'RSI (1D)', 'RSI (1H)'] if c in bull.columns})
     st.dataframe(
-        bull.style.set_properties(subset=num_cols_bull, **{'text-align': 'center'}),
+        bull.style.set_properties(subset=num_cols_bull, **{'text-align': 'center'}).format(_fmt_bull, na_rep=''),
         use_container_width=True, hide_index=True
     )
 
@@ -5041,8 +5066,10 @@ Criteria NOT met → +1 pt. Higher score = stronger bearish setup.
         bear = bear.drop(columns=["Final score"])
     bear["Sentiment"] = bear["Bearish Score"].apply(sentiment_color)
     num_cols_bear = [c for c in bear.columns if bear[c].dtype in ['float64', 'float32', 'int64', 'int32']]
+    _fmt_bear = {c: '{:.1f}' for c in ['Price', 'Bearish Score'] if c in bear.columns}
+    _fmt_bear.update({c: '{:.0f}' for c in ['RSI (1W)', 'RSI (1D)', 'RSI (1H)'] if c in bear.columns})
     st.dataframe(
-        bear.style.set_properties(subset=num_cols_bear, **{'text-align': 'center'}),
+        bear.style.set_properties(subset=num_cols_bear, **{'text-align': 'center'}).format(_fmt_bear, na_rep=''),
         use_container_width=True, hide_index=True
     )
 
@@ -5293,16 +5320,18 @@ Criteria NOT met → +1 pt. Higher score = stronger bearish setup.
         })
     
     # ============================================================
-    # PART 3: INDIVIDUAL STOCK RANKING - CONFLUENCE ANALYSIS (FIXED)
+    # PART 3: INDIVIDUAL STOCK RANKING - CONFLUENCE ANALYSIS
+    # Toggle gates the heading — when OFF only a compact note is shown
     # ============================================================
-    st.markdown("## 🏆 PART 3: Individual Stock Ranking - Confluence Analysis")
-    st.caption("**Logic summary (v3.1):** Confluence uses **top 4 sectors (bullish) and bottom 6 sectors (bearish)** per Momentum Ranking when that filter is selected. Only stocks with score > gate-fail threshold are shown in Top 8 tables; rejected stocks appear in the Excel Rejected sheet.")
 
     # Confluence toggle — when OFF, skip all confluence computation
     enable_screener_confluence = st.toggle("Enable Confluence Analysis", value=False, key="enable_screener_conf")
     if not enable_screener_confluence:
-        st.info("ℹ️ Confluence Analysis is disabled. Toggle ON above to run confluence scoring.")
+        st.info("💡 **Confluence Analysis** is disabled. Toggle ON to run confluence scoring, or visit the **Confluence_Future** tab for the Bullish Entry Strategy guide.")
         return
+
+    st.markdown("## 🏆 PART 3: Individual Stock Ranking - Confluence Analysis")
+    st.caption("**Logic summary (v3.1):** Confluence uses **top 4 sectors (bullish) and bottom 6 sectors (bearish)** per Momentum Ranking when that filter is selected. Only stocks with score > gate-fail threshold are shown in Top 8 tables; rejected stocks appear in the Excel Rejected sheet.")
 
     st.markdown("---")
 
