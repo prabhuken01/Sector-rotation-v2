@@ -6,7 +6,7 @@ Version: 2.4.2 - Confluence gates: user toggles for Bullish/Bearish in sidebar; 
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.4.5"
+APP_VERSION = "2.4.6"
 
 import os
 import io
@@ -197,6 +197,10 @@ st.markdown("""
     }
     div[data-testid="stDataFrame"] tbody td {
         color: #ffffff !important;
+        text-align: center !important;
+    }
+    div[data-testid="stDataFrame"] thead th {
+        text-align: center !important;
     }
     .metric-card {
         background-color: #f8f9fa;
@@ -416,6 +420,9 @@ def get_sidebar_controls():
         bull_mrvg_rsi_min = st.slider("RSI(1H) ≥ (min)", 30, 80, 50, key="bull_mrvg_rsi_min")
         bull_mrvg_ma8 = st.checkbox("Price above MA8 (1H)", value=True, key="bull_mrvg_ma8")
         bull_mrvg_vwap = st.checkbox("Price above VWAP (1H)", value=True, key="bull_mrvg_vwap")
+        st.markdown("**RSI Overbought Exclusion**")
+        bull_excl_rsi_1d = st.checkbox("Exclude RSI(1D) > 75 (overbought)", value=True, key="bull_excl_rsi_1d")
+        bull_excl_rsi_1h = st.checkbox("Exclude RSI(1H) > 75 (overbought)", value=True, key="bull_excl_rsi_1h")
     with st.sidebar.expander("Bearish MA+RSI+VWAP gate", expanded=False):
         bear_mrvg_enabled = st.checkbox("Enable Bearish gate", value=False, key="bear_mrvg_enabled")
         bear_mrvg_rsi_max = st.slider("RSI(1H) ≤ (max)", 20, 70, 50, key="bear_mrvg_rsi_max")
@@ -423,7 +430,14 @@ def get_sidebar_controls():
         bear_mrvg_vwap = st.checkbox("Price below VWAP (1H)", value=True, key="bear_mrvg_vwap")
 
     mrvg_options = {
-        "bullish": {"enabled": bull_mrvg_enabled, "rsi_min": bull_mrvg_rsi_min, "ma8": bull_mrvg_ma8, "vwap": bull_mrvg_vwap},
+        "bullish": {
+            "enabled": bull_mrvg_enabled,
+            "rsi_min": bull_mrvg_rsi_min,
+            "ma8": bull_mrvg_ma8,
+            "vwap": bull_mrvg_vwap,
+            "excl_rsi_1d_overbought": bull_excl_rsi_1d,
+            "excl_rsi_1h_overbought": bull_excl_rsi_1h,
+        },
         "bearish": {"enabled": bear_mrvg_enabled, "rsi_max": bear_mrvg_rsi_max, "ma8": bear_mrvg_ma8, "vwap": bear_mrvg_vwap},
     }
 
@@ -2267,18 +2281,26 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         return (mw.get('CMF', 0) != 0 and mw.get('RSI', 0) != 0 and
                 mw.get('ADX_Z', 0) == 0 and mw.get('RS_Rating', 0) == 0 and mw.get('DI_Spread', 0) == 0)
     
+    # Confluence toggle — when OFF, skip confluence computation (placed first to gate controls below)
+    enable_hist_confluence = st.toggle("Enable Confluence Analysis", value=False, key="enable_hist_conf")
+
     # --- Confluence timeframe selector (must match Part 3: 1D+2H or 4H+1H) ---
-    # Synced with Part 3 via session_state (unique key to avoid duplicate widget key across tabs)
-    hist_conf_tf = st.radio(
-        "Confluence timeframe (synced with Part 3):",
-        ["1D + 2H", "4H + 1H (default)"],
-        horizontal=True,
-        index=st.session_state.get("_conf_tf_idx", 1),
-        key="hist_conf_timeframe",
-    )
-    st.session_state["_conf_tf_idx"] = ["1D + 2H", "4H + 1H (default)"].index(hist_conf_tf)
-    hist_conf_tf_code  = '2h' if "1D + 2H" in hist_conf_tf else '4h'
-    hist_conf_tf_label = "1D + 2H" if "1D + 2H" in hist_conf_tf else "4H + 1H"
+    # Only shown when confluence is enabled; sector universe selector always visible
+    if enable_hist_confluence:
+        # Synced with Part 3 via session_state (unique key to avoid duplicate widget key across tabs)
+        hist_conf_tf = st.radio(
+            "Confluence timeframe (synced with Part 3):",
+            ["1D + 2H", "4H + 1H (default)"],
+            horizontal=True,
+            index=st.session_state.get("_conf_tf_idx", 1),
+            key="hist_conf_timeframe",
+        )
+        st.session_state["_conf_tf_idx"] = ["1D + 2H", "4H + 1H (default)"].index(hist_conf_tf)
+        hist_conf_tf_code  = '2h' if "1D + 2H" in hist_conf_tf else '4h'
+        hist_conf_tf_label = "1D + 2H" if "1D + 2H" in hist_conf_tf else "4H + 1H"
+    else:
+        hist_conf_tf_code  = '4h'
+        hist_conf_tf_label = "4H + 1H"
 
     # Synced with Part 3 via session_state (unique key to avoid duplicate widget key across tabs)
     hist_conf_sector_filter = st.radio(
@@ -2308,9 +2330,6 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         except Exception:
             pass
     st.caption("**Sector universe pertains to top 4 sectors (bullish) and bottom 6 sectors (bearish) per Momentum Ranking for that date.** Table rows are computed **per date** from the same Momentum Ranking. **Gate toggles** (Bullish/Bearish) are in the **sidebar** under Confluence gates (v3.1) and apply here and in Stock Screener.")
-
-    # Confluence toggle — when OFF, skip confluence computation
-    enable_hist_confluence = st.toggle("Enable Confluence Analysis", value=False, key="enable_hist_conf")
 
     if hist_conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
         hist_conf_sector_code = 'top4_bot6'
@@ -2549,8 +2568,15 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                             _all_screener_list.append((sym, rec['sector'], rec['name'], bull_score, d, idx))
                             rsi_1d_v = score_details.get('rsi_1d_val') if score_details else None
                             rsi_1h_v = score_details.get('rsi_1h_val') if score_details else None
-                            # Bullish RSI filter: exclude overbought (RSI 1D > 75 OR RSI 1H > 75)
-                            bull_rsi_ok = not ((rsi_1d_v is not None and rsi_1d_v > 75) or (rsi_1h_v is not None and rsi_1h_v > 75))
+                            # Bullish RSI overbought filter (toggleable via sidebar checkboxes)
+                            _bull_opts = (mrvg_options or {}).get("bullish", {})
+                            _excl_1d = _bull_opts.get("excl_rsi_1d_overbought", True)
+                            _excl_1h = _bull_opts.get("excl_rsi_1h_overbought", True)
+                            bull_rsi_ok = True
+                            if _excl_1d and rsi_1d_v is not None and rsi_1d_v > 75:
+                                bull_rsi_ok = False
+                            if _excl_1h and rsi_1h_v is not None and rsi_1h_v > 75:
+                                bull_rsi_ok = False
                             # Bearish RSI filter: exclude oversold (RSI 1D < 30)
                             bear_rsi_ok = not (rsi_1d_v is not None and rsi_1d_v < 30)
                             # MA+RSI+VWAP gate (if enabled)
@@ -2570,7 +2596,8 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                                     rsi1h = sd.get('rsi_1h_val')
                                     if mrvg_options["bearish"].get("ma8") and sd.get('price_gt_ma8_1h') == 'Yes':
                                         bear_gate_ok = False
-                                    if mrvg_options["bearish"].get("vwap") and sd.get('vwap_relation') != 'Below':
+                                    # Bearish VWAP gate: pass only "Below" or "Approaching ↓" (not Approaching ↑)
+                                    if mrvg_options["bearish"].get("vwap") and sd.get('vwap_relation') not in ('Below', 'Approaching ↓'):
                                         bear_gate_ok = False
                                     if rsi1h is not None and rsi1h > mrvg_options["bearish"].get("rsi_max", 50):
                                         bear_gate_ok = False
@@ -2831,9 +2858,11 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             for c in bull_pct_cols:
                 if c in df_bull_show.columns:
                     df_bull_show[c] = pd.to_numeric(df_bull_show[c], errors='coerce').round(1)
+            bull_score_cols = ['Bullish #1 Score', 'Bullish #2 Score']
             st.dataframe(
                 df_bull_show.style.apply(_color_breadth_rows(breadth_cols), axis=1)
-                .format({c: '{:.1f}' for c in bull_pct_cols if c in df_bull_show.columns}, na_rep=''),
+                .format({**{c: '{:.1f}' for c in bull_pct_cols if c in df_bull_show.columns},
+                         **{c: '{:.1f}' for c in bull_score_cols if c in df_bull_show.columns}}, na_rep=''),
                 use_container_width=True, hide_index=True
             )
             st.caption(
@@ -2872,9 +2901,11 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             for c in bear_pct_cols:
                 if c in df_bear_show.columns:
                     df_bear_show[c] = pd.to_numeric(df_bear_show[c], errors='coerce').round(1)
+            bear_score_cols = ['Bearish #1 Score', 'Bearish #2 Score']
             st.dataframe(
                 df_bear_show.style.apply(_color_breadth_rows(breadth_cols), axis=1)
-                .format({c: '{:.1f}' for c in bear_pct_cols if c in df_bear_show.columns}, na_rep=''),
+                .format({**{c: '{:.1f}' for c in bear_pct_cols if c in df_bear_show.columns},
+                         **{c: '{:.1f}' for c in bear_score_cols if c in df_bear_show.columns}}, na_rep=''),
                 use_container_width=True, hide_index=True
             )
             st.caption(
@@ -4421,7 +4452,16 @@ def _compute_screener_score(daily, hourly, w_vwap_above=1.0, w_vwap_approach=0.5
                     vwap = day_data["Close"].mean()
                 if vwap:
                     diff_pct = (price / vwap - 1) * 100
-                    vwap_relation = "Above" if diff_pct > 0.5 else ("Approaching" if abs(diff_pct) <= 0.5 else "Below")
+                    if diff_pct > 0.5:
+                        vwap_relation = "Above"
+                    elif diff_pct >= 0:
+                        # Price is slightly above VWAP — approaching from above (potential bearish signal)
+                        vwap_relation = "Approaching ↓"
+                    elif diff_pct >= -0.5:
+                        # Price is slightly below VWAP — approaching from below (not a bearish entry merit)
+                        vwap_relation = "Approaching ↑"
+                    else:
+                        vwap_relation = "Below"
 
         # Bullish score: criteria met = +1
         bull_score = 0.0
@@ -4437,10 +4477,12 @@ def _compute_screener_score(daily, hourly, w_vwap_above=1.0, w_vwap_approach=0.5
             bull_score += 1.0
         if p_gt_50 == "Yes":
             bull_score += 1.0
+        # Bullish VWAP: Above = full credit; Approaching ↓ (price just above VWAP) = partial credit
         if vwap_relation == "Above":
             bull_score += w_vwap_above
-        elif vwap_relation == "Approaching":
+        elif vwap_relation == "Approaching ↓":
             bull_score += w_vwap_approach
+        # Approaching ↑ (price just below VWAP, coming up) — no bullish VWAP credit
 
         # Bearish score: criteria NOT met = +1 (higher = more bearish signals)
         bear_score = 0.0
@@ -4456,10 +4498,12 @@ def _compute_screener_score(daily, hourly, w_vwap_above=1.0, w_vwap_approach=0.5
             bear_score += 1.0
         if p_gt_50 != "Yes":
             bear_score += 1.0
+        # Bearish VWAP: Below = full credit; Approaching ↓ (price just above, about to break below) = partial credit
         if vwap_relation == "Below":
             bear_score += w_vwap_above
-        elif vwap_relation == "Approaching":
+        elif vwap_relation == "Approaching ↓":
             bear_score += w_vwap_approach
+        # Approaching ↑ (price just below VWAP coming up) — no bearish credit
 
         details = {
             'rsi_1d_val': rsi_1d_val,
@@ -4624,26 +4668,6 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
         else:
             st.info("**📊 Universal:** Sector data not available — using all sectors.")
 
-    # ============================================================
-    # ENTRY STRATEGY GUIDE – HL (Higher Low) explanation
-    # ============================================================
-    with st.expander("📘 Bullish Entry Strategy: Why enter at HL (Higher Low)?"):
-        st.markdown(
-            """
-        ### 🎯 Higher Low (HL) = Ideal Bullish Entry Point
-
-        1. **Support confirmation** – price bounces from HL support, showing demand.
-        2. **Trend intact** – HL in an uptrend means continuation, not reversal.
-        3. **Tight stop loss** – stop can sit just below HL (1–2%).
-        4. **Great Risk/Reward** – small risk to HL vs. large potential to next HH.
-
-        **Multi-timeframe technique**
-        - Daily: identify the HL zone and confirm HH/HL structure.
-        - 4H / 1H: wait for bullish engulfing / RSI divergence / breakout near HL
-          before entering, rather than buying the first touch.
-        """
-        )
-
     st.markdown("---")
 
     # ============================================================
@@ -4663,6 +4687,10 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
     if sectors_to_analyze:
         label = "Top 4 + Bottom 6" if sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)" else "Universal"
         st.markdown(f"### 📊 Stock Screener ({len(universe)} Stocks from {len(sectors_to_analyze)} {label} Sectors)")
+        # Show which specific sectors are being used so user can compare with Historical Rankings
+        if top_sectors:
+            st.caption(f"📌 **Bullish sectors (top 4):** {', '.join(top_sectors)}  |  **Bearish sectors (bottom 6):** {', '.join(bot_sectors or [])}")
+            st.caption("ℹ️ *Sector ranking from today's Momentum Ranking. Historical Rankings computes per-date — minor differences are expected (full sync in v2.5).*")
     else:
         st.markdown(f"### 📊 Stock Screener ({len(universe)} Stocks from All Sectors)")
 
@@ -4872,7 +4900,7 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
                 "Sector": sector,
                 "Symbol": symbol,
                 "Company": name,
-                "Price": round(price, 2),
+                "Price": round(price, 1),
                 "Price > 50 SMA": p_gt_50,
                 "Price > 20 SMA": p_gt_20,
                 "Price > 8 SMA": p_gt_8,
@@ -4910,11 +4938,15 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
         bull_candidates = df_sorted.copy()
         bear_candidates = df_sorted_bear.copy()
 
-    # RSI overbought filter for bullish: exclude RSI(1D) > 75 OR RSI(1H) > 75
-    bull_rsi_mask = ~(
-        (bull_candidates["RSI (1D)"].fillna(0) > 75) |
-        (bull_candidates["RSI (1H)"].fillna(0) > 75)
-    )
+    # RSI overbought filter for bullish (toggleable via sidebar checkboxes)
+    _bull_sidebar = (mrvg_options or {}).get("bullish", {})
+    _excl_1d_ob = _bull_sidebar.get("excl_rsi_1d_overbought", True)
+    _excl_1h_ob = _bull_sidebar.get("excl_rsi_1h_overbought", True)
+    bull_rsi_mask = pd.Series([True] * len(bull_candidates), index=bull_candidates.index)
+    if _excl_1d_ob:
+        bull_rsi_mask &= ~(bull_candidates["RSI (1D)"].fillna(0) > 75)
+    if _excl_1h_ob:
+        bull_rsi_mask &= ~(bull_candidates["RSI (1H)"].fillna(0) > 75)
     bull_candidates_filtered = bull_candidates[bull_rsi_mask]
 
     # RSI oversold filter for bearish: exclude RSI(1D) < 30
@@ -4936,7 +4968,10 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
         if _mrvg["bearish"].get("ma8"):
             bear_candidates_filtered = bear_candidates_filtered[bear_candidates_filtered["Price > 8 SMA (1H)"] == "No"]
         if _mrvg["bearish"].get("vwap"):
-            bear_candidates_filtered = bear_candidates_filtered[bear_candidates_filtered["Price vs VWAP (1H)"] == "Below"]
+            # Bearish VWAP gate: accept "Below" or "Approaching ↓" (price just above VWAP coming down)
+            bear_candidates_filtered = bear_candidates_filtered[
+                bear_candidates_filtered["Price vs VWAP (1H)"].isin(["Below", "Approaching ↓"])
+            ]
         bear_candidates_filtered = bear_candidates_filtered[bear_candidates_filtered["RSI (1H)"].fillna(100) <= _rsi_max]
 
     top_bullish = bull_candidates_filtered.head(10) if not bull_candidates_filtered.empty else bull_candidates.head(10)
@@ -6156,7 +6191,29 @@ def main():
             with tab9:
                 try:
                     st.header("🔀 Confluence_Future")
-                    st.info("📋 Confluence analysis will be moved here in a future update. Currently confluence analysis is available via the **Enable Confluence Analysis** toggle in the Stock Screener and Historical Rankings tabs.")
+
+                    # ============================================================
+                    # ENTRY STRATEGY GUIDE – HL (Higher Low) explanation
+                    # ============================================================
+                    with st.expander("📘 Bullish Entry Strategy: Why enter at HL (Higher Low)?"):
+                        st.markdown(
+                            """
+### 🎯 Higher Low (HL) = Ideal Bullish Entry Point
+
+1. **Support confirmation** – price bounces from HL support, showing demand.
+2. **Trend intact** – HL in an uptrend means continuation, not reversal.
+3. **Tight stop loss** – stop can sit just below HL (1–2%).
+4. **Great Risk/Reward** – small risk to HL vs. large potential to next HH.
+
+**Multi-timeframe technique**
+- Daily: identify the HL zone and confirm HH/HL structure.
+- 4H / 1H: wait for bullish engulfing / RSI divergence / breakout near HL
+  before entering, rather than buying the first touch.
+"""
+                        )
+
+                    st.markdown("---")
+                    st.info("📋 Full confluence analysis will be moved here in a future update. Currently confluence analysis is available via the **Enable Confluence Analysis** toggle in the Stock Screener and Historical Rankings tabs.")
                     st.markdown("**Planned features for this tab:**")
                     st.markdown("- Standalone confluence analysis (decoupled from MA+RSI+VWAP screening)")
                     st.markdown("- Timeframe selector (1D+2H / 4H+1H) for confluence gate evaluation")
