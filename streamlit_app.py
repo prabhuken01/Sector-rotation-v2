@@ -2329,6 +2329,8 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     n_bear_sectors = (mrvg_options or {}).get("bearish", {}).get("n_sectors", 2)
     _bull_gate_on  = (mrvg_options or {}).get("bullish", {}).get("enabled", True)
     _bear_gate_on  = (mrvg_options or {}).get("bearish", {}).get("enabled", True)
+    # Cache key for historical rankings — must be defined before cache_path usage
+    hist_conf_sector_code = f'n{n_bull_sectors}_m{n_bear_sectors}'
 
     # Show current-date sector preview (informational only; per-date sectors computed in loop below)
     if sector_data_dict and momentum_weights:
