@@ -6,7 +6,7 @@ Version: 2.4.2 - Confluence gates: user toggles for Bullish/Bearish in sidebar; 
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.4.8"
+APP_VERSION = "2.4.9"
 
 import os
 import io
@@ -479,14 +479,20 @@ def get_sidebar_controls():
         "bearish": {"rsi_falling": gate_bear_rsi, "ma_bearish_both": gate_bear_ma, "downtrend_ll_lh": gate_bear_trend, "not_near_hl": gate_bear_not_hl},
     }
 
-    # Changelog download
-    with st.sidebar.expander("📥 Download Changelog", expanded=False):
+    # Changelog + Logic Guide downloads
+    with st.sidebar.expander("📥 Download Docs", expanded=False):
         try:
             with open("CHANGELOG_v248.md", "r", encoding="utf-8") as _cl_f:
                 _cl_text = _cl_f.read()
-            st.download_button("Download CHANGELOG_v248.md", _cl_text, "CHANGELOG_v248.md", "text/markdown")
+            st.download_button("📋 CHANGELOG_v248.md", _cl_text, "CHANGELOG_v248.md", "text/markdown")
         except FileNotFoundError:
             st.caption("Changelog file not found.")
+        try:
+            with open("LOGIC_GUIDE_v249.md", "r", encoding="utf-8") as _lg_f:
+                _lg_text = _lg_f.read()
+            st.download_button("📖 LOGIC_GUIDE_v249.md", _lg_text, "LOGIC_GUIDE_v249.md", "text/markdown")
+        except FileNotFoundError:
+            st.caption("Logic Guide file not found.")
 
     return use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding, confluence_gate_options, mrvg_options
 
@@ -2318,39 +2324,28 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     hist_conf_tf_code  = st.session_state.get("_conf_tf_code",  '4h')
     hist_conf_tf_label = st.session_state.get("_conf_tf_label", "4H + 1H")
 
-    # Synced with Part 3 via session_state (unique key to avoid duplicate widget key across tabs)
-    hist_conf_sector_filter = st.radio(
-        "Sector universe:",
-        options=["Top 4 + Bottom 6 (per Momentum Ranking)", "Universal (All Sectors)"],
-        index=st.session_state.get("_conf_sector_idx", 0),
-        key="hist_conf_sector_filter",
-    )
-    st.session_state["_conf_sector_idx"] = [
-        "Top 4 + Bottom 6 (per Momentum Ranking)",
-        "Universal (All Sectors)",
-    ].index(hist_conf_sector_filter)
+    # Sector count — read from gate sliders (mrvg_options) rather than a hardcoded radio
+    n_bull_sectors = (mrvg_options or {}).get("bullish", {}).get("n_sectors", 1)
+    n_bear_sectors = (mrvg_options or {}).get("bearish", {}).get("n_sectors", 2)
+    _bull_gate_on  = (mrvg_options or {}).get("bullish", {}).get("enabled", True)
+    _bear_gate_on  = (mrvg_options or {}).get("bearish", {}).get("enabled", True)
 
-    top_hist_conf_sectors  = None
-    bot_hist_conf_sectors  = None
-
+    # Show current-date sector preview (informational only; per-date sectors computed in loop below)
     if sector_data_dict and momentum_weights:
         try:
             from confluence_fixed import get_bottom_n_sectors_by_momentum
-            if hist_conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
-                top_hist_conf_sectors = get_top_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=4)
-                bot_hist_conf_sectors = get_bottom_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=6)
-                if top_hist_conf_sectors:
-                    st.success(f"**Bullish (current date, top 4):** {', '.join(top_hist_conf_sectors)}")
-                if bot_hist_conf_sectors:
-                    st.warning(f"**Bearish (current date, bottom 6):** {', '.join(bot_hist_conf_sectors)}")
+            _cur_top = get_top_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=n_bull_sectors)
+            _cur_bot = get_bottom_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=n_bear_sectors)
+            if _bull_gate_on and _cur_top:
+                st.success(f"**Today's Top {n_bull_sectors} bullish sector(s):** {', '.join(_cur_top)}")
+            if _bear_gate_on and _cur_bot:
+                st.warning(f"**Today's Bottom {n_bear_sectors} bearish sector(s):** {', '.join(_cur_bot)}")
         except Exception:
             pass
-    st.caption("**Sector universe pertains to top 4 sectors (bullish) and bottom 6 sectors (bearish) per Momentum Ranking for that date.** Table rows are computed **per date** from the same Momentum Ranking. **Gate toggles** (Bullish/Bearish) are in the **sidebar** under Confluence gates (v3.1) and apply here and in Stock Screener.")
-
-    if hist_conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
-        hist_conf_sector_code = 'top4_bot6'
-    else:
-        hist_conf_sector_code = 'universal'
+    st.caption(
+        f"**Sector universe (from Gates sidebar): top {n_bull_sectors} bullish / bottom {n_bear_sectors} bearish sectors "
+        "per Momentum Ranking, computed per date.** Gate toggles (Bullish/Bearish) are in the sidebar."
+    )
 
     # --- Primary content: date-wise table (last 30 days for confluence) ---
     st.markdown("#### 📋 Primary: Date-wise summary (MA+RSI+VWAP) – last 30 trading days")
@@ -2551,12 +2546,9 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     top2 = df_sec.head(2)['sector'].tolist()
                     row['Momentum #1 Sector'] = top2[0] if len(top2) >= 1 else ''
                     row['Momentum #2 Sector'] = top2[1] if len(top2) >= 2 else ''
-                    # Sync Top 4 / Bottom 6 with Stock Screener (via session_state) for consistent picks
-                    _ss_top4 = st.session_state.get("_screener_top4")
-                    _ss_bot6 = st.session_state.get("_screener_bot6")
-                    top_4_this_date = _ss_top4 if _ss_top4 else df_sec.head(4)['sector'].tolist()
-                    bot_6_this_date = _ss_bot6 if _ss_bot6 else df_sec.tail(6)['sector'].tolist()
-                    st.caption(f"📌 Sectors synced — Bullish top 4: {top_4_this_date} | Bearish bottom 6: {bot_6_this_date}")
+                    # Per-date sectors: top N bullish / bottom N bearish from this date's Momentum Ranking
+                    top_N_this_date = df_sec.head(n_bull_sectors)['sector'].tolist() if _bull_gate_on else []
+                    bot_N_this_date = df_sec.tail(n_bear_sectors)['sector'].tolist() if _bear_gate_on else []
                 else:
                     row['Momentum #1 Sector'] = ''
                     row['Momentum #2 Sector'] = ''
@@ -2611,7 +2603,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                                         bull_gate_ok = False
                                     if mrvg_options["bullish"].get("vwap") and sd.get('vwap_relation') != 'Above':
                                         bull_gate_ok = False
-                                    if rsi1h is not None and rsi1h < mrvg_options["bullish"].get("rsi_min", 50):
+                                    if mrvg_options["bullish"].get("use_rsi") and rsi1h is not None and rsi1h < mrvg_options["bullish"].get("rsi_min", 50):
                                         bull_gate_ok = False
                                 if mrvg_options.get("bearish", {}).get("enabled"):
                                     rsi1h = sd.get('rsi_1h_val')
@@ -2620,17 +2612,12 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                                     # Bearish VWAP gate: pass only "Below" or "Approaching ↓" (not Approaching ↑)
                                     if mrvg_options["bearish"].get("vwap") and sd.get('vwap_relation') not in ('Below', 'Approaching ↓'):
                                         bear_gate_ok = False
-                                    if rsi1h is not None and rsi1h > mrvg_options["bearish"].get("rsi_max", 50):
+                                    if mrvg_options["bearish"].get("use_rsi") and rsi1h is not None and rsi1h > mrvg_options["bearish"].get("rsi_max", 50):
                                         bear_gate_ok = False
-                            # Sector gate: bullish only from top-4 sectors; bearish only from bottom-6 sectors (per-date)
-                            # When hist_conf_sector_filter == "Top 4 + Bottom 6", apply sector restriction
+                            # Sector gate: per-date top N bullish / bottom N bearish (driven by gate sliders)
                             this_sector = rec['sector']
-                            if hist_conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
-                                bull_sector_ok = (top_4_this_date is not None and this_sector in top_4_this_date)
-                                bear_sector_ok = (bot_6_this_date is not None and this_sector in bot_6_this_date)
-                            else:
-                                bull_sector_ok = True
-                                bear_sector_ok = True
+                            bull_sector_ok = (this_sector in top_N_this_date) if (_bull_gate_on and top_N_this_date) else True
+                            bear_sector_ok = (this_sector in bot_N_this_date) if (_bear_gate_on and bot_N_this_date) else True
                             if bull_rsi_ok and bull_gate_ok and bull_sector_ok:
                                 bull_screener_list.append((sym, rec['sector'], rec['name'], bull_score, d, idx))
                             if bear_rsi_ok and bear_gate_ok and bear_sector_ok:
@@ -2691,17 +2678,9 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     confluence_details = {}  # sym -> details dict
                     _conf_items = screener_list if enable_hist_confluence else []
                     for (sym, sector, name, _s, d, _idx) in _conf_items:
-                        # (a) Sector filter — per-date Top 4 (bullish) / Bottom 6 (bearish) from Momentum Ranking
-                        bull_sector_ok = (
-                            hist_conf_sector_filter == "Universal (All Sectors)"
-                            or (top_4_this_date and sector in top_4_this_date)
-                            or (top_4_this_date is None and bot_6_this_date is None)
-                        )
-                        bear_sector_ok = (
-                            hist_conf_sector_filter == "Universal (All Sectors)"
-                            or (bot_6_this_date and sector in bot_6_this_date)
-                            or (top_4_this_date is None and bot_6_this_date is None)
-                        )
+                        # (a) Sector filter — per-date top N bullish / bottom N bearish from Momentum Ranking
+                        bull_sector_ok = (sector in top_N_this_date) if (_bull_gate_on and top_N_this_date) else True
+                        bear_sector_ok = (sector in bot_N_this_date) if (_bear_gate_on and bot_N_this_date) else True
                         if not bull_sector_ok and not bear_sector_ok:
                             continue
                         if hist_conf_tf_code == '1d':
@@ -4831,7 +4810,9 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
             if daily_full is None or len(daily_full) < 60:
                 continue
             # Locate analysis date in full dataset and slice to it for indicators
-            _idx_t = int(daily_full.index.searchsorted(pd.Timestamp(end_dt), side='right')) - 1
+            # Strip timezone from index to avoid TypeError when comparing tz-aware index with tz-naive Timestamp
+            _tz_naive_idx = daily_full.index.tz_convert(None) if daily_full.index.tz is not None else daily_full.index
+            _idx_t = int(_tz_naive_idx.searchsorted(pd.Timestamp(end_dt), side='right')) - 1
             if _idx_t < 59:
                 continue
             daily = daily_full.iloc[:_idx_t + 1]  # data up to analysis date only (indicators unchanged)
