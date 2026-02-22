@@ -4635,9 +4635,57 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
     st.header("📊 Stock Screener")
 
     # ============================================================
-    # SECTOR FILTER — driven by gate N-sector settings (sidebar)
+    # DATE PICKER — must come first so sector selection uses this date
+    # ============================================================
+    if benchmark_data is not None and not benchmark_data.empty:
+        all_dates = list(dict.fromkeys([d.date() for d in benchmark_data.index]))
+        last_30 = all_dates[-30:] if len(all_dates) > 30 else all_dates
+        available_dates = sorted(last_30, reverse=True)
+    else:
+        today = datetime.today().date()
+        available_dates = [today]
+
+    if "screener_date_sel" not in st.session_state or st.session_state["screener_date_sel"] not in available_dates:
+        _default = analysis_date if analysis_date in available_dates else (available_dates[0] if available_dates else datetime.today().date())
+        st.session_state["screener_date_sel"] = _default
+
+    st.session_state["_screener_available_dates"] = available_dates
+
+    def _screener_prev_day():
+        dates = st.session_state.get("_screener_available_dates", [])
+        cur = st.session_state.get("screener_date_sel")
+        if cur in dates and len(dates) > 0:
+            _ci = dates.index(cur)
+            if _ci < len(dates) - 1:
+                st.session_state["screener_date_sel"] = dates[_ci + 1]
+
+    def _screener_next_day():
+        dates = st.session_state.get("_screener_available_dates", [])
+        cur = st.session_state.get("screener_date_sel")
+        if cur in dates and len(dates) > 0:
+            _ci = dates.index(cur)
+            if _ci > 0:
+                st.session_state["screener_date_sel"] = dates[_ci - 1]
+
+    _col_prev, _col_next = st.columns(2)
+    with _col_prev:
+        st.button("◀ Previous day", key="screener_date_prev", on_click=_screener_prev_day)
+    with _col_next:
+        st.button("Next day ▶", key="screener_date_next", on_click=_screener_next_day)
+
+    selected_date = st.selectbox(
+        "Select analysis date (past 30 days):",
+        options=available_dates,
+        index=available_dates.index(st.session_state["screener_date_sel"]),
+        format_func=lambda d: d.strftime("%Y-%m-%d"),
+        key="screener_date_sel"
+    )
+
+    # ============================================================
+    # SECTOR FILTER — driven by screener's selected_date above (not sidebar)
     # ============================================================
     st.markdown("### 🎯 Sector Selection Strategy")
+    st.caption(f"Sectors based on **{selected_date}** (Momentum Ranking as of selected date above)")
 
     # Read gate settings
     _bull_gate_on = (mrvg_options or {}).get("bullish", {}).get("enabled", True)
@@ -4647,6 +4695,25 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
 
     top_sectors = None
     bot_sectors = None
+
+    def _slice_sector_data_to_date(sector_data_dict, end_date):
+        """Slice each sector's DataFrame to rows up to end_date (inclusive) for point-in-time ranking."""
+        if not sector_data_dict or end_date is None:
+            return sector_data_dict
+        result = {}
+        end_ts = pd.Timestamp(end_date)
+        for sector, df in sector_data_dict.items():
+            if df is None or df.empty or len(df) < 14:
+                continue
+            idx = df.index
+            if idx.tz is not None:
+                end_ts_tz = end_ts.tz_localize(idx.tz) if end_ts.tz is None else end_ts.tz_convert(idx.tz)
+                mask = idx <= end_ts_tz
+            else:
+                mask = idx <= end_ts
+            if mask.any():
+                result[sector] = df[mask].copy()
+        return result if result else sector_data_dict
 
     def _top_bottom_from_df(d, n_top=1, n_bot=2):
         """Get top n and bottom n sector names from Momentum-tab df. Returns (top_list, bottom_list) or (None, None)."""
@@ -4666,35 +4733,27 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
         except Exception:
             return None, None
 
+    # Sectors based on screener's selected_date (point-in-time Momentum Ranking)
+    sector_data_sliced = _slice_sector_data_to_date(sector_data_dict, selected_date)
     col_info, = st.columns([1])
     with col_info:
-        top_from_df, bot_from_df = _top_bottom_from_df(df_momentum, n_bull_sectors, n_bear_sectors)
-        if top_from_df is not None:
-            top_sectors = top_from_df
-            bot_sectors = bot_from_df
-            st.session_state["_screener_top4"] = top_sectors
-            st.session_state["_screener_bot6"] = bot_sectors
-            if _bull_gate_on and top_sectors:
-                st.info(f"**Momentum Ranking** — Top {n_bull_sectors} bullish sector(s): {', '.join(top_sectors)}")
-            if _bear_gate_on and bot_sectors:
-                st.info(f"**Momentum Ranking** — Bottom {n_bear_sectors} bearish sector(s): {', '.join(bot_sectors)}")
-            if not _bull_gate_on and not _bear_gate_on:
-                st.info("**📊 Universal:** Both gates disabled — scanning all stocks from all sectors.")
-        elif sector_data_dict and momentum_weights:
+        if sector_data_sliced and momentum_weights:
             try:
                 from confluence_fixed import get_bottom_n_sectors_by_momentum
-                top_sectors = get_top_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=n_bull_sectors)
-                bot_sectors = get_bottom_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=n_bear_sectors)
+                top_sectors = get_top_n_sectors_by_momentum(sector_data_sliced, momentum_weights, n=n_bull_sectors)
+                bot_sectors = get_bottom_n_sectors_by_momentum(sector_data_sliced, momentum_weights, n=n_bear_sectors)
                 st.session_state["_screener_top4"] = top_sectors
                 st.session_state["_screener_bot6"] = bot_sectors
                 if _bull_gate_on and top_sectors:
                     st.info(f"**Momentum Ranking** — Top {n_bull_sectors} bullish sector(s): {', '.join(top_sectors)}")
                 if _bear_gate_on and bot_sectors:
                     st.info(f"**Momentum Ranking** — Bottom {n_bear_sectors} bearish sector(s): {', '.join(bot_sectors)}")
+                if not _bull_gate_on and not _bear_gate_on:
+                    st.info("**📊 Universal:** Both gates disabled — scanning all stocks from all sectors.")
             except Exception:
-                top_retry, bot_retry = _top_bottom_from_df(df_momentum, n_bull_sectors, n_bear_sectors)
-                if top_retry is not None:
-                    top_sectors, bot_sectors = top_retry, bot_retry
+                top_from_df, bot_from_df = _top_bottom_from_df(df_momentum, n_bull_sectors, n_bear_sectors)
+                if top_from_df is not None:
+                    top_sectors, bot_sectors = top_from_df, bot_from_df
                     st.session_state["_screener_top4"] = top_sectors
                     st.session_state["_screener_bot6"] = bot_sectors
                     if _bull_gate_on and top_sectors:
@@ -4704,7 +4763,20 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
                 else:
                     st.warning("⚠️ Could not determine sectors — using all sectors.")
         else:
-            st.info("**📊 Universal:** Sector data not available — using all sectors.")
+            top_from_df, bot_from_df = _top_bottom_from_df(df_momentum, n_bull_sectors, n_bear_sectors)
+            if top_from_df is not None:
+                top_sectors = top_from_df
+                bot_sectors = bot_from_df
+                st.session_state["_screener_top4"] = top_sectors
+                st.session_state["_screener_bot6"] = bot_sectors
+                if _bull_gate_on and top_sectors:
+                    st.info(f"**Momentum Ranking** — Top {n_bull_sectors} bullish sector(s): {', '.join(top_sectors)}")
+                if _bear_gate_on and bot_sectors:
+                    st.info(f"**Momentum Ranking** — Bottom {n_bear_sectors} bearish sector(s): {', '.join(bot_sectors)}")
+                if not _bull_gate_on and not _bear_gate_on:
+                    st.info("**📊 Universal:** Both gates disabled — scanning all stocks from all sectors.")
+            else:
+                st.info("**📊 Universal:** Sector data not available — using all sectors.")
 
     st.markdown("---")
 
@@ -4748,53 +4820,6 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
     if not universe:
         st.warning("⚠️ No companies found in selected sectors.")
         return
-
-    # Use last 30 trading days for dropdown, descending (today/latest first)
-    if benchmark_data is not None and not benchmark_data.empty:
-        all_dates = list(dict.fromkeys([d.date() for d in benchmark_data.index]))
-        last_30 = all_dates[-30:] if len(all_dates) > 30 else all_dates
-        available_dates = sorted(last_30, reverse=True)
-    else:
-        today = datetime.today().date()
-        available_dates = [today]
-
-    # Initialise session_state key if missing or stale
-    if "screener_date_sel" not in st.session_state or st.session_state["screener_date_sel"] not in available_dates:
-        _default = analysis_date if analysis_date in available_dates else (available_dates[0] if available_dates else datetime.today().date())
-        st.session_state["screener_date_sel"] = _default
-
-    # Store for on_click callbacks (cannot modify screener_date_sel after selectbox is created)
-    st.session_state["_screener_available_dates"] = available_dates
-
-    def _screener_prev_day():
-        dates = st.session_state.get("_screener_available_dates", [])
-        cur = st.session_state.get("screener_date_sel")
-        if cur in dates and len(dates) > 0:
-            _ci = dates.index(cur)
-            if _ci < len(dates) - 1:
-                st.session_state["screener_date_sel"] = dates[_ci + 1]
-
-    def _screener_next_day():
-        dates = st.session_state.get("_screener_available_dates", [])
-        cur = st.session_state.get("screener_date_sel")
-        if cur in dates and len(dates) > 0:
-            _ci = dates.index(cur)
-            if _ci > 0:
-                st.session_state["screener_date_sel"] = dates[_ci - 1]
-
-    _col_prev, _col_next = st.columns(2)
-    with _col_prev:
-        st.button("◀ Previous day", key="screener_date_prev", on_click=_screener_prev_day)
-    with _col_next:
-        st.button("Next day ▶", key="screener_date_next", on_click=_screener_next_day)
-
-    selected_date = st.selectbox(
-        "Select analysis date (past 30 days):",
-        options=available_dates,
-        index=available_dates.index(st.session_state["screener_date_sel"]),
-        format_func=lambda d: d.strftime("%Y-%m-%d"),
-        key="screener_date_sel"
-    )
 
     end_dt = dt.combine(selected_date, dt.min.time())
 
