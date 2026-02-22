@@ -2,11 +2,11 @@
 """
 NSE Market Sector Analysis Tool - Streamlit Web Interface
 Enhanced with configurable weights, ETF proxy, and improved aesthetics
-Version: 2.3.9 - Market breadth T always includes today when trading day (Feb 2026)
+Version: 2.4.2 - Confluence gates: user toggles for Bullish/Bearish in sidebar; apply in Stock Screener and Historical (Feb 2026)
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.3.9"
+APP_VERSION = "2.4.4"
 
 import os
 import io
@@ -405,8 +405,27 @@ def get_sidebar_controls():
         'ADX_Z': adx_z_threshold,
         'CMF': 0.0  # CMF must be positive for reversal candidates
     }
+
+    # Confluence gate options (v3.1) — apply in Stock Screener and Historical Rankings
+    st.sidebar.subheader("Confluence gates (v3.1)")
+    st.sidebar.caption("Toggle gates for Bullish and Bearish separately. Default = all on (keep).")
+    with st.sidebar.expander("Bullish gates", expanded=False):
+        gate_bull_rsi = st.checkbox("RSI rising (both TFs where applicable)", value=True, key="gate_bull_rsi")
+        gate_bull_ma = st.checkbox("MA Bullish both TFs", value=True, key="gate_bull_ma")
+        gate_bull_trend = st.checkbox("Uptrend (HH/HL) on entry TF", value=True, key="gate_bull_trend")
+        gate_bull_not_lh = st.checkbox("Price not at Near LH (not at HH)", value=True, key="gate_bull_not_lh")
+    with st.sidebar.expander("Bearish gates", expanded=False):
+        gate_bear_rsi = st.checkbox("RSI falling (both TFs where applicable)", value=True, key="gate_bear_rsi")
+        gate_bear_ma = st.checkbox("MA Bearish both TFs", value=True, key="gate_bear_ma")
+        gate_bear_trend = st.checkbox("Downtrend (LL/LH) on entry TF", value=True, key="gate_bear_trend")
+        gate_bear_not_hl = st.checkbox("Price not at Near HL (not at support)", value=True, key="gate_bear_not_hl")
+
+    confluence_gate_options = {
+        "bullish": {"rsi_rising": gate_bull_rsi, "ma_bullish_both": gate_bull_ma, "uptrend_hh_hl": gate_bull_trend, "not_near_lh": gate_bull_not_lh},
+        "bearish": {"rsi_falling": gate_bear_rsi, "ma_bearish_both": gate_bear_ma, "downtrend_ll_lh": gate_bear_trend, "not_near_hl": gate_bear_not_hl},
+    }
     
-    return use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding
+    return use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding, confluence_gate_options
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -2200,7 +2219,7 @@ def test_symbol_availability():
     return results
 
 
-def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf):
+def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf, confluence_gate_options=None):
     """
     Display historical rankings.
     
@@ -2251,6 +2270,8 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         "Top 4 + Bottom 6 (per Momentum Ranking)",
         "Universal (All Sectors)",
     ].index(hist_conf_sector_filter)
+    # Define early so cache_path and any code path can use it (handles alternate UI options)
+    hist_conf_sector_code = 'top4_bot6' if (hist_conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)") else 'universal'
 
     top_hist_conf_sectors  = None
     bot_hist_conf_sectors  = None
@@ -2267,7 +2288,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     st.warning(f"**Bearish (current date, bottom 6):** {', '.join(bot_hist_conf_sectors)}")
         except Exception:
             pass
-    st.caption("**Confluence pertains to top 4 sectors (bullish) and bottom 6 sectors (bearish) per Momentum Ranking for that date.** Table rows are computed **per date** from the same Momentum Ranking (ADX, RS Rating, RSI, DI Spread) as the Momentum tab.")
+    st.caption("**Confluence pertains to top 4 sectors (bullish) and bottom 6 sectors (bearish) per Momentum Ranking for that date.** Table rows are computed **per date** from the same Momentum Ranking. **Gate toggles** (Bullish/Bearish) are in the **sidebar** under Confluence gates (v3.1) and apply here and in Stock Screener.")
 
     if hist_conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
         hist_conf_sector_code = 'top4_bot6'
@@ -2557,7 +2578,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                                 continue  # skip so Confluence Bullish #1/#2 stay in sync with Stock Screener
                             _conf_tf_used = hist_conf_tf_code
                         b_score, s_score, c_details = _compute_confluence_score(
-                            conf_data_entry, data_1d=conf_data_1d, timeframe=_conf_tf_used
+                            conf_data_entry, data_1d=conf_data_1d, timeframe=_conf_tf_used, gate_options=confluence_gate_options
                         )
                         if b_score is not None:
                             if bull_sector_ok and b_score > _GATE_FAIL_SCORE:
@@ -2809,7 +2830,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     use_container_width=True, hide_index=True
                 )
 
-            if len(conf_bull_present) >= 4 or len(conf_bear_present) >= 4:
+            if hist_run_confluence and (len(conf_bull_present) >= 4 or len(conf_bear_present) >= 4):
                 st.caption(
                     f"**Confluence scoring ({hist_conf_tf_label}):** Trend (HH/HL = W₁, Sideways = W₁×0.33, LL/LH = 0), "
                     "Direction (Bullish = W₂, Mixed = W₂×0.33, Bearish = 0), "
@@ -3530,6 +3551,15 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
         dates_20 = list(reversed(dates_20))  # oldest first, current day last
         if dates_20 and dates_20[-1].date() != t_date:
             dates_20 = dates_20[:-1] + [pd.Timestamp(t_date)]
+        # De-duplicate by date so latest date is not shown twice
+        seen_d = set()
+        dates_20_unique = []
+        for d in dates_20:
+            k = d.date() if hasattr(d, 'date') else d
+            if k not in seen_d:
+                seen_d.add(k)
+                dates_20_unique.append(d)
+        dates_20 = dates_20_unique
         table_rows = []
 
         for i, date_t in enumerate(dates_20):
@@ -4175,23 +4205,10 @@ def _compute_screener_score(daily, hourly, w_vwap_above=1.0, w_vwap_approach=0.5
         return None
 
 
-def _compute_confluence_score(data_entry_raw, data_1d=None, timeframe='2h'):
+def _compute_confluence_score(data_entry_raw, data_1d=None, timeframe='2h', gate_options=None):
     """
     Fixed confluence scoring using separate bullish/bearish logic + 2 timeframes.
-
-    Parameters
-    ----------
-    data_entry_raw : DataFrame
-        If timeframe='2h': 1H data (resampled to 2H internally).
-        If timeframe='1d': daily data (used directly as entry TF).
-    data_1d : DataFrame or None
-        Daily data for 1D confirmation. If None and timeframe='1d', data_entry_raw is used for both.
-    timeframe : str
-        '2h' or '1d'.
-
-    Returns
-    -------
-    (bullish_score, bearish_score, details_dict) or (None, None, None) on failure.
+    gate_options: dict with "bullish" and "bearish" sub-dicts for gate toggles (from sidebar).
     """
     from confluence_fixed import (
         analyze_stock_confluence,
@@ -4201,7 +4218,6 @@ def _compute_confluence_score(data_entry_raw, data_1d=None, timeframe='2h'):
     if data_entry_raw is None:
         return None, None, None
     try:
-        # If no separate daily data provided and timeframe is 1d, use same data for both
         if data_1d is None and timeframe == '1d':
             data_1d = data_entry_raw
 
@@ -4209,8 +4225,10 @@ def _compute_confluence_score(data_entry_raw, data_1d=None, timeframe='2h'):
         if analysis is None:
             return None, None, None
 
-        b_score, _ = calculate_confluence_score_bullish(analysis)
-        s_score, _ = calculate_confluence_score_bearish(analysis)
+        bull_opts = gate_options.get("bullish") if gate_options else None
+        bear_opts = gate_options.get("bearish") if gate_options else None
+        b_score, _ = calculate_confluence_score_bullish(analysis, gate_options=bull_opts)
+        s_score, _ = calculate_confluence_score_bearish(analysis, gate_options=bear_opts)
 
         details = {
             'Trend': analysis['trend_entry'],
@@ -4227,7 +4245,7 @@ def _compute_confluence_score(data_entry_raw, data_1d=None, timeframe='2h'):
         return None, None, None
 
 
-def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_data_dict=None, momentum_weights=None, df_momentum=None):
+def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_data_dict=None, momentum_weights=None, df_momentum=None, confluence_gate_options=None):
     """
     Stock Screener (MA+RSI+VWAP) on sector-company universe (from Sector-Company.xlsx, sheet Main).
     Sector filter: **Top 4 + Bottom 6 (per Momentum Ranking)** = stocks from top 4 sectors (bullish) + bottom 6 sectors (bearish); **Universal** = all sectors.
@@ -4326,7 +4344,7 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
                 else:
                     st.info("**📊 Universal:** Scanning all stocks from all sectors.")
             except Exception:
-                top_retry, bot_retry = _top_bottom_from_df(df_momentum)
+                top_retry, bot_retry = _top_bottom_from_df(df_momentum, ma_n_bull, ma_n_bear)
                 if top_retry is not None and sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
                     top_sectors, bot_sectors = top_retry, bot_retry
                     st.info("**Confluence pertains to top 4 + bottom 6 sectors** (fallback).")
@@ -4399,24 +4417,66 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
         st.warning("⚠️ No companies found in selected sectors.")
         return
 
-    # Use last 10 trading days for dropdown, descending (today/latest first)
+    # Use last 30 trading days for dropdown, descending (today/latest first)
     if benchmark_data is not None and not benchmark_data.empty:
         all_dates = list(dict.fromkeys([d.date() for d in benchmark_data.index]))
-        last_10 = all_dates[-10:] if len(all_dates) > 10 else all_dates
-        available_dates = sorted(last_10, reverse=True)
+        last_30 = all_dates[-30:] if len(all_dates) > 30 else all_dates
+        available_dates = sorted(last_30, reverse=True)
     else:
         today = datetime.today().date()
         available_dates = [today]
 
     default_date = analysis_date or (available_dates[0] if available_dates else datetime.today().date())
-    selected_date = st.selectbox(
-        "Select analysis date (past 10 days):",
-        options=available_dates,
-        index=available_dates.index(default_date) if default_date in available_dates else 0,
-        format_func=lambda d: d.strftime("%Y-%m-%d")
-    )
+    sel_idx = available_dates.index(default_date) if default_date in available_dates else 0
+    if "_stock_screener_date_idx" not in st.session_state:
+        st.session_state["_stock_screener_date_idx"] = sel_idx
+    st.session_state["_stock_screener_date_idx"] = min(max(0, st.session_state["_stock_screener_date_idx"]), len(available_dates) - 1)
+    n_dates = len(available_dates)
 
-    end_dt = dt.combine(selected_date, dt.min.time())
+    def _screener_date_prev():
+        st.session_state["_stock_screener_date_idx"] = min(n_dates - 1, st.session_state.get("_stock_screener_date_idx", 0) + 1)
+
+    def _screener_date_next():
+        st.session_state["_stock_screener_date_idx"] = max(0, st.session_state.get("_stock_screener_date_idx", 0) - 1)
+
+    selected_date = st.selectbox(
+        "Select analysis date (past 30 days):",
+        options=available_dates,
+        index=st.session_state["_stock_screener_date_idx"],
+        format_func=lambda d: d.strftime("%Y-%m-%d"),
+        key="stock_screener_date_select"
+    )
+    st.session_state["_stock_screener_date_idx"] = available_dates.index(selected_date) if selected_date in available_dates else st.session_state["_stock_screener_date_idx"]
+
+    col_left, col_right, _ = st.columns([1, 1, 4])
+    with col_left:
+        st.button("◀ Previous day", key="screener_date_left", on_click=_screener_date_prev)
+    with col_right:
+        st.button("Next day ►", key="screener_date_right", on_click=_screener_date_next)
+
+    # Time-of-day: price/indicators as of selected time (default EOD 15:15)
+    screener_time_options = [
+        ("9:15 AM", 9, 15),
+        ("10:15 AM", 10, 15),
+        ("11:15 AM", 11, 15),
+        ("12:15 PM", 12, 15),
+        ("1:15 PM", 13, 15),
+        ("2:15 PM", 14, 15),
+        ("3:15 PM (EOD)", 15, 15),
+    ]
+    if "_screener_time_idx" not in st.session_state:
+        st.session_state["_screener_time_idx"] = 6  # default EOD
+    time_idx = min(st.session_state.get("_screener_time_idx", 6), len(screener_time_options) - 1)
+    time_label = st.selectbox(
+        "Price / indicators as of:",
+        options=[t[0] for t in screener_time_options],
+        index=time_idx,
+        key="screener_time_select"
+    )
+    st.session_state["_screener_time_idx"] = next((i for i, t in enumerate(screener_time_options) if t[0] == time_label), 6)
+    _hour, _min = screener_time_options[st.session_state["_screener_time_idx"]]
+    end_dt = dt.combine(selected_date, dt.time(_hour, _min))
+    use_intraday_price = (_hour, _min) != (15, 15)
 
     if not universe:
         st.warning("⚠️ No companies found in Sector-Company universe.")
@@ -4442,11 +4502,18 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
             if daily is None or len(daily) < 60:
                 continue
 
-            # Hourly data (for RSI 1H, VWAP, 2H divergence)
+            # Hourly data (for RSI 1H, VWAP, 2H divergence) — end_dt includes chosen time
             hourly = fetch_sector_data(symbol, end_date=end_dt, interval="1h")
+            if hourly is not None and use_intraday_price and len(hourly) > 0:
+                hourly = hourly[hourly.index <= end_dt]
+            if hourly is not None and len(hourly) == 0:
+                hourly = None
 
-            # --- Price and SMAs (daily) ---
-            price = float(daily["Close"].iloc[-1])
+            # --- Price: as of chosen time (intraday last bar) or EOD daily ---
+            if use_intraday_price and hourly is not None and len(hourly) > 0:
+                price = float(hourly["Close"].iloc[-1])
+            else:
+                price = float(daily["Close"].iloc[-1])
             sma8 = daily["Close"].rolling(8).mean().iloc[-1]
             sma20 = daily["Close"].rolling(20).mean().iloc[-1]
             sma50 = daily["Close"].rolling(50).mean().iloc[-1]
@@ -4469,7 +4536,7 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
             rsi_1w_val = float(rsi_w.iloc[-1]) if len(rsi_w.dropna()) >= 2 else None
             rsi_1w_prev = float(rsi_w.iloc[-2]) if len(rsi_w.dropna()) >= 2 else None
 
-            # RSI 1H from hourly
+            # RSI 1H from hourly (sliced to chosen time when use_intraday_price)
             if hourly is not None and len(hourly) >= 30:
                 rsi_h = calculate_rsi(hourly)
                 rsi_1h_val = float(rsi_h.iloc[-1]) if len(rsi_h.dropna()) >= 2 else None
@@ -4965,6 +5032,24 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
 
 **Max score ≈ 20 pts** per side. **≥ 12** = excellent, **≥ 9** = good/strong, **5–9** = moderate, **< 5** = weak/avoid. **Negative** = opposite setup.
 """)
+    st.caption("**Pivot (HH/HL/LH/LL):** Pivot highs and lows use **left=10, right=10** bars (aligned with TradingView Pine script «Pivot Points High Low»). Bullish setups with price **at Near LH** (at HH/resistance) are **rejected** (score −5) and do not appear in Top 8 Bullish.")
+
+    with st.expander("📋 (a) Gates (v3.1) — must all pass"):
+        st.markdown("""
+Stocks that **fail any gate** get score **−5** and are **excluded** from Top 8.
+
+**Bullish gates:** (1) RSI **rising** on confirmation TF (and on entry TF when entry ≠ 4H). (2) MA alignment **Bullish** on **both** entry and confirmation TFs. (3) Entry TF trend = **Uptrend (HH/HL)** when entry ≠ 1H. (4) Price must **not** be at **Near LH** (at HH/resistance).
+
+**Bearish:** RSI falling, MA Bearish both TFs, Downtrend (LL/LH), Price not at Near HL (support). Ideal: Price Near LH.
+
+**Control:** Toggle which gates to apply in the **sidebar** under **Confluence gates (v3.1)** (Bullish gates / Bearish gates). Same options apply in Historical Rankings.
+""")
+    with st.expander("📋 (b) Filter for scoring"):
+        st.markdown("""
+**Universe:** Top 4 sectors (bullish) + Bottom 6 sectors (bearish) per Momentum Ranking, or Universal (All Sectors).
+
+**Included in tables:** Only stocks with **score > −5** (passed Phase-1 gates). **Ranking:** By score (descending). Top 8 Bullish and Top 8 Bearish shown.
+""")
 
     st.info(f"Analyzing confluence: **{conf_tf_label}** (entry **{entry_label}** + confirmation **{conf_label}**). This may take a few minutes...")
 
@@ -4991,7 +5076,8 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
     progress_bar = st.progress(0)
     status_text = st.empty()
 
-    for idx, row in df_stocks.iterrows():
+    if run_confluence_part3:
+        for idx, row in df_stocks.iterrows():
         symbol = row['Symbol']
         sector = row['Sector']
         company_name = row['Company Name']
@@ -5034,8 +5120,10 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
                 continue
 
             # --- Separate bullish & bearish scores ---
-            bullish_score, bullish_reasons = calculate_confluence_score_bullish(analysis_data)
-            bearish_score, bearish_reasons = calculate_confluence_score_bearish(analysis_data)
+            bull_opts = confluence_gate_options.get("bullish") if confluence_gate_options else None
+            bear_opts = confluence_gate_options.get("bearish") if confluence_gate_options else None
+            bullish_score, bullish_reasons = calculate_confluence_score_bullish(analysis_data, gate_options=bull_opts)
+            bearish_score, bearish_reasons = calculate_confluence_score_bearish(analysis_data, gate_options=bear_opts)
             bullish_desc = generate_entry_description(analysis_data, score=bullish_score, is_bullish=True)
             bearish_desc = generate_entry_description(analysis_data, score=bearish_score, is_bullish=False)
 
@@ -5074,11 +5162,11 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
                 'Price Pos.': analysis_data.get('price_position', 'Unknown'),
             }
 
-            # v3.1: only include stocks that pass Phase-1 gates (score > _GATE_FAIL_SCORE)
+            # v3.1: only include stocks that pass Phase-1 gates (score > _GATE_FAIL_SCORE); store reasons for per-weight breakdown
             if bull_ok and bullish_score > _GATE_FAIL_SCORE:
-                stock_results_bullish.append({**common, 'Score': int(round(bullish_score)), 'Description': bullish_desc})
+                stock_results_bullish.append({**common, 'Score': int(round(bullish_score)), 'Description': bullish_desc, 'Score breakdown': bullish_reasons})
             if bear_ok and bearish_score > _GATE_FAIL_SCORE:
-                stock_results_bearish.append({**common, 'Score': int(round(bearish_score)), 'Description': bearish_desc})
+                stock_results_bearish.append({**common, 'Score': int(round(bearish_score)), 'Description': bearish_desc, 'Score breakdown': bearish_reasons})
 
         except Exception:
             continue
@@ -5145,7 +5233,7 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
             use_container_width=True, hide_index=True
         )
 
-        # Breakdown for top 3 bullish
+        # Breakdown for top 3 bullish (c) per-weight score breakdown
         with st.expander("📊 Scoring breakdown — Top 3 Bullish"):
             for i in range(min(3, len(df_bull8))):
                 r = df_bull8.iloc[i]
@@ -5153,6 +5241,12 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
                 st.markdown(f"  - {r['Description']}")
                 st.markdown(f"  - Trend: {entry_label}={r[f'Trend ({entry_label})']}, {conf_label}={r[f'Trend ({conf_label})']}")
                 st.markdown(f"  - MA: {r[f'MA Align ({entry_label})']}, {r[f'MA Align ({conf_label})']} | RSI: {r[f'RSI ({entry_label})']}, {r[f'RSI ({conf_label})']}")
+                if 'Score breakdown' in df_bullish.columns and i < len(df_bullish):
+                    breakdown = df_bullish.iloc[i].get('Score breakdown', [])
+                    if breakdown:
+                        st.markdown("  **Score breakdown (per weight):**")
+                        for line in breakdown:
+                            st.markdown(f"  - {line}")
                 if i < 2: st.markdown("---")
 
         st.markdown("---")
@@ -5184,7 +5278,7 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
             use_container_width=True, hide_index=True
         )
 
-        # Breakdown for top 3 bearish
+        # Breakdown for top 3 bearish (c) per-weight score breakdown
         with st.expander("📊 Scoring breakdown — Top 3 Bearish"):
             for i in range(min(3, len(df_bear8))):
                 r = df_bear8.iloc[i]
@@ -5192,6 +5286,12 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
                 st.markdown(f"  - {r['Description']}")
                 st.markdown(f"  - Trend: {entry_label}={r[f'Trend ({entry_label})']}, {conf_label}={r[f'Trend ({conf_label})']}")
                 st.markdown(f"  - MA: {r[f'MA Align ({entry_label})']}, {r[f'MA Align ({conf_label})']} | RSI: {r[f'RSI ({entry_label})']}, {r[f'RSI ({conf_label})']}")
+                if 'Score breakdown' in df_bearish.columns and i < len(df_bearish):
+                    breakdown = df_bearish.iloc[i].get('Score breakdown', [])
+                    if breakdown:
+                        st.markdown("  **Score breakdown (per weight):**")
+                        for line in breakdown:
+                            st.markdown(f"  - {line}")
                 if i < 2: st.markdown("---")
 
         # Key insights
@@ -5343,8 +5443,10 @@ Opposing conditions get **negative (penalty)** points — a downtrending stock c
                                 ana = analyze_stock_confluence(data_entry_t, data_1d_t, entry_timeframe=conf_tf_code)
                                 if ana is None:
                                     continue
-                                bull_sc, _ = calculate_confluence_score_bullish(ana)
-                                bear_sc, _ = calculate_confluence_score_bearish(ana)
+                                _bull_opts = confluence_gate_options.get("bullish") if confluence_gate_options else None
+                                _bear_opts = confluence_gate_options.get("bearish") if confluence_gate_options else None
+                                bull_sc, _ = calculate_confluence_score_bullish(ana, gate_options=_bull_opts)
+                                bear_sc, _ = calculate_confluence_score_bearish(ana, gate_options=_bear_opts)
                                 rsi_e, rsi_d = ana['rsi_entry'], ana['rsi_1d']
                                 rsi_ep, rsi_dp = ana.get('rsi_entry_prev', rsi_e), ana.get('rsi_1d_prev', rsi_d)
                                 rsi_e_str = f"{rsi_e}" + (" ↑" if rsi_e > rsi_ep else (" ↓" if rsi_e < rsi_ep else ""))
@@ -5544,7 +5646,7 @@ def main():
         
         # Sidebar controls
         try:
-            use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding = get_sidebar_controls()
+            use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding, confluence_gate_options = get_sidebar_controls()
         except Exception as e:
             st.error(f"❌ Error loading sidebar controls: {str(e)}")
             return
@@ -5645,6 +5747,7 @@ def main():
                         sector_data_dict=sector_data,
                         momentum_weights=momentum_weights,
                         df_momentum=df,
+                        confluence_gate_options=confluence_gate_options,
                     )
                 except Exception as e:
                     st.error(f"❌ Error displaying stock screener tab: {str(e)}")
@@ -5693,7 +5796,7 @@ def main():
             
             with tab8:
                 try:
-                    display_historical_rankings_tab(sector_data, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf)
+                    display_historical_rankings_tab(sector_data, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf, confluence_gate_options=confluence_gate_options)
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying historical rankings tab: {str(e)}")
