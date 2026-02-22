@@ -6,7 +6,7 @@ Version: 2.4.2 - Confluence gates: user toggles for Bullish/Bearish in sidebar; 
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.4.5"
+APP_VERSION = "2.4.4"
 
 import os
 import io
@@ -249,10 +249,7 @@ def display_tooltip_legend():
 def get_sidebar_controls():
     """Create sidebar controls for user configuration."""
     st.sidebar.header("⚙️ Analysis Settings")
-    if st.sidebar.button("🔄 Refresh Data", help="Clear data cache and reload all data from source"):
-        st.cache_data.clear()
-        st.rerun()
-
+    
     # Date selection with navigation
     st.sidebar.subheader("📅 Select Analysis Date")
     
@@ -369,62 +366,44 @@ def get_sidebar_controls():
             'CMF': 0.0
         }
     
-    # Reversal filter thresholds — collapsible
-    with st.sidebar.expander("🔄 Reversal Filters", expanded=False):
-        st.caption("Only show sectors meeting BOTH conditions")
-        rsi_threshold = st.slider("RSI must be below", 20.0, 60.0, 40.0, 1.0,
-                                          help="Only show reversal candidates with RSI below this value")
-        adx_z_threshold = st.slider("ADX Z-Score must be below", -2.0, 2.0, 2.0, 0.1,
-                                            help="RSI alone can indicate trend reversal. Use ADX_Z threshold only if you want to filter by trend strength. Default 2 = no filter")
-
-    # Reversal weights — collapsible
-    with st.sidebar.expander("🔄 Reversal Score Weights (%)", expanded=False):
-        st.caption("Weights should sum to 100%")
-        rs_ranking_weight = st.slider("RS Ranking Weight (%)", 0.0, 100.0,
-                                              DEFAULT_REVERSAL_WEIGHTS['RS_Rating'], 1.0)
-        cmf_reversal_weight = st.slider("CMF Weight (%)", 0.0, 100.0,
-                                                DEFAULT_REVERSAL_WEIGHTS['CMF'], 1.0)
-        rsi_reversal_weight = st.slider("RSI Weight (%)", 0.0, 100.0,
-                                                DEFAULT_REVERSAL_WEIGHTS['RSI'], 1.0)
-        adx_z_reversal_weight = st.slider("ADX Z Weight (%)", 0.0, 100.0,
-                                                  DEFAULT_REVERSAL_WEIGHTS['ADX_Z'], 1.0)
-        # Calculate and display total
-        total_reversal_weight = rs_ranking_weight + cmf_reversal_weight + rsi_reversal_weight + adx_z_reversal_weight
-        if abs(total_reversal_weight - 100.0) > 0.1:
-            st.warning(f"⚠️ Weights sum to {total_reversal_weight:.1f}% (should be 100%)")
-        else:
-            st.success(f"✅ Weights sum to {total_reversal_weight:.1f}%")
-
+    # Reversal filter thresholds (moved before weights)
+    st.sidebar.subheader("Reversal Filters")
+    st.sidebar.caption("Only show sectors meeting BOTH conditions")
+    rsi_threshold = st.sidebar.slider("RSI must be below", 20.0, 60.0, 40.0, 1.0,
+                                      help="Only show reversal candidates with RSI below this value")
+    adx_z_threshold = st.sidebar.slider("ADX Z-Score must be below", -2.0, 2.0, 2.0, 0.1,
+                                        help="RSI alone can indicate trend reversal. Use ADX_Z threshold only if you want to filter by trend strength. Default 2 = no filter")
+    
+    # Reversal weights
+    st.sidebar.subheader("Reversal Score Weights (%)")
+    st.sidebar.caption("Weights should sum to 100%")
+    rs_ranking_weight = st.sidebar.slider("RS Ranking Weight (%)", 0.0, 100.0, 
+                                          DEFAULT_REVERSAL_WEIGHTS['RS_Rating'], 1.0)
+    cmf_reversal_weight = st.sidebar.slider("CMF Weight (%)", 0.0, 100.0, 
+                                            DEFAULT_REVERSAL_WEIGHTS['CMF'], 1.0)
+    rsi_reversal_weight = st.sidebar.slider("RSI Weight (%)", 0.0, 100.0, 
+                                            DEFAULT_REVERSAL_WEIGHTS['RSI'], 1.0)
+    adx_z_reversal_weight = st.sidebar.slider("ADX Z Weight (%)", 0.0, 100.0, 
+                                              DEFAULT_REVERSAL_WEIGHTS['ADX_Z'], 1.0)
+    
+    # Calculate and display total
+    total_reversal_weight = rs_ranking_weight + cmf_reversal_weight + rsi_reversal_weight + adx_z_reversal_weight
+    if abs(total_reversal_weight - 100.0) > 0.1:
+        st.sidebar.warning(f"⚠️ Weights sum to {total_reversal_weight:.1f}% (should be 100%)")
+    else:
+        st.sidebar.success(f"✅ Weights sum to {total_reversal_weight:.1f}%")
+    
     reversal_weights = {
         'RS_Rating': rs_ranking_weight,
         'CMF': cmf_reversal_weight,
         'RSI': rsi_reversal_weight,
         'ADX_Z': adx_z_reversal_weight
     }
-
+    
     reversal_thresholds = {
         'RSI': rsi_threshold,
         'ADX_Z': adx_z_threshold,
         'CMF': 0.0  # CMF must be positive for reversal candidates
-    }
-
-    # MA+RSI+VWAP gate (1H) — independent 1H-based filters for Stock Screener and Historical Rankings
-    st.sidebar.subheader("MA+RSI+VWAP gate (1H)")
-    st.sidebar.caption("Filters stocks by 1H indicator conditions. Each condition is independent (not combined gate).")
-    with st.sidebar.expander("Bullish MA+RSI+VWAP gate", expanded=False):
-        bull_mrvg_enabled = st.checkbox("Enable Bullish gate", value=False, key="bull_mrvg_enabled")
-        bull_mrvg_rsi_min = st.slider("RSI(1H) ≥ (min)", 30, 80, 50, key="bull_mrvg_rsi_min")
-        bull_mrvg_ma8 = st.checkbox("Price above MA8 (1H)", value=True, key="bull_mrvg_ma8")
-        bull_mrvg_vwap = st.checkbox("Price above VWAP (1H)", value=True, key="bull_mrvg_vwap")
-    with st.sidebar.expander("Bearish MA+RSI+VWAP gate", expanded=False):
-        bear_mrvg_enabled = st.checkbox("Enable Bearish gate", value=False, key="bear_mrvg_enabled")
-        bear_mrvg_rsi_max = st.slider("RSI(1H) ≤ (max)", 20, 70, 50, key="bear_mrvg_rsi_max")
-        bear_mrvg_ma8 = st.checkbox("Price below MA8 (1H)", value=True, key="bear_mrvg_ma8")
-        bear_mrvg_vwap = st.checkbox("Price below VWAP (1H)", value=True, key="bear_mrvg_vwap")
-
-    mrvg_options = {
-        "bullish": {"enabled": bull_mrvg_enabled, "rsi_min": bull_mrvg_rsi_min, "ma8": bull_mrvg_ma8, "vwap": bull_mrvg_vwap},
-        "bearish": {"enabled": bear_mrvg_enabled, "rsi_max": bear_mrvg_rsi_max, "ma8": bear_mrvg_ma8, "vwap": bear_mrvg_vwap},
     }
 
     # Confluence gate options (v3.1) — apply in Stock Screener and Historical Rankings
@@ -446,10 +425,29 @@ def get_sidebar_controls():
         "bearish": {"rsi_falling": gate_bear_rsi, "ma_bearish_both": gate_bear_ma, "downtrend_ll_lh": gate_bear_trend, "not_near_hl": gate_bear_not_hl},
     }
 
+    # MA+RSI+VWAP gate (1H) — independent 1H-based filters for Stock Screener and Historical Rankings
+    st.sidebar.subheader("MA+RSI+VWAP gate (1H)")
+    st.sidebar.caption("Filters stocks by 1H indicator conditions. Each condition is independent (not combined gate).")
+    with st.sidebar.expander("Bullish MA+RSI+VWAP gate", expanded=False):
+        bull_mrvg_enabled = st.checkbox("Enable Bullish gate", value=False, key="bull_mrvg_enabled")
+        bull_mrvg_rsi_min = st.slider("RSI(1H) ≥ (min)", 30, 80, 50, key="bull_mrvg_rsi_min")
+        bull_mrvg_ma8 = st.checkbox("Price above MA8 (1H)", value=True, key="bull_mrvg_ma8")
+        bull_mrvg_vwap = st.checkbox("Price above VWAP (1H)", value=True, key="bull_mrvg_vwap")
+    with st.sidebar.expander("Bearish MA+RSI+VWAP gate", expanded=False):
+        bear_mrvg_enabled = st.checkbox("Enable Bearish gate", value=False, key="bear_mrvg_enabled")
+        bear_mrvg_rsi_max = st.slider("RSI(1H) ≤ (max)", 20, 70, 50, key="bear_mrvg_rsi_max")
+        bear_mrvg_ma8 = st.checkbox("Price below MA8 (1H)", value=True, key="bear_mrvg_ma8")
+        bear_mrvg_vwap = st.checkbox("Price below VWAP (1H)", value=True, key="bear_mrvg_vwap")
+
+    mrvg_options = {
+        "bullish": {"enabled": bull_mrvg_enabled, "rsi_min": bull_mrvg_rsi_min, "ma8": bull_mrvg_ma8, "vwap": bull_mrvg_vwap},
+        "bearish": {"enabled": bear_mrvg_enabled, "rsi_max": bear_mrvg_rsi_max, "ma8": bear_mrvg_ma8, "vwap": bear_mrvg_vwap},
+    }
+
     return use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding, confluence_gate_options, mrvg_options
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def fetch_all_sector_data_cached(data_source_key, analysis_date_str, yf_interval, use_etf):
     """
     Cached function to fetch all sector data in parallel.
@@ -2310,7 +2308,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     st.caption("**Sector universe pertains to top 4 sectors (bullish) and bottom 6 sectors (bearish) per Momentum Ranking for that date.** Table rows are computed **per date** from the same Momentum Ranking. **Gate toggles** (Bullish/Bearish) are in the **sidebar** under Confluence gates (v3.1) and apply here and in Stock Screener.")
 
     # Confluence toggle — when OFF, skip confluence computation
-    enable_hist_confluence = st.toggle("Enable Confluence Analysis", value=False, key="enable_hist_conf")
+    enable_hist_confluence = st.toggle("Enable Confluence Analysis", value=True, key="enable_hist_conf")
 
     if hist_conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
         hist_conf_sector_code = 'top4_bot6'
@@ -2525,13 +2523,6 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                 
                 # c) d) Bullish #1, #2 and e) f) Bearish #1, #2 — same scoring as Stock Screener
                 company_hourly, _ = fetch_all_sectors_parallel(company_symbols_dict, end_date=date_t, interval='1h')
-                # Historical dates: snap to 2:15 PM bar (pre-close) if available, else keep last bar
-                if company_hourly:
-                    company_hourly = {
-                        sym: _slice_hourly_to_snapshot(h, 14, 15)[0]
-                        for sym, h in company_hourly.items()
-                        if h is not None
-                    }
                 # Separate bull/bear screener lists with (sym, sector, name, score, d, idx, score_details)
                 bull_screener_list = []
                 bear_screener_list = []
@@ -2574,18 +2565,9 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                                         bear_gate_ok = False
                                     if rsi1h is not None and rsi1h > mrvg_options["bearish"].get("rsi_max", 50):
                                         bear_gate_ok = False
-                            # Sector gate: bullish only from top-4 sectors; bearish only from bottom-6 sectors (per-date)
-                            # When hist_conf_sector_filter == "Top 4 + Bottom 6", apply sector restriction
-                            this_sector = rec['sector']
-                            if hist_conf_sector_filter == "Top 4 + Bottom 6 (per Momentum Ranking)":
-                                bull_sector_ok = (top_4_this_date is not None and this_sector in top_4_this_date)
-                                bear_sector_ok = (bot_6_this_date is not None and this_sector in bot_6_this_date)
-                            else:
-                                bull_sector_ok = True
-                                bear_sector_ok = True
-                            if bull_rsi_ok and bull_gate_ok and bull_sector_ok:
+                            if bull_rsi_ok and bull_gate_ok:
                                 bull_screener_list.append((sym, rec['sector'], rec['name'], bull_score, d, idx))
-                            if bear_rsi_ok and bear_gate_ok and bear_sector_ok:
+                            if bear_rsi_ok and bear_gate_ok:
                                 bear_screener_list.append((sym, rec['sector'], rec['name'], bear_score, d, idx))
                     except Exception:
                         continue
@@ -2796,9 +2778,8 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                         else:
                             wins = (s <= -thr).sum()
                         return f"{wins / n * 100:.0f}% ({wins}/{n})"
-                    thr_label = f'≥{thr:.1f}%' if direction == 'bullish' else f'≤ -{thr:.1f}%'
                     rows.append({
-                        'Threshold': thr_label,
+                        'Threshold': f'≥{thr:.1f}%',
                         'Next 1D': _wr(r1d_col),
                         'Next 2D': _wr(r2d_col),
                         'Next 3D': _wr(r3d_col),
@@ -2896,68 +2877,6 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                                              'Bearish #1 Next 3D %', 'Bearish #1 Next 1W %', direction='bearish')
             st.dataframe(df_bear_wr_red, use_container_width=True, hide_index=True)
             st.caption("Bearish win rate = % of days where stock fell by ≥ threshold (return ≤ -threshold%). Red days = both Advance/Total %<50% and Stocks above 10 DMA<50%.")
-
-            # --- GATE COMPARISON (score-threshold win rate) ---
-            st.markdown("---")
-            show_gate_cmp = st.toggle(
-                "🔍 Show Gate Score Comparison",
-                value=False,
-                key="hist_gate_cmp",
-                help="Compare win rates at different score thresholds as a proxy for gate tightness. OFF by default to save processing time."
-            )
-            if show_gate_cmp:
-                st.markdown("#### 🔍 Gate Score Comparison — Bullish Win Rate by Score Threshold")
-                st.caption(
-                    "Higher score threshold = tighter gate (stock satisfies more MA/RSI/VWAP criteria). "
-                    "Shows how win rate changes as you raise the minimum score bar."
-                )
-                _gcmp_rows = []
-                for _thr_score in [4.0, 5.0, 6.0, 7.0]:
-                    _df_high = df_primary[
-                        pd.to_numeric(df_primary.get('Bullish #1 Score', pd.Series(dtype=float)), errors='coerce').fillna(0) >= _thr_score
-                    ]
-                    def _gcmp_wr(df_sub, col, min_ret):
-                        s = pd.to_numeric(df_sub.get(col, pd.Series(dtype=float)), errors='coerce').dropna()
-                        n = len(s)
-                        if n == 0:
-                            return '-'
-                        wins = (s >= min_ret).sum()
-                        return f"{wins/n*100:.0f}% ({wins}/{n})"
-                    _gcmp_rows.append({
-                        'Min Score': f'≥ {_thr_score:.0f}',
-                        'Days': len(_df_high),
-                        '1D ≥1%': _gcmp_wr(_df_high, 'Bullish #1 Next 1D %', 1.0),
-                        '3D ≥1%': _gcmp_wr(_df_high, 'Bullish #1 Next 3D %', 1.0),
-                        '1W ≥1%': _gcmp_wr(_df_high, 'Bullish #1 Next 1W %', 1.0),
-                        '1D ≥1.5%': _gcmp_wr(_df_high, 'Bullish #1 Next 1D %', 1.5),
-                        '1W ≥1.5%': _gcmp_wr(_df_high, 'Bullish #1 Next 1W %', 1.5),
-                    })
-                st.dataframe(pd.DataFrame(_gcmp_rows), use_container_width=True, hide_index=True)
-
-                st.markdown("#### 🔍 Gate Score Comparison — Bearish Win Rate by Score Threshold")
-                _gcmp_rows_bear = []
-                for _thr_score in [4.0, 5.0, 6.0, 7.0]:
-                    _df_bear_high = df_primary[
-                        pd.to_numeric(df_primary.get('Bearish #1 Score', pd.Series(dtype=float)), errors='coerce').fillna(0) >= _thr_score
-                    ]
-                    def _gcmp_wr_bear(df_sub, col, min_ret):
-                        s = pd.to_numeric(df_sub.get(col, pd.Series(dtype=float)), errors='coerce').dropna()
-                        n = len(s)
-                        if n == 0:
-                            return '-'
-                        wins = (s <= -min_ret).sum()
-                        return f"{wins/n*100:.0f}% ({wins}/{n})"
-                    _gcmp_rows_bear.append({
-                        'Min Score': f'≥ {_thr_score:.0f}',
-                        'Days': len(_df_bear_high),
-                        '1D ≤-1%': _gcmp_wr_bear(_df_bear_high, 'Bearish #1 Next 1D %', 1.0),
-                        '3D ≤-1%': _gcmp_wr_bear(_df_bear_high, 'Bearish #1 Next 3D %', 1.0),
-                        '1W ≤-1%': _gcmp_wr_bear(_df_bear_high, 'Bearish #1 Next 1W %', 1.0),
-                        '1D ≤-1.5%': _gcmp_wr_bear(_df_bear_high, 'Bearish #1 Next 1D %', 1.5),
-                        '1W ≤-1.5%': _gcmp_wr_bear(_df_bear_high, 'Bearish #1 Next 1W %', 1.5),
-                    })
-                st.dataframe(pd.DataFrame(_gcmp_rows_bear), use_container_width=True, hide_index=True)
-                st.caption("Bearish win rate = % of days where stock fell by ≥ threshold. Higher bearish score = more criteria NOT met (more bearish setup).")
 
             # --- CONFLUENCE TABLES (shown only if enabled) ---
             if enable_hist_confluence:
@@ -4328,36 +4247,6 @@ def display_stock_analysis_tab(analysis_date=None, benchmark_data=None, momentum
     st.success(f"✅ Screener complete! Analyzed {len(company_scores)} stocks from SECTOR_COMPANIES.")
 
 
-def _slice_hourly_to_snapshot(hourly_df, target_hour, target_minute):
-    """Slice hourly DataFrame so the last bar on the most recent date is at or before target_hour:target_minute IST.
-    All bars from prior dates are kept intact. Returns (sliced_df, 'HH:MM' string or None on error).
-    Handles both timezone-aware (Asia/Kolkata) and timezone-naive indexes.
-    """
-    if hourly_df is None or hourly_df.empty:
-        return hourly_df, None
-    try:
-        idx = hourly_df.index
-        # Normalise to IST for time comparison
-        if hasattr(idx, 'tz') and idx.tz is not None:
-            idx_ist = idx.tz_convert('Asia/Kolkata')
-        else:
-            idx_ist = idx
-        dates = pd.Series(idx_ist.date, index=hourly_df.index)
-        last_date = dates.iloc[-1]
-        on_last_day = dates == last_date
-        bar_mins = pd.Series(idx_ist.hour * 60 + idx_ist.minute, index=hourly_df.index)
-        target_mins = target_hour * 60 + target_minute
-        # Keep all bars from prior days PLUS bars from last day up to target time
-        keep = (~on_last_day) | (on_last_day & (bar_mins <= target_mins))
-        if not keep.any():
-            return hourly_df, None
-        sliced = hourly_df[keep]
-        last_ts_ist = idx_ist[keep.values][-1]
-        return sliced, f"{last_ts_ist.hour:02d}:{last_ts_ist.minute:02d}"
-    except Exception:
-        return hourly_df, None
-
-
 def _compute_screener_score(daily, hourly, w_vwap_above=1.0, w_vwap_approach=0.5):
     """
     MA+RSI+VWAP scoring: 1 pt each for RSI (1W/1D/1H) up, 1 pt each for Price > 8/20/50 SMA,
@@ -4703,18 +4592,6 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
 
     end_dt = dt.combine(selected_date, dt.min.time())
 
-    # Intraday snapshot time selector — affects RSI(1H), VWAP, MA8(1H) computation
-    _snap_opts = {"2:15 PM (pre-close, recommended)": (14, 15), "10:15 AM (post-open)": (10, 15)}
-    _snap_choice = st.radio(
-        "1H data snapshot time (IST):",
-        list(_snap_opts.keys()),
-        horizontal=True,
-        index=0,
-        key="screener_snap_time",
-        help="Selects which intraday bar to use for RSI(1H), VWAP, and MA8(1H) calculations. Falls back to last available bar if the chosen time bar is absent."
-    )
-    _snap_h, _snap_m = _snap_opts[_snap_choice]
-
     if not universe:
         st.warning("⚠️ No companies found in Sector-Company universe.")
         return
@@ -4741,7 +4618,6 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
 
             # Hourly data (for RSI 1H, VWAP, 2H divergence)
             hourly = fetch_sector_data(symbol, end_date=end_dt, interval="1h")
-            hourly, _snap_ts = _slice_hourly_to_snapshot(hourly, _snap_h, _snap_m)
 
             # --- Price and SMAs (daily) ---
             price = float(daily["Close"].iloc[-1])
@@ -4884,15 +4760,14 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
                 "RSI (1H)": int(round(rsi_1h_val, 0)) if rsi_1h_val is not None else None,
                 "RSI (1H) Dir": rsi_1h_dir,
                 "Price vs VWAP (1H)": vwap_relation,
-                "Final score": round(score, 1),
-                "Bearish Score": round(bearish_score, 1),
+                "Final score": round(score, 2),
+                "Bearish Score": round(bearish_score, 2),
             })
         except Exception:
             continue
 
     progress.empty()
     status.empty()
-    st.caption(f"ℹ️ **1H data snapshot:** {_snap_choice} IST — VWAP, RSI(1H) and MA8(1H) computed from bars up to this time.")
 
     if not results:
         st.warning("⚠️ No stocks could be analyzed for the screener.")
@@ -4951,65 +4826,15 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
             return "🟡 Moderate"
         return "🟢 Strong"
 
-    with st.expander("ℹ️ How Bullish Ranking Works", expanded=False):
-        st.markdown("""
-**Scoring (1 pt each, max ~8 pts):**
-- RSI (1W) trending Up → +1
-- RSI (1D) trending Up → +1
-- RSI (1H) trending Up → +1
-- Price > 8 SMA (1D) → +1
-- Price > 20 SMA (1D) → +1
-- Price > 50 SMA (1D) → +1
-- Price above VWAP (1H) → +1 pt (Below VWAP: 0 pt; Approaching: +0.5 pt)
-
-**Gate filters (when enabled):**
-- RSI overbought exclusion: stocks with RSI(1D) > 75 OR RSI(1H) > 75 are excluded
-- MA+RSI+VWAP gate (sidebar): independently filter by RSI(1H) ≥ threshold, Price > MA8(1H), Price > VWAP(1H)
-
-**Universe:** Top 4 momentum-ranked sectors → all their stocks scored and ranked highest first.
-""")
-
     st.markdown("#### 🟢 Top 10 Bullish")
     bull = top_bullish.copy()
-    bull = bull.rename(columns={"Final score": "Bullish Score"})
-    if "Bearish Score" in bull.columns:
-        bull = bull.drop(columns=["Bearish Score"])
-    bull["Sentiment"] = bull["Bullish Score"].apply(sentiment_color)
-    num_cols_bull = [c for c in bull.columns if bull[c].dtype in ['float64', 'float32', 'int64', 'int32']]
-    st.dataframe(
-        bull.style.set_properties(subset=num_cols_bull, **{'text-align': 'center'}),
-        use_container_width=True, hide_index=True
-    )
-
-    with st.expander("ℹ️ How Bearish Ranking Works", expanded=False):
-        st.markdown("""
-**Scoring — Inverted (1 pt each, max ~8 pts):**
-Criteria NOT met → +1 pt. Higher score = stronger bearish setup.
-- RSI (1W) NOT trending Up → +1
-- RSI (1D) NOT trending Up → +1
-- RSI (1H) NOT trending Up → +1
-- Price NOT > 8 SMA (1D) → +1
-- Price NOT > 20 SMA (1D) → +1
-- Price NOT > 50 SMA (1D) → +1
-- Price below VWAP (1H) → +1 pt (Above VWAP: 0 pt; Approaching: +0.5 pt)
-
-**Gate filters (when enabled):**
-- RSI oversold exclusion: stocks with RSI(1D) < 30 are excluded
-- MA+RSI+VWAP gate (sidebar): independently filter by RSI(1H) ≤ threshold, Price < MA8(1H), Price < VWAP(1H)
-
-**Universe:** Bottom 6 momentum-ranked sectors → all their stocks scored and ranked highest first.
-""")
+    bull["Sentiment"] = bull["Final score"].apply(sentiment_color)
+    st.dataframe(bull, use_container_width=True, hide_index=True)
 
     st.markdown("#### 🔴 Top 10 Bearish")
     bear = top_bearish.copy()
-    if "Final score" in bear.columns:
-        bear = bear.drop(columns=["Final score"])
     bear["Sentiment"] = bear["Bearish Score"].apply(sentiment_color)
-    num_cols_bear = [c for c in bear.columns if bear[c].dtype in ['float64', 'float32', 'int64', 'int32']]
-    st.dataframe(
-        bear.style.set_properties(subset=num_cols_bear, **{'text-align': 'center'}),
-        use_container_width=True, hide_index=True
-    )
+    st.dataframe(bear, use_container_width=True, hide_index=True)
 
     st.caption(
         "**Bullish scoring (MA+RSI+VWAP):** Score = 1 pt each RSI (1W/1D/1H) up + 1 pt each Price > 8/20/50 SMA + VWAP (1H). "
@@ -5264,7 +5089,7 @@ Criteria NOT met → +1 pt. Higher score = stronger bearish setup.
     st.caption("**Logic summary (v3.1):** Confluence uses **top 4 sectors (bullish) and bottom 6 sectors (bearish)** per Momentum Ranking when that filter is selected. Only stocks with score > gate-fail threshold are shown in Top 8 tables; rejected stocks appear in the Excel Rejected sheet.")
 
     # Confluence toggle — when OFF, skip all confluence computation
-    enable_screener_confluence = st.toggle("Enable Confluence Analysis", value=False, key="enable_screener_conf")
+    enable_screener_confluence = st.toggle("Enable Confluence Analysis", value=True, key="enable_screener_conf")
     if not enable_screener_confluence:
         st.info("ℹ️ Confluence Analysis is disabled. Toggle ON above to run confluence scoring.")
         return
@@ -6055,18 +5880,17 @@ def main():
         benchmark_data = sector_data.get('Nifty 50') if sector_data else None
         display_market_breadth_block(benchmark_data, analysis_date)
         
-        # Create tabs (10 total: Market breadth first, then Momentum, Stock Screener, ...)
+        # Create tabs (9 total: Market breadth first, then Momentum, Stock Screener, ...)
         try:
-            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
                 "📊 Market breadth",
                 "📈 Momentum Ranking",
                 "📊 Stock Screener",
-                "📅 Historical Rankings",
                 "🔄 Reversal Candidates",
                 "📊 Interpretation Guide",
                 "🏢 Company Momentum",
                 "🏢 Company Reversals",
-                "🔀 Confluence_Future",
+                "📅 Historical Rankings",
                 "🔌 Data Sources",
             ])
             
@@ -6106,28 +5930,20 @@ def main():
             
             with tab4:
                 try:
-                    display_historical_rankings_tab(sector_data, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf, confluence_gate_options=confluence_gate_options, mrvg_options=mrvg_options)
-                    display_tooltip_legend()
-                except Exception as e:
-                    st.error(f"❌ Error displaying historical rankings tab: {str(e)}")
-                    st.text(traceback.format_exc())
-
-            with tab5:
-                try:
                     display_reversal_tab(df, sector_data, benchmark_data, reversal_weights, reversal_thresholds, enable_color_coding)
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying reversal tab: {str(e)}")
                     st.text(traceback.format_exc())
-
-            with tab6:
+            
+            with tab5:
                 try:
                     display_interpretation_tab()
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying interpretation tab: {str(e)}")
-
-            with tab7:
+            
+            with tab6:
                 try:
                     # Pass top sector as default for company momentum analysis
                     # Sort by Momentum_Score first to get rank #1
@@ -6138,8 +5954,8 @@ def main():
                 except Exception as e:
                     st.error(f"❌ Error displaying company momentum tab: {str(e)}")
                     st.text(traceback.format_exc())
-
-            with tab8:
+            
+            with tab7:
                 try:
                     # Get top reversal candidate (if any)
                     top_reversal_sector = None
@@ -6152,26 +5968,22 @@ def main():
                 except Exception as e:
                     st.error(f"❌ Error displaying company reversal tab: {str(e)}")
                     st.text(traceback.format_exc())
-
-            with tab9:
+            
+            with tab8:
                 try:
-                    st.header("🔀 Confluence_Future")
-                    st.info("📋 Confluence analysis will be moved here in a future update. Currently confluence analysis is available via the **Enable Confluence Analysis** toggle in the Stock Screener and Historical Rankings tabs.")
-                    st.markdown("**Planned features for this tab:**")
-                    st.markdown("- Standalone confluence analysis (decoupled from MA+RSI+VWAP screening)")
-                    st.markdown("- Timeframe selector (1D+2H / 4H+1H) for confluence gate evaluation")
-                    st.markdown("- Gate combination win rate comparison table")
+                    display_historical_rankings_tab(sector_data, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf, confluence_gate_options=confluence_gate_options, mrvg_options=mrvg_options)
+                    display_tooltip_legend()
                 except Exception as e:
-                    st.error(f"❌ Error displaying confluence future tab: {str(e)}")
+                    st.error(f"❌ Error displaying historical rankings tab: {str(e)}")
                     st.text(traceback.format_exc())
-
-            with tab10:
+            
+            with tab9:
                 try:
                     display_data_sources_tab()
                 except Exception as e:
                     st.error(f"❌ Error displaying data sources tab: {str(e)}")
                     st.text(traceback.format_exc())
-
+            
             # Note: Sector Companies tab removed to make room for Stock Analysis tab
                     
         except Exception as e:
