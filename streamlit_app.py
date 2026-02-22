@@ -6,7 +6,7 @@ Version: 2.4.2 - Confluence gates: user toggles for Bullish/Bearish in sidebar; 
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.4.9"
+APP_VERSION = "2.5.0"
 
 import os
 import io
@@ -2300,7 +2300,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     
     Secondary content: existing Momentum and Reversal evolution sub-tabs (T-7 to T).
     """
-    st.markdown("### 📅 Historical Rankings (Last 30 Trading Days)")
+    st.markdown("### 📅 Historical Rankings")
     st.markdown("---")
     
     if sector_data_dict is None or benchmark_data is None:
@@ -2349,9 +2349,21 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         "per Momentum Ranking, computed per date.** Gate toggles (Bullish/Bearish) are in the sidebar."
     )
 
-    # --- Primary content: date-wise table (last 30 days for confluence) ---
-    st.markdown("#### 📋 Primary: Date-wise summary (MA+RSI+VWAP) – last 30 trading days")
-    st.caption("Scoring: MA+RSI+VWAP (1 pt each RSI 1W/1D/1H up, 1 pt each Price > 8/20/50 SMA, + VWAP). Last 30 days; Next 1D/2D/3D/1W % may be blank for latest rows.")
+    # --- Lookback selector: 10 days (faster) or 30 days ---
+    hist_days_choice = st.radio(
+        "Date range:",
+        options=[10, 30],
+        format_func=lambda x: f"Last {x} days (faster load)" if x == 10 else "Last 30 days",
+        index=0,
+        key="hist_rankings_days_radio",
+        horizontal=True,
+        help="Start with 10 days for quicker load; select 30 days to see full history (may take longer)."
+    )
+    lookback_days = hist_days_choice
+
+    # --- Primary content: date-wise table ---
+    st.markdown(f"#### 📋 Primary: Date-wise summary (MA+RSI+VWAP) – last {lookback_days} trading days")
+    st.caption(f"Scoring: MA+RSI+VWAP (1 pt each RSI 1W/1D/1H up, 1 pt each Price > 8/20/50 SMA, + VWAP). Last {lookback_days} days; Next 1D/2D/3D/1W % may be blank for latest rows.")
     NIFTY50_SYMBOLS = [
         'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
         'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
@@ -2365,12 +2377,13 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         'ICICIPRULI.NS', 'HDFCAMC.NS', 'BAJAJ-AUTO.NS', 'INDUSINDBK.NS', 'APOLLOHOSP.NS'
     ]
     
-    # Need a reasonable history window for the 30-day table
-    if len(benchmark_data) < 31:
-        st.warning("⚠️ Need at least 31 trading days of data for the 30-day table.")
+    # Need sufficient history for the selected lookback
+    min_required = lookback_days + 1
+    if len(benchmark_data) < min_required:
+        st.warning(f"⚠️ Need at least {min_required} trading days of data for the {lookback_days}-day table.")
     else:
-        # Use last 30 trading days for confluence historical view
-        lookback_days = min(30, len(benchmark_data))
+        # Use last N trading days (10 or 30 based on user selection)
+        lookback_days = min(lookback_days, len(benchmark_data))
         dates_10 = benchmark_data.index[-lookback_days:].tolist()
         table_rows = []
 
@@ -2390,7 +2403,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             except Exception:
                 pass
 
-        with st.spinner("Building 30-day historical table (Advance/Total %, sectors, bullish/bearish stocks)..."):
+        with st.spinner(f"Building {lookback_days}-day historical table (Advance/Total %, sectors, bullish/bearish stocks)..."):
             progress_bar = st.progress(0)
             status_text = st.empty()
 
@@ -2862,7 +2875,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             ]
 
             # --- BULLISH TABLE ---
-            st.markdown("#### 🟢 Bullish: Date-wise Summary (MA+RSI+VWAP) – last 30 trading days")
+            st.markdown(f"#### 🟢 Bullish: Date-wise Summary (MA+RSI+VWAP) – last {lookback_days} trading days")
             bull_display_cols = [
                 'Date', 'Advance/Total %', 'Stocks % above 10 DMA',
                 'Bullish #1 Stock', 'Bullish #1 Score',
@@ -2887,8 +2900,8 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                 "RSI overbought filter: RSI(1D)>75 or RSI(1H)>75 excluded. Higher score = stronger bullish setup."
             )
 
-            # Bullish win rate — all 30 days
-            st.markdown("**📊 Bullish Win Rate (all days, past 30)**")
+            # Bullish win rate — all days
+            st.markdown(f"**📊 Bullish Win Rate (all days, past {lookback_days})**")
             df_bull_wr = _win_rate_table(df_primary, 'Bullish #1 Stock',
                                          'Bullish #1 Next 1D %', 'Bullish #1 Next 2D %',
                                          'Bullish #1 Next 3D %', 'Bullish #1 Next 1W %', direction='bullish')
@@ -2905,7 +2918,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             st.markdown("---")
 
             # --- BEARISH TABLE ---
-            st.markdown("#### 🔴 Bearish: Date-wise Summary (MA+RSI+VWAP) – last 30 trading days")
+            st.markdown(f"#### 🔴 Bearish: Date-wise Summary (MA+RSI+VWAP) – last {lookback_days} trading days")
             bear_display_cols = [
                 'Date', 'Advance/Total %', 'Stocks % above 10 DMA',
                 'Bearish #1 Stock', 'Bearish #1 Score',
@@ -2930,8 +2943,8 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                 "RSI oversold filter: RSI(1D)<30 excluded. Returns shown as actual price change % (negative = beneficial for short trade)."
             )
 
-            # Bearish win rate — all 30 days
-            st.markdown("**📊 Bearish Win Rate (all days, past 30)**")
+            # Bearish win rate — all days
+            st.markdown(f"**📊 Bearish Win Rate (all days, past {lookback_days})**")
             df_bear_wr = _win_rate_table(df_primary, 'Bearish #1 Stock',
                                          'Bearish #1 Next 1D %', 'Bearish #1 Next 2D %',
                                          'Bearish #1 Next 3D %', 'Bearish #1 Next 1W %', direction='bearish')
@@ -3056,13 +3069,13 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                         df_conf_bull.style.apply(_color_breadth_rows(breadth_cols), axis=1).format(fmt, na_rep=''),
                         use_container_width=True, hide_index=True
                     )
-                    # Win-ratio summary (past 30 days)
+                    # Win-ratio summary
                     w1 = df_primary.get('Conf Bull #1 1W %')
                     w2 = df_primary.get('Conf Bull #2 1W %')
                     list_1 = pd.to_numeric(w1, errors='coerce').dropna().tolist() if w1 is not None else []
                     list_2 = pd.to_numeric(w2, errors='coerce').dropna().tolist() if w2 is not None else []
                     n1, n2 = len(list_1), len(list_2)
-                    st.markdown("**Historical analysis — Confluence Bullish next 1-week return (past 30 days)**")
+                    st.markdown(f"**Historical analysis — Confluence Bullish next 1-week return (past {lookback_days} days)**")
                     rows_win = []
                     if n1 > 0:
                         win_1_a = sum(1 for x in list_1 if float(x) >= 1.0) / n1 * 100
@@ -3079,7 +3092,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     else:
                         rows_win.append({"Pick": "Conf Bull #2", "Sample size": 0, ">= 1.0%": "N/A", ">= 1.5%": "N/A", ">= 2.0%": "N/A"})
                     st.dataframe(pd.DataFrame(rows_win), use_container_width=True, hide_index=True)
-                    st.caption("Win ratio = % of days (past 30) that pick achieved at least the given return in the next one week.")
+                    st.caption(f"Win ratio = % of days (past {lookback_days}) that pick achieved at least the given return in the next one week.")
 
                 if len(conf_bear_present) >= 4:
                     st.markdown(f"#### 🔴 Confluence Bearish #1/#2 ({hist_conf_tf_label}, Advance/Total, % 10 DMA, CMP)")
@@ -3101,10 +3114,10 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                         "RSI (rising+zone = W₃, rising = W₃×0.5), Setup (crossover+bullish = W₄), "
                         "Divergence (bullish = W₅, bearish = −W₅×0.5). "
                         "Dir = confluence direction. 1D/2D/3D/1W % = next 1/2/3/5-day return. Sector = stock sector. "
-                        f"Last 30 trading days. Switch timeframe or sector filter above to recompute."
+                        f"Last {lookback_days} trading days. Switch timeframe or sector filter above to recompute."
                     )
         else:
-            st.info("No rows computed for the 30-day table.")
+            st.info(f"No rows computed for the {lookback_days}-day table.")
     
     st.markdown("---")
     st.markdown("#### 📈 Secondary: Sector evolution (Momentum & Reversal)")
@@ -4750,6 +4763,31 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
         _default = analysis_date if analysis_date in available_dates else (available_dates[0] if available_dates else datetime.today().date())
         st.session_state["screener_date_sel"] = _default
 
+    # Store for on_click callbacks (cannot modify screener_date_sel after selectbox is created)
+    st.session_state["_screener_available_dates"] = available_dates
+
+    def _screener_prev_day():
+        dates = st.session_state.get("_screener_available_dates", [])
+        cur = st.session_state.get("screener_date_sel")
+        if cur in dates and len(dates) > 0:
+            _ci = dates.index(cur)
+            if _ci < len(dates) - 1:
+                st.session_state["screener_date_sel"] = dates[_ci + 1]
+
+    def _screener_next_day():
+        dates = st.session_state.get("_screener_available_dates", [])
+        cur = st.session_state.get("screener_date_sel")
+        if cur in dates and len(dates) > 0:
+            _ci = dates.index(cur)
+            if _ci > 0:
+                st.session_state["screener_date_sel"] = dates[_ci - 1]
+
+    _col_prev, _col_next = st.columns(2)
+    with _col_prev:
+        st.button("◀ Previous day", key="screener_date_prev", on_click=_screener_prev_day)
+    with _col_next:
+        st.button("Next day ▶", key="screener_date_next", on_click=_screener_next_day)
+
     selected_date = st.selectbox(
         "Select analysis date (past 30 days):",
         options=available_dates,
@@ -4757,20 +4795,6 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
         format_func=lambda d: d.strftime("%Y-%m-%d"),
         key="screener_date_sel"
     )
-    # Navigation buttons
-    _col_prev, _col_next = st.columns(2)
-    with _col_prev:
-        if st.button("◀ Previous day", key="screener_date_prev"):
-            _ci = available_dates.index(st.session_state["screener_date_sel"])
-            if _ci < len(available_dates) - 1:
-                st.session_state["screener_date_sel"] = available_dates[_ci + 1]
-                st.rerun()
-    with _col_next:
-        if st.button("Next day ▶", key="screener_date_next"):
-            _ci = available_dates.index(st.session_state["screener_date_sel"])
-            if _ci > 0:
-                st.session_state["screener_date_sel"] = available_dates[_ci - 1]
-                st.rerun()
 
     end_dt = dt.combine(selected_date, dt.min.time())
 
@@ -4823,14 +4847,26 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
             hourly = fetch_sector_data(symbol, end_date=end_dt, interval="1h")
             hourly, _snap_ts = _slice_hourly_to_snapshot(hourly, _snap_h, _snap_m)
 
-            # --- Price and SMAs (daily) ---
-            price = float(daily["Close"].iloc[-1])
-            # Forward returns from analysis date (None if future bars not yet available)
+            # --- Price at chosen snapshot time; fallback to daily close if hourly not on analysis date ---
+            if hourly is not None and len(hourly) > 0:
+                last_ts = hourly.index[-1]
+                if hasattr(last_ts, 'tz') and last_ts.tz is not None:
+                    last_ts = last_ts.tz_convert('Asia/Kolkata')
+                last_hourly_date = last_ts.date() if hasattr(last_ts, 'date') else pd.Timestamp(last_ts).date()
+                if last_hourly_date == selected_date:
+                    price = float(hourly["Close"].iloc[-1])
+                else:
+                    price = float(daily["Close"].iloc[-1])
+            else:
+                price = float(daily["Close"].iloc[-1])
+
+            # Forward returns: entry at snapshot price, exit at next day(s) close
             _c = daily_full["Close"]
-            ret_1d = round((_c.iloc[_idx_t+1] / _c.iloc[_idx_t] - 1)*100, 1) if _idx_t+1 < len(_c) else None
-            ret_2d = round((_c.iloc[_idx_t+2] / _c.iloc[_idx_t] - 1)*100, 1) if _idx_t+2 < len(_c) else None
-            ret_3d = round((_c.iloc[_idx_t+3] / _c.iloc[_idx_t] - 1)*100, 1) if _idx_t+3 < len(_c) else None
-            ret_1w = round((_c.iloc[_idx_t+5] / _c.iloc[_idx_t] - 1)*100, 1) if _idx_t+5 < len(_c) else None
+            entry_price = price
+            ret_1d = round((_c.iloc[_idx_t+1] / entry_price - 1)*100, 1) if _idx_t+1 < len(_c) else None
+            ret_2d = round((_c.iloc[_idx_t+2] / entry_price - 1)*100, 1) if _idx_t+2 < len(_c) else None
+            ret_3d = round((_c.iloc[_idx_t+3] / entry_price - 1)*100, 1) if _idx_t+3 < len(_c) else None
+            ret_1w = round((_c.iloc[_idx_t+5] / entry_price - 1)*100, 1) if _idx_t+5 < len(_c) else None
             sma8 = daily["Close"].rolling(8).mean().iloc[-1]
             sma20 = daily["Close"].rolling(20).mean().iloc[-1]
             sma50 = daily["Close"].rolling(50).mean().iloc[-1]
