@@ -303,13 +303,7 @@ def get_sidebar_controls():
     enable_color_coding = st.sidebar.checkbox("Enable Bullish/Bearish Colors", value=True,
                                                help="Color code cells to highlight strong/weak signals")
     
-    # Time period (interval) selection
-    time_interval = st.sidebar.radio(
-        "Analysis Interval",
-        options=["Daily", "Weekly", "Hourly"],
-        index=0,
-        help="Select data granularity. Note: Hourly data limited to ~60 days history"
-    )
+    # time_interval is set from "Sector selection interval" inside MA+RSI+VWAP gate (Weekly default / Daily)
     
     # Data source selection
     st.sidebar.subheader("Data Source")
@@ -415,6 +409,15 @@ def get_sidebar_controls():
     # MA+RSI+VWAP gate (1H) — independent 1H-based filters for Stock Screener and Historical Rankings
     st.sidebar.subheader("MA+RSI+VWAP gate (1H)")
     st.sidebar.caption("Filters stocks by 1H indicator conditions. Each condition is independent (not combined gate).")
+    # Sector selection interval: drives only which data is used for Momentum Ranking (top/bottom sectors). RSI/MA/VWAP stay at 1H/daily.
+    sector_selection_interval_label = st.sidebar.radio(
+        "Sector selection interval",
+        options=["Weekly (default)", "Daily"],
+        index=0,
+        key="sector_selection_interval",
+        help="Data used for Momentum Ranking (which sectors are top/bottom). Weekly = broader sector rotation; Daily = finer. RSI/MA/VWAP on stocks remain at 1H/daily."
+    )
+    time_interval = "Weekly" if sector_selection_interval_label == "Weekly (default)" else "Daily"
     with st.sidebar.expander("Bullish MA+RSI+VWAP gate", expanded=False):
         bull_mrvg_enabled = st.checkbox("Enable Bullish gate", value=True, key="bull_mrvg_enabled")
         # Sector count — FIRST filter; active whenever gate is enabled
@@ -5094,8 +5097,11 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
         if _mrvg["bearish"].get("use_rsi"):   # only apply RSI threshold when explicitly enabled
             bear_candidates_filtered = bear_candidates_filtered[bear_candidates_filtered["RSI (1H)"].fillna(100) <= _rsi_max]
 
-    top_bullish = bull_candidates_filtered.head(10) if not bull_candidates_filtered.empty else bull_candidates.head(10)
-    top_bearish = bear_candidates_filtered.head(10) if not bear_candidates_filtered.empty else bear_candidates.head(10)
+    # When any gate is applied, show only filtered results (no fallback to unfiltered — so "Price above VWAP" shows only "Above", not "Approaching")
+    _bull_gate_any = _mrvg.get("bullish", {}).get("enabled") and any([_mrvg["bullish"].get("ma8"), _mrvg["bullish"].get("vwap"), _mrvg["bullish"].get("use_rsi")])
+    _bear_gate_any = _mrvg.get("bearish", {}).get("enabled") and any([_mrvg["bearish"].get("ma8"), _mrvg["bearish"].get("vwap"), _mrvg["bearish"].get("use_rsi")])
+    top_bullish = bull_candidates_filtered.head(10) if (_bull_gate_any or not bull_candidates_filtered.empty) else bull_candidates.head(10)
+    top_bearish = bear_candidates_filtered.head(10) if (_bear_gate_any or not bear_candidates_filtered.empty) else bear_candidates.head(10)
 
     def sentiment_color(score):
         if pd.isna(score):
@@ -5125,6 +5131,8 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
 """)
 
     st.markdown("#### 🟢 Top 10 Bullish")
+    if _bull_gate_any and top_bullish.empty:
+        st.info("No stocks passed the Bullish gate filters (e.g. Price above VWAP (1H)). Relax or turn off gate filters to see more results.")
     bull = top_bullish.copy()
     bull = bull.rename(columns={"Final score": "Bullish Score"})
     if "Bearish Score" in bull.columns:
@@ -5159,6 +5167,8 @@ Criteria NOT met → +1 pt. Higher score = stronger bearish setup.
 """)
 
     st.markdown("#### 🔴 Top 10 Bearish")
+    if _bear_gate_any and top_bearish.empty:
+        st.info("No stocks passed the Bearish gate filters (e.g. Price below VWAP (1H)). Relax or turn off gate filters to see more results.")
     bear = top_bearish.copy()
     if "Final score" in bear.columns:
         bear = bear.drop(columns=["Final score"])
