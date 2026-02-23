@@ -3802,7 +3802,9 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
     st.markdown("---")
 
     with st.spinner("Building 20-day market breadth table..."):
+        # End date for table and fetches: use last date in benchmark (respects analysis_date when past)
         end_dt = benchmark_data.index[-1]
+        last_in_data = pd.Timestamp(end_dt).normalize().date() if hasattr(end_dt, 'date') else pd.Timestamp(end_dt).date()
         nifty_index_data = fetch_sector_data('^NSEI', end_date=end_dt, interval='1d')
         symbols_dict = {s: s for s in universe_symbols}
         nifty_fetched, _ = fetch_all_sectors_parallel(symbols_dict, end_date=end_dt, interval='1d')
@@ -3819,14 +3821,11 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
         if not nifty_closes:
             st.warning("⚠️ Could not load price data for breadth universe. Table will show Nifty only. Check data source or try again later.")
 
-        # Use last 20 business days. T = current trading day: always include today when it's a trading day (e.g. Feb 18).
-        last_in_data = pd.Timestamp(benchmark_data.index[-1]).normalize().date()
-        today = pd.Timestamp.now().normalize().date()
-        is_today_business = pd.Timestamp(today).dayofweek < 5  # Mon=0, Fri=4
-        t_date = max(last_in_data, today) if is_today_business else last_in_data
+        # Last 20 business days ending at last_in_data (benchmark end). When analysis_date is past, do NOT use today.
+        t_date = last_in_data
         dates_20 = pd.bdate_range(end=t_date, periods=20, freq='B').tolist()
-        dates_20 = list(reversed(dates_20))  # oldest first, current day last
-        if dates_20 and dates_20[-1].date() != t_date:
+        dates_20 = list(reversed(dates_20))  # oldest first, latest day last
+        if dates_20 and hasattr(dates_20[-1], 'date') and dates_20[-1].date() != t_date:
             dates_20 = dates_20[:-1] + [pd.Timestamp(t_date)]
         # De-duplicate by date so latest date is not shown twice
         seen_d = set()
