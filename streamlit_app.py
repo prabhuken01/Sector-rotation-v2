@@ -307,9 +307,9 @@ def get_sidebar_controls():
     time_interval = st.sidebar.radio(
         "Analysis Interval",
         options=["Daily", "Weekly", "Hourly"],
-        index=1,
+        index=0,
         key="analysis_interval",
-        help="Controls sector data timeframe for Momentum Ranking and tabs. Weekly (default) = broader sector rotation; Daily/Hourly = finer view."
+        help="Controls sector data timeframe for Momentum Ranking and tabs. Daily (default); Weekly = broader sector rotation; Hourly = finer view."
     )
     
     # Data source selection
@@ -416,24 +416,7 @@ def get_sidebar_controls():
     # MA+RSI+VWAP gate (1H) — independent 1H-based filters for Stock Screener and Historical Rankings
     st.sidebar.subheader("MA+RSI+VWAP gate (1H)")
     st.sidebar.caption("Filters stocks by 1H indicator conditions. Each condition is independent (not combined gate).")
-    # Sector selection interval for gates: maps to global Analysis Interval (Daily/Weekly).
-    # This lets the user think in terms of sector timeframe while keeping a single underlying interval.
-    _current_interval = st.session_state.get("analysis_interval", time_interval)
-    _sector_idx = 0 if _current_interval == "Weekly" else 1
-    sector_selection_interval_label = st.sidebar.radio(
-        "Sector selection interval (for gates)",
-        options=["Weekly (default)", "Daily"],
-        index=_sector_idx,
-        key="sector_selection_interval",
-        help="Controls how Momentum Ranking selects bullish/bearish sectors used by gates, Stock Screener and Historical Rankings."
-    )
-    # Sync sector selection label back to global analysis_interval
-    if sector_selection_interval_label == "Weekly (default)" and _current_interval != "Weekly":
-        st.session_state["analysis_interval"] = "Weekly"
-        time_interval = "Weekly"
-    elif sector_selection_interval_label == "Daily" and _current_interval != "Daily":
-        st.session_state["analysis_interval"] = "Daily"
-        time_interval = "Daily"
+    st.sidebar.caption("Sector selection (gates, Stock Screener, Historical Rankings) uses the **Analysis Interval** selected above.")
     with st.sidebar.expander("Bullish MA+RSI+VWAP gate", expanded=False):
         bull_mrvg_enabled = st.checkbox("Enable Bullish gate", value=True, key="bull_mrvg_enabled")
         # Sector count — FIRST filter; active whenever gate is enabled
