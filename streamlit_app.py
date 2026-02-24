@@ -6,7 +6,7 @@ Version: 2.4.2 - Confluence gates: user toggles for Bullish/Bearish in sidebar; 
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.5.1"
 
 import os
 import io
@@ -303,7 +303,14 @@ def get_sidebar_controls():
     enable_color_coding = st.sidebar.checkbox("Enable Bullish/Bearish Colors", value=True,
                                                help="Color code cells to highlight strong/weak signals")
     
-    # time_interval is set from "Sector selection interval" inside MA+RSI+VWAP gate (Weekly default / Daily)
+    # Global Analysis Interval (drives sector data for Momentum/Stock Screener/Historical Rankings)
+    time_interval = st.sidebar.radio(
+        "Analysis Interval",
+        options=["Daily", "Weekly", "Hourly"],
+        index=1,
+        key="analysis_interval",
+        help="Controls sector data timeframe for Momentum Ranking and tabs. Weekly (default) = broader sector rotation; Daily/Hourly = finer view."
+    )
     
     # Data source selection
     st.sidebar.subheader("Data Source")
@@ -409,15 +416,24 @@ def get_sidebar_controls():
     # MA+RSI+VWAP gate (1H) — independent 1H-based filters for Stock Screener and Historical Rankings
     st.sidebar.subheader("MA+RSI+VWAP gate (1H)")
     st.sidebar.caption("Filters stocks by 1H indicator conditions. Each condition is independent (not combined gate).")
-    # Sector selection interval: drives only which data is used for Momentum Ranking (top/bottom sectors). RSI/MA/VWAP stay at 1H/daily.
+    # Sector selection interval for gates: maps to global Analysis Interval (Daily/Weekly).
+    # This lets the user think in terms of sector timeframe while keeping a single underlying interval.
+    _current_interval = st.session_state.get("analysis_interval", time_interval)
+    _sector_idx = 0 if _current_interval == "Weekly" else 1
     sector_selection_interval_label = st.sidebar.radio(
-        "Sector selection interval",
+        "Sector selection interval (for gates)",
         options=["Weekly (default)", "Daily"],
-        index=0,
+        index=_sector_idx,
         key="sector_selection_interval",
-        help="Data used for Momentum Ranking (which sectors are top/bottom). Weekly = broader sector rotation; Daily = finer. RSI/MA/VWAP on stocks remain at 1H/daily."
+        help="Controls how Momentum Ranking selects bullish/bearish sectors used by gates, Stock Screener and Historical Rankings."
     )
-    time_interval = "Weekly" if sector_selection_interval_label == "Weekly (default)" else "Daily"
+    # Sync sector selection label back to global analysis_interval
+    if sector_selection_interval_label == "Weekly (default)" and _current_interval != "Weekly":
+        st.session_state["analysis_interval"] = "Weekly"
+        time_interval = "Weekly"
+    elif sector_selection_interval_label == "Daily" and _current_interval != "Daily":
+        st.session_state["analysis_interval"] = "Daily"
+        time_interval = "Daily"
     with st.sidebar.expander("Bullish MA+RSI+VWAP gate", expanded=False):
         bull_mrvg_enabled = st.checkbox("Enable Bullish gate", value=True, key="bull_mrvg_enabled")
         # Sector count — FIRST filter; active whenever gate is enabled
@@ -3805,9 +3821,19 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
     st.markdown("---")
 
     with st.spinner("Building 20-day market breadth table..."):
-        # End date for table and fetches: use last date in benchmark (respects analysis_date when past)
-        end_dt = benchmark_data.index[-1]
-        last_in_data = pd.Timestamp(end_dt).normalize().date() if hasattr(end_dt, 'date') else pd.Timestamp(end_dt).date()
+        # Determine anchor date for table:
+        # - If analysis_date is today (or not provided), include current trading day using latest data.
+        # - If analysis_date is in the past, anchor strictly to that date.
+        from datetime import datetime as _dt
+        today = _dt.now().date()
+        if analysis_date is None or analysis_date == today:
+            t_date = today
+            end_dt = None  # let data fetch use latest bars, so today's intraday breadth is included
+        else:
+            t_date = analysis_date
+            end_dt = _dt.combine(analysis_date, _dt.min.time())
+
+        # Fetch Nifty index and breadth universe up to end_dt (or latest if None)
         nifty_index_data = fetch_sector_data('^NSEI', end_date=end_dt, interval='1d')
         symbols_dict = {s: s for s in universe_symbols}
         nifty_fetched, _ = fetch_all_sectors_parallel(symbols_dict, end_date=end_dt, interval='1d')
@@ -3824,8 +3850,8 @@ def display_market_breadth_tab(benchmark_data, analysis_date=None, sector_data_d
         if not nifty_closes:
             st.warning("⚠️ Could not load price data for breadth universe. Table will show Nifty only. Check data source or try again later.")
 
-        # Last 20 business days ending at last_in_data (benchmark end). When analysis_date is past, do NOT use today.
-        t_date = last_in_data
+        # Last 20 business days ending at t_date. When analysis_date is past, do NOT go beyond it;
+        # when analysis_date is today / None, include today's trading day using latest data.
         dates_20 = pd.bdate_range(end=t_date, periods=20, freq='B').tolist()
         dates_20 = list(reversed(dates_20))  # oldest first, latest day last
         if dates_20 and hasattr(dates_20[-1], 'date') and dates_20[-1].date() != t_date:
