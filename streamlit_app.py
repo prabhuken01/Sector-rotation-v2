@@ -6,7 +6,8 @@ Version: 2.4.2 - Confluence gates: user toggles for Bullish/Bearish in sidebar; 
 """
 
 # Visible app version (shown on main page for deploy verification)
-APP_VERSION = "2.5.1"
+# Bumped to 2.5.2 to verify latest gates Weekly/Daily UI is running
+APP_VERSION = "2.5.2"
 
 import os
 import io
@@ -416,7 +417,14 @@ def get_sidebar_controls():
     # MA+RSI+VWAP gate (1H) — independent 1H-based filters for Stock Screener and Historical Rankings
     st.sidebar.subheader("MA+RSI+VWAP gate (1H)")
     st.sidebar.caption("Filters stocks by 1H indicator conditions. Each condition is independent (not combined gate).")
-    st.sidebar.caption("Sector selection (gates, Stock Screener, Historical Rankings) uses the **Analysis Interval** selected above.")
+    # Sector selection interval for gates only: which timeframe to use for picking top/bottom sectors (never touches analysis_interval).
+    gates_sector_interval = st.sidebar.radio(
+        "Sector selection interval (for gates)",
+        options=["Daily", "Weekly"],
+        index=0,
+        key="gates_sector_interval",
+        help="Pick sectors for momentum (top N bullish / bottom N bearish) using Daily or Weekly ranking. Date sequence in Historical Rankings stays daily."
+    )
     with st.sidebar.expander("Bullish MA+RSI+VWAP gate", expanded=False):
         bull_mrvg_enabled = st.checkbox("Enable Bullish gate", value=True, key="bull_mrvg_enabled")
         # Sector count — FIRST filter; active whenever gate is enabled
@@ -496,7 +504,7 @@ def get_sidebar_controls():
         except FileNotFoundError:
             st.caption("Logic Guide file not found.")
 
-    return use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding, confluence_gate_options, mrvg_options
+    return use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding, confluence_gate_options, mrvg_options, gates_sector_interval
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -2290,17 +2298,11 @@ def test_symbol_availability():
     return results
 
 
-def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf, confluence_gate_options=None, mrvg_options=None):
+def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf, confluence_gate_options=None, mrvg_options=None, gates_sector_interval='Daily', sector_data_for_gates=None):
     """
-    Display historical rankings.
-    
-    Primary content: date-wise table for the last 15 trading days with:
-    - Market breadth: Advance/Total %
-    - Stocks % above 10 DMA (Nifty 50)
-    - Momentum Ranked #1 Sector
-    - Bullish Stock #1 and #2 (sectors) with next 1-day and 2-day returns
-    
-    Secondary content: existing Momentum and Reversal evolution sub-tabs (T-7 to T).
+    Display historical rankings. Date sequence is always daily (caller passes daily sector_data_dict and benchmark_data).
+    gates_sector_interval: 'Daily' or 'Weekly' — which timeframe to use only for picking top/bottom sectors for gates.
+    sector_data_for_gates: sector data at gates_sector_interval (used for sector selection only).
     """
     st.markdown("### 📅 Historical Rankings")
     st.markdown("---")
@@ -2331,15 +2333,16 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
     n_bear_sectors = (mrvg_options or {}).get("bearish", {}).get("n_sectors", 2)
     _bull_gate_on  = (mrvg_options or {}).get("bullish", {}).get("enabled", True)
     _bear_gate_on  = (mrvg_options or {}).get("bearish", {}).get("enabled", True)
-    # Cache key for historical rankings — must be defined before cache_path usage
-    hist_conf_sector_code = f'n{n_bull_sectors}_m{n_bear_sectors}'
+    # Cache key for historical rankings — must be defined before cache_path usage (include gates interval so Weekly/Daily don't share cache)
+    hist_conf_sector_code = f'n{n_bull_sectors}_m{n_bear_sectors}_{gates_sector_interval}'
 
-    # Show current-date sector preview (informational only; per-date sectors computed in loop below)
-    if sector_data_dict and momentum_weights:
+    # Show current-date sector preview using gates interval (sector selection only)
+    _data_for_gates = sector_data_for_gates if sector_data_for_gates is not None else sector_data_dict
+    if _data_for_gates and momentum_weights:
         try:
             from confluence_fixed import get_bottom_n_sectors_by_momentum
-            _cur_top = get_top_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=n_bull_sectors)
-            _cur_bot = get_bottom_n_sectors_by_momentum(sector_data_dict, momentum_weights, n=n_bear_sectors)
+            _cur_top = get_top_n_sectors_by_momentum(_data_for_gates, momentum_weights, n=n_bull_sectors)
+            _cur_bot = get_bottom_n_sectors_by_momentum(_data_for_gates, momentum_weights, n=n_bear_sectors)
             if _bull_gate_on and _cur_top:
                 st.success(f"**Today's Top {n_bull_sectors} bullish sector(s):** {', '.join(_cur_top)}")
             if _bear_gate_on and _cur_bot:
@@ -2348,7 +2351,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             pass
     st.caption(
         f"**Sector universe (from Gates sidebar): top {n_bull_sectors} bullish / bottom {n_bear_sectors} bearish sectors "
-        "per Momentum Ranking, computed per date.** Gate toggles (Bullish/Bearish) are in the sidebar."
+        f"per Momentum Ranking ({gates_sector_interval}). Date sequence is daily.** Gate toggles (Bullish/Bearish) are in the sidebar."
     )
 
     # --- Lookback selector: 10 days (faster) or 30 days ---
@@ -2485,9 +2488,14 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     round((stocks_above_10dma / total_10dma * 100), 1) if total_10dma else None
                 )
                 
-                # a2) Momentum #1, b) Momentum #2 sectors (point-in-time)
+                # a2) Momentum #1, b) Momentum #2 sectors (point-in-time). Use gates interval for sector selection only; date sequence stays daily.
                 sector_scores = []
-                for sect_name, sect_data in sector_data_dict.items():
+                use_gates_data = (gates_sector_interval == "Weekly" and sector_data_for_gates is not None)
+                data_for_ranking = sector_data_for_gates if use_gates_data else sector_data_dict
+                bench_for_ranking = sector_data_for_gates.get('Nifty 50') if use_gates_data else benchmark_data
+                if bench_for_ranking is None:
+                    bench_for_ranking = benchmark_data
+                for sect_name, sect_data in data_for_ranking.items():
                     if sect_name == 'Nifty 50':
                         continue
                     if len(sect_data) < 14:
@@ -2497,8 +2505,8 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                         if idx < 0 or idx < 13:
                             continue
                         subset = sect_data.iloc[: idx + 1]
-                        bench_sub = benchmark_data.iloc[: idx + 1]
-                        if len(bench_sub) < 14:
+                        bench_sub = bench_for_ranking.iloc[: idx + 1] if hasattr(bench_for_ranking, 'iloc') and len(bench_for_ranking) > 0 else None
+                        if bench_sub is None or len(bench_sub) < 14:
                             continue
                         rsi = calculate_rsi(subset)
                         adx, _, _, di_spread = calculate_adx(subset)
@@ -4614,10 +4622,11 @@ def _compute_confluence_score(data_entry_raw, data_1d=None, timeframe='2h', gate
         return None, None, None
 
 
-def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_data_dict=None, momentum_weights=None, df_momentum=None, confluence_gate_options=None, mrvg_options=None):
+def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_data_dict=None, momentum_weights=None, df_momentum=None, confluence_gate_options=None, mrvg_options=None, sector_data_for_gates=None, gates_sector_interval='Daily'):
     """
     Stock Screener (MA+RSI+VWAP) on sector-company universe (from Sector-Company.xlsx, sheet Main).
-    Sector filter: **Top 4 + Bottom 6 (per Momentum Ranking)** = stocks from top 4 sectors (bullish) + bottom 6 sectors (bearish); **Universal** = all sectors.
+    Sector filter uses gates_sector_interval (Daily/Weekly): sector_data_for_gates when provided, else sector_data_dict.
+    **Top 4 + Bottom 6 (per Momentum Ranking)** = stocks from top 4 sectors (bullish) + bottom 6 sectors (bearish); **Universal** = all sectors.
 
     Scoring: 1 pt each for RSI (1W/1D/1H) up, 1 pt each for Price > 8/20/50 SMA, + VWAP (1H). RSI divergence not used.
     Columns:
@@ -4744,8 +4753,9 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
         except Exception:
             return None, None
 
-    # Sectors based on screener's selected_date (point-in-time Momentum Ranking)
-    sector_data_sliced = _slice_sector_data_to_date(sector_data_dict, selected_date)
+    # Sectors based on screener's selected_date (point-in-time Momentum Ranking); use gates interval for sector selection
+    _data_for_gates = sector_data_for_gates if sector_data_for_gates is not None else sector_data_dict
+    sector_data_sliced = _slice_sector_data_to_date(_data_for_gates, selected_date)
     col_info, = st.columns([1])
     with col_info:
         if sector_data_sliced and momentum_weights:
@@ -6176,7 +6186,7 @@ def main():
         
         # Sidebar controls
         try:
-            use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding, confluence_gate_options, mrvg_options = get_sidebar_controls()
+            use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding, confluence_gate_options, mrvg_options, gates_sector_interval = get_sidebar_controls()
         except Exception as e:
             st.error(f"❌ Error loading sidebar controls: {str(e)}")
             return
@@ -6215,6 +6225,24 @@ def main():
             st.error("❌ Unable to complete analysis. Please try again or check your internet connection.")
             st.info("💡 Tip: Ensure yfinance can reach Yahoo Finance servers. If the issue persists, try again in a few moments.")
             return
+        
+        # Sector data for gates (top N / bottom N): use weekly when gates_sector_interval is Weekly, else main
+        sector_data_for_gates = sector_data
+        if gates_sector_interval == "Weekly":
+            with st.spinner("Fetching weekly sector data for gates..."):
+                _, sector_data_weekly, _ = analyze_sectors_with_progress(use_etf, momentum_weights, reversal_weights, analysis_datetime, "Weekly", reversal_thresholds)
+            if sector_data_weekly:
+                sector_data_for_gates = sector_data_weekly
+        
+        # Historical Rankings: always use daily date sequence (daily benchmark + sector data for the table)
+        hist_benchmark = sector_data.get('Nifty 50') if sector_data else None
+        hist_sector_data = sector_data
+        if time_interval != 'Daily':
+            with st.spinner("Fetching daily data for Historical Rankings date sequence..."):
+                _, sector_data_daily, _ = analyze_sectors_with_progress(use_etf, momentum_weights, reversal_weights, analysis_datetime, "Daily", reversal_thresholds)
+            if sector_data_daily:
+                hist_sector_data = sector_data_daily
+                hist_benchmark = sector_data_daily.get('Nifty 50')
         
         # Display combined data source and date information with IST timezone
         data_source_type = "ETF Proxy" if use_etf else "NSE Indices"
@@ -6280,6 +6308,8 @@ def main():
                         df_momentum=df,
                         confluence_gate_options=confluence_gate_options,
                         mrvg_options=mrvg_options,
+                        sector_data_for_gates=sector_data_for_gates,
+                        gates_sector_interval=gates_sector_interval,
                     )
                 except Exception as e:
                     st.error(f"❌ Error displaying stock screener tab: {str(e)}")
@@ -6287,7 +6317,7 @@ def main():
             
             with tab4:
                 try:
-                    display_historical_rankings_tab(sector_data, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf, confluence_gate_options=confluence_gate_options, mrvg_options=mrvg_options)
+                    display_historical_rankings_tab(hist_sector_data, hist_benchmark, momentum_weights, reversal_weights, reversal_thresholds, use_etf, confluence_gate_options=confluence_gate_options, mrvg_options=mrvg_options, gates_sector_interval=gates_sector_interval, sector_data_for_gates=sector_data_for_gates)
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying historical rankings tab: {str(e)}")
