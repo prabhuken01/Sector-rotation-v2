@@ -6,8 +6,8 @@ Version: 2.4.2 - Confluence gates: user toggles for Bullish/Bearish in sidebar; 
 """
 
 # Visible app version (shown on main page for deploy verification)
-# Bumped to 2.5.3 — backup of v2.5.2 taken Feb 25, 2026
-APP_VERSION = "2.5.3"
+# Bumped to 2.5.2 to verify latest gates Weekly/Daily UI is running
+APP_VERSION = "2.5.2"
 
 import os
 import io
