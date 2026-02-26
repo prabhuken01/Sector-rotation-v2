@@ -229,7 +229,9 @@ def _build_sector_companies_from_df(df):
             w = float(weight) if not (pd.isna(weight) or (isinstance(weight, str) and not str(weight).strip())) else 0.0
         except (TypeError, ValueError):
             w = 0.0
-        result[sector][symbol] = {'name': str(name) if not pd.isna(name) else symbol, 'weight': w}
+        fo_val = row.get('F&O', 'N')
+        is_fo = str(fo_val).strip().upper() == 'Y' if not pd.isna(fo_val) else False
+        result[sector][symbol] = {'name': str(name) if not pd.isna(name) else symbol, 'weight': w, 'is_fo': is_fo}
     return result if result else None
 
 

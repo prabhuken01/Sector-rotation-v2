@@ -6,8 +6,8 @@ Version: 2.4.2 - Confluence gates: user toggles for Bullish/Bearish in sidebar; 
 """
 
 # Visible app version (shown on main page for deploy verification)
-# Bumped to 2.5.3 — backup of v2.5.2 taken Feb 25, 2026
-APP_VERSION = "2.5.3"
+# Bumped to 2.5.3N — F&O filter on Bearish, ⓕ badge on F&O stocks, smart time default
+APP_VERSION = "2.5.3N"
 
 import os
 import io
@@ -2422,15 +2422,15 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             all_companies = []
             for sector, syms in SECTOR_COMPANIES.items():
                 for sym, info in syms.items():
-                    all_companies.append((sector, sym, info.get('name', sym)))
-            
-            company_symbols_dict = {sym: sym for _, sym, _ in all_companies}
+                    all_companies.append((sector, sym, info.get('name', sym), info.get('is_fo', False)))
+
+            company_symbols_dict = {sym: sym for _, sym, _, _ in all_companies}
             company_fetched, _ = fetch_all_sectors_parallel(company_symbols_dict, end_date=end_dt, interval='1d')
             company_data = {}
-            for sector, sym, name in all_companies:
+            for sector, sym, name, is_fo in all_companies:
                 d = company_fetched.get(sym)
                 if d is not None and len(d) >= 14:
-                    company_data[sym] = {'sector': sector, 'name': name, 'data': d}
+                    company_data[sym] = {'sector': sector, 'name': name, 'is_fo': is_fo, 'data': d}
             
             # Confluence-only keys (cleared when no confluence data; breadth columns stay in row)
             _CONF_COLS_ALL = [
@@ -2645,7 +2645,9 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                             bear_sector_ok = (this_sector in bot_N_this_date) if (_bear_gate_on and bot_N_this_date) else True
                             if bull_rsi_ok and bull_gate_ok and bull_sector_ok:
                                 bull_screener_list.append((sym, rec['sector'], rec['name'], bull_score, d, idx))
-                            if bear_rsi_ok and bear_gate_ok and bear_sector_ok:
+                            # F&O gate: bearish picks restricted to F&O stocks only
+                            bear_fo_ok = rec.get('is_fo', False)
+                            if bear_rsi_ok and bear_gate_ok and bear_sector_ok and bear_fo_ok:
                                 bear_screener_list.append((sym, rec['sector'], rec['name'], bear_score, d, idx))
                     except Exception:
                         continue
@@ -2653,12 +2655,14 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                 def next_returns_from_list(rec_list):
                     out = []
                     for (sym, sector, name, _s, d, idx) in rec_list:
+                        # ⓕ badge: suffix name for F&O stocks
+                        display_name = name + " ⓕ" if company_data.get(sym, {}).get('is_fo', False) else name
                         c0 = d['Close'].iloc[idx]
                         r1 = (d['Close'].iloc[idx + 1] / c0 - 1) * 100 if idx + 1 < len(d) else None
                         r2 = (d['Close'].iloc[idx + 2] / c0 - 1) * 100 if idx + 2 < len(d) else None
                         r3 = (d['Close'].iloc[idx + 3] / c0 - 1) * 100 if idx + 3 < len(d) else None
                         r1w = (d['Close'].iloc[idx + 5] / c0 - 1) * 100 if idx + 5 < len(d) else None  # ~1 week (5 trading days)
-                        out.append((sector, name, r1, r2, r3, r1w))
+                        out.append((sector, display_name, r1, r2, r3, r1w))
                     return out
 
                 # Sort separately: bull by bull_score desc, bear by bear_score desc
@@ -4815,7 +4819,7 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
         if sectors_to_analyze and sector not in sectors_to_analyze:
             continue
         for sym, info in syms.items():
-            universe.append((sector, sym, info.get("name", sym)))
+            universe.append((sector, sym, info.get("name", sym), info.get("is_fo", False)))
 
     if sectors_to_analyze:
         st.markdown(f"### 📊 Stock Screener ({len(universe)} Stocks from {len(sectors_to_analyze)} Sectors)")
@@ -4846,11 +4850,23 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
 
     # Intraday snapshot time selector — affects RSI(1H), VWAP, MA8(1H) computation
     _snap_opts = {"2:15 PM (pre-close, recommended)": (14, 15), "10:15 AM (post-open)": (10, 15)}
+    # Smart default: pick based on IST current time (first session load only; subsequent choices preserved via session_state)
+    if "screener_snap_time" not in st.session_state:
+        from datetime import timezone, timedelta as _td
+        _now_ist = datetime.now(timezone(_td(hours=5, minutes=30)))
+        if _now_ist.hour > 14 or (_now_ist.hour == 14 and _now_ist.minute >= 15):
+            _snap_default_idx = 0  # past 2:15 PM → use 2:15 PM
+        elif _now_ist.hour > 10 or (_now_ist.hour == 10 and _now_ist.minute >= 15):
+            _snap_default_idx = 1  # between 10:15 AM and 2:15 PM → use 10:15 AM
+        else:
+            _snap_default_idx = 0  # pre-open → fall back to 2:15 PM (previous day)
+    else:
+        _snap_default_idx = 0
     _snap_choice = st.radio(
         "1H data snapshot time (IST):",
         list(_snap_opts.keys()),
         horizontal=True,
-        index=0,
+        index=_snap_default_idx,
         key="screener_snap_time",
         help="Selects which intraday bar to use for RSI(1H), VWAP, and MA8(1H) calculations. Falls back to last available bar if the chosen time bar is absent."
     )
@@ -4872,7 +4888,7 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
     status = st.empty()
 
     total = len(universe)
-    for idx, (sector, symbol, name) in enumerate(universe):
+    for idx, (sector, symbol, name, is_fo) in enumerate(universe):
         status.text(f"Analyzing {name} ({symbol}) [{idx+1}/{total}]...")
         progress.progress((idx + 1) / total)
 
@@ -5040,6 +5056,7 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
                 "Sector": sector,
                 "Symbol": symbol,
                 "Company": name,
+                "is_fo": is_fo,
                 "Price": round(price, 1),
                 "Price > 50 SMA": p_gt_50,
                 "Price > 20 SMA": p_gt_20,
@@ -5092,6 +5109,11 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
     # RSI oversold filter for bearish: exclude RSI(1D) < 30
     bear_rsi_mask = ~(bear_candidates["RSI (1D)"].fillna(100) < 30)
     bear_candidates_filtered = bear_candidates[bear_rsi_mask]
+
+    # F&O gate: bearish list restricted to F&O stocks only (when F&O data is available)
+    if "is_fo" in bear_candidates.columns and bear_candidates["is_fo"].any():
+        bear_candidates = bear_candidates[bear_candidates["is_fo"]]
+        bear_candidates_filtered = bear_candidates_filtered[bear_candidates_filtered["is_fo"]]
 
     # Apply MA+RSI+VWAP gate (1H) if enabled
     _mrvg = mrvg_options or {}
@@ -5156,6 +5178,10 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
     bull = bull.rename(columns={"Final score": "Bullish Score"})
     if "Bearish Score" in bull.columns:
         bull = bull.drop(columns=["Bearish Score"])
+    # ⓕ badge: suffix company name for F&O stocks
+    if "is_fo" in bull.columns:
+        bull["Company"] = bull.apply(lambda r: r["Company"] + " ⓕ" if r["is_fo"] else r["Company"], axis=1)
+        bull = bull.drop(columns=["is_fo"])
     bull["Sentiment"] = bull["Bullish Score"].apply(sentiment_color)
     num_cols_bull = [c for c in bull.columns if bull[c].dtype in ['float64', 'float32', 'int64', 'int32']]
     _fmt_bull = {c: '{:.1f}' for c in ['Price', 'Bullish Score'] if c in bull.columns}
@@ -5191,6 +5217,10 @@ Criteria NOT met → +1 pt. Higher score = stronger bearish setup.
     bear = top_bearish.copy()
     if "Final score" in bear.columns:
         bear = bear.drop(columns=["Final score"])
+    # ⓕ badge: suffix company name for F&O stocks
+    if "is_fo" in bear.columns:
+        bear["Company"] = bear.apply(lambda r: r["Company"] + " ⓕ" if r["is_fo"] else r["Company"], axis=1)
+        bear = bear.drop(columns=["is_fo"])
     bear["Sentiment"] = bear["Bearish Score"].apply(sentiment_color)
     num_cols_bear = [c for c in bear.columns if bear[c].dtype in ['float64', 'float32', 'int64', 'int32']]
     _fmt_bear = {c: '{:.1f}' for c in ['Price', 'Bearish Score'] if c in bear.columns}
