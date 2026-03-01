@@ -8,7 +8,7 @@ Version: 2.4.2 - Confluence gates: user toggles for Bullish/Bearish in sidebar; 
 # Visible app version (shown on main page for deploy verification)
 # Bumped to 2.5.4 (prev 2.5.3N) — MJ1 Momentum Velocity col, M1 VWAP band slider, M2+MJ2 timeframe-weighted
 # RSI scoring, MJ5 Market Regime banner (Nifty RSI + VIX@15), gates interval mismatch fix, sidebar sync
-APP_VERSION = "2.5.4 (prev 2.5.3N)"
+APP_VERSION = "2.5.5 (prev 2.5.4)"
 
 import os
 import io
@@ -2498,10 +2498,20 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
 
             # 1) Nifty 50 advance/decline: fetch in parallel
             end_dt = benchmark_data.index[-1]
+            # Extend fetch window by 25 calendar days so that 1D/2D/3D/1W/2W returns
+            # are available even for the most recent historical dates in the table.
+            _return_end_dt = end_dt + pd.Timedelta(days=25)
             nifty_symbols_dict = {s: s for s in NIFTY50_SYMBOLS[:50]}
-            nifty_fetched, _ = fetch_all_sectors_parallel(nifty_symbols_dict, end_date=end_dt, interval='1d')
+            nifty_fetched, _ = fetch_all_sectors_parallel(nifty_symbols_dict, end_date=_return_end_dt, interval='1d')
             nifty_closes = {sym: d['Close'] for sym, d in nifty_fetched.items() if d is not None and len(d) >= 2}
-            
+
+            # India VIX: fetch once for per-date regime computation (reused in main loop + pre-load)
+            _vix_hist_data = None
+            try:
+                _vix_hist_data = _fetch_vix_cached(str(analysis_date))
+            except Exception:
+                pass
+
             # 2) All companies: fetch in parallel (same universe as Stock Screener)
             all_companies = []
             for sector, syms in SECTOR_COMPANIES.items():
@@ -2509,7 +2519,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     all_companies.append((sector, sym, info.get('name', sym), info.get('is_fo', False)))
 
             company_symbols_dict = {sym: sym for _, sym, _, _ in all_companies}
-            company_fetched, _ = fetch_all_sectors_parallel(company_symbols_dict, end_date=end_dt, interval='1d')
+            company_fetched, _ = fetch_all_sectors_parallel(company_symbols_dict, end_date=_return_end_dt, interval='1d')
             company_data = {}
             for sector, sym, name, is_fo in all_companies:
                 d = company_fetched.get(sym)
@@ -2529,16 +2539,19 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             ]
 
             # Helper: compute next-day returns for a scored list (defined once, reused in pre-load)
+            # Tuple layout: 0=sector, 1=name, 2=r1d, 3=r2d, 4=r3d, 5=r1w, 6=r2w, 7=cmp
             def next_returns_from_list(rec_list):
                 out = []
                 for (sym, sector, name, _s, d, idx) in rec_list:
                     display_name = name + " ⓕ" if company_data.get(sym, {}).get('is_fo', False) else name
                     c0 = d['Close'].iloc[idx]
-                    r1 = (d['Close'].iloc[idx + 1] / c0 - 1) * 100 if idx + 1 < len(d) else None
-                    r2 = (d['Close'].iloc[idx + 2] / c0 - 1) * 100 if idx + 2 < len(d) else None
-                    r3 = (d['Close'].iloc[idx + 3] / c0 - 1) * 100 if idx + 3 < len(d) else None
-                    r1w = (d['Close'].iloc[idx + 5] / c0 - 1) * 100 if idx + 5 < len(d) else None
-                    out.append((sector, display_name, r1, r2, r3, r1w))
+                    cmp_val = round(float(c0), 0)  # price on reference date
+                    r1  = (d['Close'].iloc[idx + 1]  / c0 - 1) * 100 if idx + 1  < len(d) else None
+                    r2  = (d['Close'].iloc[idx + 2]  / c0 - 1) * 100 if idx + 2  < len(d) else None
+                    r3  = (d['Close'].iloc[idx + 3]  / c0 - 1) * 100 if idx + 3  < len(d) else None
+                    r1w = (d['Close'].iloc[idx + 5]  / c0 - 1) * 100 if idx + 5  < len(d) else None
+                    r2w = (d['Close'].iloc[idx + 10] / c0 - 1) * 100 if idx + 10 < len(d) else None
+                    out.append((sector, display_name, r1, r2, r3, r1w, r2w, cmp_val))
                 return out
 
             total_dates = len(dates_10)
@@ -2553,6 +2566,33 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     continue
 
                 row = {'Date': date_str}
+                # --- Market regime (point-in-time): Nifty RSI, Nifty vs SMA50, India VIX ---
+                _bidx = benchmark_data.index.get_indexer([date_t], method='ffill')[0]
+                if _bidx >= 50:
+                    _nrsi = calculate_rsi(benchmark_data.iloc[:_bidx + 1])
+                    _nrsi_val = float(_nrsi.iloc[-1]) if not _nrsi.isna().all() else 50.0
+                    _nclose = float(benchmark_data['Close'].iloc[_bidx])
+                    _nsma50 = benchmark_data['Close'].rolling(50).mean().iloc[_bidx]
+                    _nifty_vs_sma = 'Above' if (not pd.isna(_nsma50) and _nclose > float(_nsma50)) else 'Below'
+                else:
+                    _nrsi_val = 50.0; _nifty_vs_sma = 'N/A'
+                _vix_val_row = None
+                if _vix_hist_data is not None and len(_vix_hist_data) > 0:
+                    try:
+                        _vidx = _vix_hist_data.index.get_indexer([date_t], method='ffill')[0]
+                        if 0 <= _vidx < len(_vix_hist_data):
+                            _vix_val_row = round(float(_vix_hist_data['Close'].iloc[_vidx]), 1)
+                    except Exception:
+                        pass
+                _r_bull = sum([_nrsi_val > 50, _nifty_vs_sma == 'Above',
+                               (_vix_val_row is not None and _vix_val_row < 15)])
+                _r_bear = sum([_nrsi_val <= 45, _nifty_vs_sma == 'Below',
+                               (_vix_val_row is not None and _vix_val_row >= 15)])
+                row['Regime'] = '🟢 Bull' if _r_bull == 3 else ('🔴 Bear' if _r_bear >= 2 else '⚪ Mixed')
+                row['Nifty RSI'] = round(_nrsi_val, 1)
+                row['Nifty vs SMA50'] = _nifty_vs_sma
+                row['India VIX'] = _vix_val_row
+
                 # a1) Advance/Total % and Stocks % above 10 DMA (Nifty 50)
                 advances = 0
                 declines = 0
@@ -2767,29 +2807,37 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     b1 = next_returns_from_list(bull2_list)
                     b2 = next_returns_from_list(bear2_list)
                     row['Bullish #1 Stock'] = b1[0][1] if len(b1) >= 1 else ''
+                    row['Bullish #1 CMP'] = b1[0][7] if len(b1) >= 1 else None
                     row['Bullish #1 Score'] = round(bull2_list[0][3], 1) if len(bull2_list) >= 1 else None
                     row['Bullish #1 Next 1D %'] = round(b1[0][2], 1) if len(b1) >= 1 and b1[0][2] is not None else None
                     row['Bullish #1 Next 2D %'] = round(b1[0][3], 1) if len(b1) >= 1 and b1[0][3] is not None else None
                     row['Bullish #1 Next 3D %'] = round(b1[0][4], 1) if len(b1) >= 1 and b1[0][4] is not None else None
-                    row['Bullish #1 Next 1W %'] = round(b1[0][5], 1) if len(b1) >= 1 and len(b1[0]) > 5 and b1[0][5] is not None else None
+                    row['Bullish #1 Next 1W %'] = round(b1[0][5], 1) if len(b1) >= 1 and b1[0][5] is not None else None
+                    row['Bullish #1 Next 2W %'] = round(b1[0][6], 1) if len(b1) >= 1 and b1[0][6] is not None else None
                     row['Bullish #2 Stock'] = b1[1][1] if len(b1) >= 2 else ''
+                    row['Bullish #2 CMP'] = b1[1][7] if len(b1) >= 2 else None
                     row['Bullish #2 Score'] = round(bull2_list[1][3], 1) if len(bull2_list) >= 2 else None
                     row['Bullish #2 Next 1D %'] = round(b1[1][2], 1) if len(b1) >= 2 and b1[1][2] is not None else None
                     row['Bullish #2 Next 2D %'] = round(b1[1][3], 1) if len(b1) >= 2 and b1[1][3] is not None else None
                     row['Bullish #2 Next 3D %'] = round(b1[1][4], 1) if len(b1) >= 2 and b1[1][4] is not None else None
-                    row['Bullish #2 Next 1W %'] = round(b1[1][5], 1) if len(b1) >= 2 and len(b1[1]) > 5 and b1[1][5] is not None else None
+                    row['Bullish #2 Next 1W %'] = round(b1[1][5], 1) if len(b1) >= 2 and b1[1][5] is not None else None
+                    row['Bullish #2 Next 2W %'] = round(b1[1][6], 1) if len(b1) >= 2 and b1[1][6] is not None else None
                     row['Bearish #1 Stock'] = b2[0][1] if len(b2) >= 1 else ''
+                    row['Bearish #1 CMP'] = b2[0][7] if len(b2) >= 1 else None
                     row['Bearish #1 Score'] = round(bear2_list[0][3], 1) if len(bear2_list) >= 1 else None
                     row['Bearish #1 Next 1D %'] = round(b2[0][2], 1) if len(b2) >= 1 and b2[0][2] is not None else None
                     row['Bearish #1 Next 2D %'] = round(b2[0][3], 1) if len(b2) >= 1 and b2[0][3] is not None else None
                     row['Bearish #1 Next 3D %'] = round(b2[0][4], 1) if len(b2) >= 1 and b2[0][4] is not None else None
-                    row['Bearish #1 Next 1W %'] = round(b2[0][5], 1) if len(b2) >= 1 and len(b2[0]) > 5 and b2[0][5] is not None else None
+                    row['Bearish #1 Next 1W %'] = round(b2[0][5], 1) if len(b2) >= 1 and b2[0][5] is not None else None
+                    row['Bearish #1 Next 2W %'] = round(b2[0][6], 1) if len(b2) >= 1 and b2[0][6] is not None else None
                     row['Bearish #2 Stock'] = b2[1][1] if len(b2) >= 2 else ''
+                    row['Bearish #2 CMP'] = b2[1][7] if len(b2) >= 2 else None
                     row['Bearish #2 Score'] = round(bear2_list[1][3], 1) if len(bear2_list) >= 2 else None
                     row['Bearish #2 Next 1D %'] = round(b2[1][2], 1) if len(b2) >= 2 and b2[1][2] is not None else None
                     row['Bearish #2 Next 2D %'] = round(b2[1][3], 1) if len(b2) >= 2 and b2[1][3] is not None else None
                     row['Bearish #2 Next 3D %'] = round(b2[1][4], 1) if len(b2) >= 2 and b2[1][4] is not None else None
-                    row['Bearish #2 Next 1W %'] = round(b2[1][5], 1) if len(b2) >= 2 and len(b2[1]) > 5 and b2[1][5] is not None else None
+                    row['Bearish #2 Next 1W %'] = round(b2[1][5], 1) if len(b2) >= 2 and b2[1][5] is not None else None
+                    row['Bearish #2 Next 2W %'] = round(b2[1][6], 1) if len(b2) >= 2 and b2[1][6] is not None else None
                     # Confluence table: bullish #1/#2 and bearish #1/#2 by FIXED dual scoring
                     conf_bull_list = []   # (sym, sector, name, bull_score, d, _idx)
                     conf_bear_list = []   # (sym, sector, name, bear_score, d, _idx)
@@ -2877,10 +2925,14 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                         for k in _CONF_COLS_ALL:
                             row[k] = None
                 else:
-                    for k in ['Bullish #1 Stock', 'Bullish #1 Score', 'Bullish #1 Next 1D %', 'Bullish #1 Next 2D %', 'Bullish #1 Next 3D %', 'Bullish #1 Next 1W %',
-                              'Bullish #2 Stock', 'Bullish #2 Score', 'Bullish #2 Next 1D %', 'Bullish #2 Next 2D %', 'Bullish #2 Next 3D %', 'Bullish #2 Next 1W %',
-                              'Bearish #1 Stock', 'Bearish #1 Score', 'Bearish #1 Next 1D %', 'Bearish #1 Next 2D %', 'Bearish #1 Next 3D %', 'Bearish #1 Next 1W %',
-                              'Bearish #2 Stock', 'Bearish #2 Score', 'Bearish #2 Next 1D %', 'Bearish #2 Next 2D %', 'Bearish #2 Next 3D %', 'Bearish #2 Next 1W %'] + _CONF_COLS_ALL:
+                    for k in ['Bullish #1 Stock', 'Bullish #1 CMP', 'Bullish #1 Score',
+                              'Bullish #1 Next 1D %', 'Bullish #1 Next 2D %', 'Bullish #1 Next 3D %', 'Bullish #1 Next 1W %', 'Bullish #1 Next 2W %',
+                              'Bullish #2 Stock', 'Bullish #2 CMP', 'Bullish #2 Score',
+                              'Bullish #2 Next 1D %', 'Bullish #2 Next 2D %', 'Bullish #2 Next 3D %', 'Bullish #2 Next 1W %', 'Bullish #2 Next 2W %',
+                              'Bearish #1 Stock', 'Bearish #1 CMP', 'Bearish #1 Score',
+                              'Bearish #1 Next 1D %', 'Bearish #1 Next 2D %', 'Bearish #1 Next 3D %', 'Bearish #1 Next 1W %', 'Bearish #1 Next 2W %',
+                              'Bearish #2 Stock', 'Bearish #2 CMP', 'Bearish #2 Score',
+                              'Bearish #2 Next 1D %', 'Bearish #2 Next 2D %', 'Bearish #2 Next 3D %', 'Bearish #2 Next 1W %', 'Bearish #2 Next 2W %'] + _CONF_COLS_ALL:
                         row[k] = None
                 
                 table_rows.append(row)
@@ -2923,7 +2975,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             breadth_cols = [c for c in ['Advance/Total %', 'Stocks % above 10 DMA'] if c in df_primary.columns]
 
             # Win rate helper: compute % win rate across thresholds × horizons
-            def _win_rate_table(df_src, stock_col, r1d_col, r2d_col, r3d_col, r1w_col, direction='bullish'):
+            def _win_rate_table(df_src, stock_col, r1d_col, r2d_col, r3d_col, r1w_col, r2w_col=None, direction='bullish'):
                 """Returns DataFrame: rows=thresholds, cols=horizons, values=win rate %.
                 Only rows where 1W return is available are counted (last 5 trading days excluded)."""
                 # Pre-filter: only include entries where 1W return is non-null
@@ -2946,13 +2998,16 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                             wins = (s <= -thr).sum()
                         return f"{wins / n * 100:.0f}% ({wins}/{n})"
                     thr_label = f'≥{thr:.1f}%' if direction == 'bullish' else f'≤ -{thr:.1f}%'
-                    rows.append({
+                    row_data = {
                         'Threshold': thr_label,
                         'Next 1D': _wr(r1d_col),
                         'Next 2D': _wr(r2d_col),
                         'Next 3D': _wr(r3d_col),
                         'Next 1W': _wr(r1w_col),
-                    })
+                    }
+                    if r2w_col:
+                        row_data['Next 2W'] = _wr(r2w_col)
+                    rows.append(row_data)
                 return pd.DataFrame(rows)
 
             def _composite_win_rate(green_df, red_df, bull_r1w_col, bear_r1w_col, threshold=1.0):
@@ -2980,13 +3035,18 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             # --- BULLISH TABLE ---
             st.markdown(f"#### 🟢 Bullish: Date-wise Summary (MA+RSI+VWAP) – last {lookback_days} trading days")
             bull_display_cols = [
-                'Date', 'Advance/Total %', 'Stocks % above 10 DMA',
-                'Bullish #1 Stock', 'Bullish #1 Score',
-                'Bullish #1 Next 1D %', 'Bullish #1 Next 2D %', 'Bullish #1 Next 3D %', 'Bullish #1 Next 1W %',
-                'Bullish #2 Stock', 'Bullish #2 Score',
-                'Bullish #2 Next 1D %', 'Bullish #2 Next 2D %', 'Bullish #2 Next 3D %', 'Bullish #2 Next 1W %',
+                'Date', 'Regime', 'Nifty RSI', 'Nifty vs SMA50', 'India VIX',
+                'Advance/Total %', 'Stocks % above 10 DMA',
+                'Momentum #1 Sector', 'Momentum #2 Sector',
+                'Bullish #1 Stock', 'Bullish #1 CMP', 'Bullish #1 Score',
+                'Bullish #1 Next 1D %', 'Bullish #1 Next 2D %', 'Bullish #1 Next 3D %',
+                'Bullish #1 Next 1W %', 'Bullish #1 Next 2W %',
+                'Bullish #2 Stock', 'Bullish #2 CMP', 'Bullish #2 Score',
+                'Bullish #2 Next 1D %', 'Bullish #2 Next 2D %', 'Bullish #2 Next 3D %',
+                'Bullish #2 Next 1W %', 'Bullish #2 Next 2W %',
             ]
-            bull_pct_cols = [c for c in bull_display_cols if '%' in c and c != 'Bullish #1 Score' and c != 'Bullish #2 Score']
+            bull_pct_cols = [c for c in bull_display_cols
+                             if '%' in c and 'Score' not in c and c not in ('Advance/Total %', 'Stocks % above 10 DMA')]
             df_bull_show = df_primary[[c for c in bull_display_cols if c in df_primary.columns]].copy()
             for c in bull_pct_cols:
                 if c in df_bull_show.columns:
@@ -2995,41 +3055,59 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             st.dataframe(
                 df_bull_show.style.apply(_color_breadth_rows(breadth_cols), axis=1)
                 .format({**{c: '{:.1f}' for c in bull_pct_cols if c in df_bull_show.columns},
-                         **{c: '{:.1f}' for c in bull_score_cols if c in df_bull_show.columns}}, na_rep=''),
-                use_container_width=True, hide_index=True
+                         **{c: '{:.1f}' for c in bull_score_cols if c in df_bull_show.columns},
+                         **{c: '{:,.0f}' for c in ['Bullish #1 CMP', 'Bullish #2 CMP'] if c in df_bull_show.columns},
+                         **{c: '{:.1f}' for c in ['Nifty RSI'] if c in df_bull_show.columns}}, na_rep=''),
+                use_container_width=True, hide_index=True,
+                column_config={
+                    'Regime': st.column_config.TextColumn('Regime', help='🟢 Bull = all 3 signals bullish; 🔴 Bear = ≥2 bearish; ⚪ Mixed = else. Signals: Nifty RSI>50, Nifty>SMA50, VIX<15.'),
+                    'Nifty RSI': st.column_config.NumberColumn('Nifty RSI', format='%.1f', help='14-period RSI of Nifty 50 as on that date. >50 = bullish, <45 = bearish.'),
+                    'Nifty vs SMA50': st.column_config.TextColumn('Nifty/SMA50', help='Nifty 50 closing price vs its 50-day SMA on that date.'),
+                    'India VIX': st.column_config.NumberColumn('India VIX', format='%.1f', help='India VIX closing value on that date. <15 = low fear (bullish), ≥15 = elevated fear (bearish).'),
+                    'Bullish #1 CMP': st.column_config.NumberColumn('B1 CMP ₹', format='%.0f', help='Closing price of Bullish #1 pick on the reference date.'),
+                    'Bullish #2 CMP': st.column_config.NumberColumn('B2 CMP ₹', format='%.0f', help='Closing price of Bullish #2 pick on the reference date.'),
+                }
             )
             st.caption(
-                "**Bullish scoring (MA+RSI+VWAP):** 1 pt each for RSI (1W/1D/1H) up + Price > 8/20/50 SMA + VWAP (1H). "
-                "RSI overbought filter: RSI(1D)>75 or RSI(1H)>75 excluded. Higher score = stronger bullish setup."
+                "**Bullish scoring (v13 — timeframe-weighted):** Weekly RSI 2.0/1.5, Daily 1.5/1.0, Hourly 0.75/0.5 (strong/mild); "
+                "SMA50 +1.5, SMA20 +1.0, SMA8 +0.75; VWAP Above +1.0, Approaching +0.5. Max ≈ 9.0. "
+                "RSI overbought filter: RSI(1D)>75 or RSI(1H)>75 excluded. "
+                "**Regime:** 🟢 Bull = Nifty RSI>50 + Nifty>SMA50 + VIX<15 (all 3); 🔴 Bear = ≥2 bearish; ⚪ Mixed."
             )
 
             # Bullish win rate — all days
             st.markdown(f"**📊 Bullish Win Rate (all days, past {lookback_days})**")
             df_bull_wr = _win_rate_table(df_primary, 'Bullish #1 Stock',
                                          'Bullish #1 Next 1D %', 'Bullish #1 Next 2D %',
-                                         'Bullish #1 Next 3D %', 'Bullish #1 Next 1W %', direction='bullish')
+                                         'Bullish #1 Next 3D %', 'Bullish #1 Next 1W %',
+                                         r2w_col='Bullish #1 Next 2W %', direction='bullish')
             st.dataframe(df_bull_wr, use_container_width=True, hide_index=True)
 
             # Bullish win rate — green days only
             st.markdown(f"**📊 Bullish Win Rate (green days only: Adv/Total>50% & 10DMA>50%, n={len(green_days)})**")
             df_bull_wr_green = _win_rate_table(green_days, 'Bullish #1 Stock',
                                                'Bullish #1 Next 1D %', 'Bullish #1 Next 2D %',
-                                               'Bullish #1 Next 3D %', 'Bullish #1 Next 1W %', direction='bullish')
+                                               'Bullish #1 Next 3D %', 'Bullish #1 Next 1W %',
+                                               r2w_col='Bullish #1 Next 2W %', direction='bullish')
             st.dataframe(df_bull_wr_green, use_container_width=True, hide_index=True)
-            st.caption("Win rate = % of days where pick return ≥ threshold. Green days = both Advance/Total %>50% and Stocks above 10 DMA>50%.")
+            st.caption("Win rate = % of days where pick return ≥ threshold. Green days = both Advance/Total %>50% and Stocks above 10 DMA>50%. 2W = 10 trading days.")
 
             st.markdown("---")
 
             # --- BEARISH TABLE ---
             st.markdown(f"#### 🔴 Bearish: Date-wise Summary (MA+RSI+VWAP) – last {lookback_days} trading days")
             bear_display_cols = [
-                'Date', 'Advance/Total %', 'Stocks % above 10 DMA',
-                'Bearish #1 Stock', 'Bearish #1 Score',
-                'Bearish #1 Next 1D %', 'Bearish #1 Next 2D %', 'Bearish #1 Next 3D %', 'Bearish #1 Next 1W %',
-                'Bearish #2 Stock', 'Bearish #2 Score',
-                'Bearish #2 Next 1D %', 'Bearish #2 Next 2D %', 'Bearish #2 Next 3D %', 'Bearish #2 Next 1W %',
+                'Date', 'Regime', 'Nifty RSI', 'Nifty vs SMA50', 'India VIX',
+                'Advance/Total %', 'Stocks % above 10 DMA',
+                'Bearish #1 Stock', 'Bearish #1 CMP', 'Bearish #1 Score',
+                'Bearish #1 Next 1D %', 'Bearish #1 Next 2D %', 'Bearish #1 Next 3D %',
+                'Bearish #1 Next 1W %', 'Bearish #1 Next 2W %',
+                'Bearish #2 Stock', 'Bearish #2 CMP', 'Bearish #2 Score',
+                'Bearish #2 Next 1D %', 'Bearish #2 Next 2D %', 'Bearish #2 Next 3D %',
+                'Bearish #2 Next 1W %', 'Bearish #2 Next 2W %',
             ]
-            bear_pct_cols = [c for c in bear_display_cols if '%' in c and c != 'Bearish #1 Score' and c != 'Bearish #2 Score']
+            bear_pct_cols = [c for c in bear_display_cols
+                             if '%' in c and 'Score' not in c and c not in ('Advance/Total %', 'Stocks % above 10 DMA')]
             df_bear_show = df_primary[[c for c in bear_display_cols if c in df_primary.columns]].copy()
             for c in bear_pct_cols:
                 if c in df_bear_show.columns:
@@ -3038,28 +3116,41 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
             st.dataframe(
                 df_bear_show.style.apply(_color_breadth_rows(breadth_cols), axis=1)
                 .format({**{c: '{:.1f}' for c in bear_pct_cols if c in df_bear_show.columns},
-                         **{c: '{:.1f}' for c in bear_score_cols if c in df_bear_show.columns}}, na_rep=''),
-                use_container_width=True, hide_index=True
+                         **{c: '{:.1f}' for c in bear_score_cols if c in df_bear_show.columns},
+                         **{c: '{:,.0f}' for c in ['Bearish #1 CMP', 'Bearish #2 CMP'] if c in df_bear_show.columns},
+                         **{c: '{:.1f}' for c in ['Nifty RSI'] if c in df_bear_show.columns}}, na_rep=''),
+                use_container_width=True, hide_index=True,
+                column_config={
+                    'Regime': st.column_config.TextColumn('Regime', help='🟢 Bull = all 3 signals bullish; 🔴 Bear = ≥2 bearish; ⚪ Mixed.'),
+                    'Nifty RSI': st.column_config.NumberColumn('Nifty RSI', format='%.1f'),
+                    'Nifty vs SMA50': st.column_config.TextColumn('Nifty/SMA50'),
+                    'India VIX': st.column_config.NumberColumn('India VIX', format='%.1f'),
+                    'Bearish #1 CMP': st.column_config.NumberColumn('Be1 CMP ₹', format='%.0f', help='Closing price of Bearish #1 pick on the reference date.'),
+                    'Bearish #2 CMP': st.column_config.NumberColumn('Be2 CMP ₹', format='%.0f', help='Closing price of Bearish #2 pick on the reference date.'),
+                }
             )
             st.caption(
                 "**Bearish scoring (MA+RSI+VWAP inverted):** If criterion NOT met → +1 pt (higher score = more bearish). "
-                "RSI oversold filter: RSI(1D)<30 excluded. Returns shown as actual price change % (negative = beneficial for short trade)."
+                "RSI oversold filter: RSI(1D)<30 excluded. F&O stocks only. "
+                "Returns shown as actual price change % (negative = beneficial for short trade). 2W = 10 trading days."
             )
 
             # Bearish win rate — all days
             st.markdown(f"**📊 Bearish Win Rate (all days, past {lookback_days})**")
             df_bear_wr = _win_rate_table(df_primary, 'Bearish #1 Stock',
                                          'Bearish #1 Next 1D %', 'Bearish #1 Next 2D %',
-                                         'Bearish #1 Next 3D %', 'Bearish #1 Next 1W %', direction='bearish')
+                                         'Bearish #1 Next 3D %', 'Bearish #1 Next 1W %',
+                                         r2w_col='Bearish #1 Next 2W %', direction='bearish')
             st.dataframe(df_bear_wr, use_container_width=True, hide_index=True)
 
             # Bearish win rate — red days only
             st.markdown(f"**📊 Bearish Win Rate (red days only: Adv/Total<50% & 10DMA<50%, n={len(red_days)})**")
             df_bear_wr_red = _win_rate_table(red_days, 'Bearish #1 Stock',
                                              'Bearish #1 Next 1D %', 'Bearish #1 Next 2D %',
-                                             'Bearish #1 Next 3D %', 'Bearish #1 Next 1W %', direction='bearish')
+                                             'Bearish #1 Next 3D %', 'Bearish #1 Next 1W %',
+                                             r2w_col='Bearish #1 Next 2W %', direction='bearish')
             st.dataframe(df_bear_wr_red, use_container_width=True, hide_index=True)
-            st.caption("Bearish win rate = % of days where stock fell by ≥ threshold (return ≤ -threshold%). Red days = both Advance/Total %<50% and Stocks above 10 DMA<50%.")
+            st.caption("Bearish win rate = % of days where stock fell by ≥ threshold (return ≤ -threshold%). Red days = both Advance/Total %<50% and Stocks above 10 DMA<50%. 2W = 10 trading days.")
 
             # --- COMPOSITE WIN RATE ---
             st.markdown("---")
@@ -3244,6 +3335,32 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                         continue
                     # ---- Row computation (mirrors main loop body) ----
                     _row = {'Date': _pl_ds}
+                    # Market regime (point-in-time)
+                    _bidx2 = benchmark_data.index.get_indexer([_pl_dt], method='ffill')[0]
+                    if _bidx2 >= 50:
+                        _nrsi2 = calculate_rsi(benchmark_data.iloc[:_bidx2 + 1])
+                        _nrsi_val2 = float(_nrsi2.iloc[-1]) if not _nrsi2.isna().all() else 50.0
+                        _nclose2 = float(benchmark_data['Close'].iloc[_bidx2])
+                        _nsma50_2 = benchmark_data['Close'].rolling(50).mean().iloc[_bidx2]
+                        _nifty_vs_sma2 = 'Above' if (not pd.isna(_nsma50_2) and _nclose2 > float(_nsma50_2)) else 'Below'
+                    else:
+                        _nrsi_val2 = 50.0; _nifty_vs_sma2 = 'N/A'
+                    _vix_val2 = None
+                    if _vix_hist_data is not None and len(_vix_hist_data) > 0:
+                        try:
+                            _vidx2 = _vix_hist_data.index.get_indexer([_pl_dt], method='ffill')[0]
+                            if 0 <= _vidx2 < len(_vix_hist_data):
+                                _vix_val2 = round(float(_vix_hist_data['Close'].iloc[_vidx2]), 1)
+                        except Exception:
+                            pass
+                    _rb2 = sum([_nrsi_val2 > 50, _nifty_vs_sma2 == 'Above',
+                                (_vix_val2 is not None and _vix_val2 < 15)])
+                    _rbe2 = sum([_nrsi_val2 <= 45, _nifty_vs_sma2 == 'Below',
+                                 (_vix_val2 is not None and _vix_val2 >= 15)])
+                    _row['Regime'] = '🟢 Bull' if _rb2 == 3 else ('🔴 Bear' if _rbe2 >= 2 else '⚪ Mixed')
+                    _row['Nifty RSI'] = round(_nrsi_val2, 1)
+                    _row['Nifty vs SMA50'] = _nifty_vs_sma2
+                    _row['India VIX'] = _vix_val2
                     # A/D ratio + 10 DMA breadth (Nifty 50)
                     _adv = 0; _dec = 0; _above10 = 0; _tot10 = 0
                     for _sym, _ser in nifty_closes.items():
@@ -3406,29 +3523,37 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                         _br2 = next_returns_from_list(_b2l)
                         _ber2 = next_returns_from_list(_be2l)
                         _row['Bullish #1 Stock'] = _br2[0][1] if len(_br2) >= 1 else ''
+                        _row['Bullish #1 CMP'] = _br2[0][7] if len(_br2) >= 1 else None
                         _row['Bullish #1 Score'] = round(_b2l[0][3], 1) if len(_b2l) >= 1 else None
                         _row['Bullish #1 Next 1D %'] = round(_br2[0][2], 1) if len(_br2) >= 1 and _br2[0][2] is not None else None
                         _row['Bullish #1 Next 2D %'] = round(_br2[0][3], 1) if len(_br2) >= 1 and _br2[0][3] is not None else None
                         _row['Bullish #1 Next 3D %'] = round(_br2[0][4], 1) if len(_br2) >= 1 and _br2[0][4] is not None else None
-                        _row['Bullish #1 Next 1W %'] = round(_br2[0][5], 1) if len(_br2) >= 1 and len(_br2[0]) > 5 and _br2[0][5] is not None else None
+                        _row['Bullish #1 Next 1W %'] = round(_br2[0][5], 1) if len(_br2) >= 1 and _br2[0][5] is not None else None
+                        _row['Bullish #1 Next 2W %'] = round(_br2[0][6], 1) if len(_br2) >= 1 and _br2[0][6] is not None else None
                         _row['Bullish #2 Stock'] = _br2[1][1] if len(_br2) >= 2 else ''
+                        _row['Bullish #2 CMP'] = _br2[1][7] if len(_br2) >= 2 else None
                         _row['Bullish #2 Score'] = round(_b2l[1][3], 1) if len(_b2l) >= 2 else None
                         _row['Bullish #2 Next 1D %'] = round(_br2[1][2], 1) if len(_br2) >= 2 and _br2[1][2] is not None else None
                         _row['Bullish #2 Next 2D %'] = round(_br2[1][3], 1) if len(_br2) >= 2 and _br2[1][3] is not None else None
                         _row['Bullish #2 Next 3D %'] = round(_br2[1][4], 1) if len(_br2) >= 2 and _br2[1][4] is not None else None
-                        _row['Bullish #2 Next 1W %'] = round(_br2[1][5], 1) if len(_br2) >= 2 and len(_br2[1]) > 5 and _br2[1][5] is not None else None
+                        _row['Bullish #2 Next 1W %'] = round(_br2[1][5], 1) if len(_br2) >= 2 and _br2[1][5] is not None else None
+                        _row['Bullish #2 Next 2W %'] = round(_br2[1][6], 1) if len(_br2) >= 2 and _br2[1][6] is not None else None
                         _row['Bearish #1 Stock'] = _ber2[0][1] if len(_ber2) >= 1 else ''
+                        _row['Bearish #1 CMP'] = _ber2[0][7] if len(_ber2) >= 1 else None
                         _row['Bearish #1 Score'] = round(_be2l[0][3], 1) if len(_be2l) >= 1 else None
                         _row['Bearish #1 Next 1D %'] = round(_ber2[0][2], 1) if len(_ber2) >= 1 and _ber2[0][2] is not None else None
                         _row['Bearish #1 Next 2D %'] = round(_ber2[0][3], 1) if len(_ber2) >= 1 and _ber2[0][3] is not None else None
                         _row['Bearish #1 Next 3D %'] = round(_ber2[0][4], 1) if len(_ber2) >= 1 and _ber2[0][4] is not None else None
-                        _row['Bearish #1 Next 1W %'] = round(_ber2[0][5], 1) if len(_ber2) >= 1 and len(_ber2[0]) > 5 and _ber2[0][5] is not None else None
+                        _row['Bearish #1 Next 1W %'] = round(_ber2[0][5], 1) if len(_ber2) >= 1 and _ber2[0][5] is not None else None
+                        _row['Bearish #1 Next 2W %'] = round(_ber2[0][6], 1) if len(_ber2) >= 1 and _ber2[0][6] is not None else None
                         _row['Bearish #2 Stock'] = _ber2[1][1] if len(_ber2) >= 2 else ''
+                        _row['Bearish #2 CMP'] = _ber2[1][7] if len(_ber2) >= 2 else None
                         _row['Bearish #2 Score'] = round(_be2l[1][3], 1) if len(_be2l) >= 2 else None
                         _row['Bearish #2 Next 1D %'] = round(_ber2[1][2], 1) if len(_ber2) >= 2 and _ber2[1][2] is not None else None
                         _row['Bearish #2 Next 2D %'] = round(_ber2[1][3], 1) if len(_ber2) >= 2 and _ber2[1][3] is not None else None
                         _row['Bearish #2 Next 3D %'] = round(_ber2[1][4], 1) if len(_ber2) >= 2 and _ber2[1][4] is not None else None
-                        _row['Bearish #2 Next 1W %'] = round(_ber2[1][5], 1) if len(_ber2) >= 2 and len(_ber2[1]) > 5 and _ber2[1][5] is not None else None
+                        _row['Bearish #2 Next 1W %'] = round(_ber2[1][5], 1) if len(_ber2) >= 2 and _ber2[1][5] is not None else None
+                        _row['Bearish #2 Next 2W %'] = round(_ber2[1][6], 1) if len(_ber2) >= 2 and _ber2[1][6] is not None else None
                         # Confluence scoring for pre-loaded rows
                         _conf_bull2_pl = []; _conf_bear2_pl = []; _conf_det_pl = {}
                         _conf_items_pl = _all_sl2 if enable_hist_confluence else []
@@ -3504,14 +3629,14 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                             for _k in _CONF_COLS_ALL:
                                 _row[_k] = None
                     else:
-                        for _k in (['Bullish #1 Stock', 'Bullish #1 Score',
-                                    'Bullish #1 Next 1D %', 'Bullish #1 Next 2D %', 'Bullish #1 Next 3D %', 'Bullish #1 Next 1W %',
-                                    'Bullish #2 Stock', 'Bullish #2 Score',
-                                    'Bullish #2 Next 1D %', 'Bullish #2 Next 2D %', 'Bullish #2 Next 3D %', 'Bullish #2 Next 1W %',
-                                    'Bearish #1 Stock', 'Bearish #1 Score',
-                                    'Bearish #1 Next 1D %', 'Bearish #1 Next 2D %', 'Bearish #1 Next 3D %', 'Bearish #1 Next 1W %',
-                                    'Bearish #2 Stock', 'Bearish #2 Score',
-                                    'Bearish #2 Next 1D %', 'Bearish #2 Next 2D %', 'Bearish #2 Next 3D %', 'Bearish #2 Next 1W %'] + _CONF_COLS_ALL):
+                        for _k in (['Bullish #1 Stock', 'Bullish #1 CMP', 'Bullish #1 Score',
+                                    'Bullish #1 Next 1D %', 'Bullish #1 Next 2D %', 'Bullish #1 Next 3D %', 'Bullish #1 Next 1W %', 'Bullish #1 Next 2W %',
+                                    'Bullish #2 Stock', 'Bullish #2 CMP', 'Bullish #2 Score',
+                                    'Bullish #2 Next 1D %', 'Bullish #2 Next 2D %', 'Bullish #2 Next 3D %', 'Bullish #2 Next 1W %', 'Bullish #2 Next 2W %',
+                                    'Bearish #1 Stock', 'Bearish #1 CMP', 'Bearish #1 Score',
+                                    'Bearish #1 Next 1D %', 'Bearish #1 Next 2D %', 'Bearish #1 Next 3D %', 'Bearish #1 Next 1W %', 'Bearish #1 Next 2W %',
+                                    'Bearish #2 Stock', 'Bearish #2 CMP', 'Bearish #2 Score',
+                                    'Bearish #2 Next 1D %', 'Bearish #2 Next 2D %', 'Bearish #2 Next 3D %', 'Bearish #2 Next 1W %', 'Bearish #2 Next 2W %'] + _CONF_COLS_ALL):
                             _row[_k] = None
                     # ---- End pre-load row computation ----
                     cache_by_date[_pl_ds] = _row.copy()
