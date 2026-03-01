@@ -2441,13 +2441,17 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         index=0,
         key="hist_rankings_days_radio",
         horizontal=True,
-        help="Start with 10 days for quicker load; select 30 days to see full history (may take longer)."
+        help="Start with 10 days for quicker load. The app then pre-warms the 30-day cache silently below the table — switching to 30 days is near-instant on subsequent runs."
     )
     lookback_days = hist_days_choice
 
     # --- Primary content: date-wise table ---
     st.markdown(f"#### 📋 Primary: Date-wise summary (MA+RSI+VWAP) – last {lookback_days} trading days")
-    st.caption(f"Scoring: MA+RSI+VWAP (1 pt each RSI 1W/1D/1H up, 1 pt each Price > 8/20/50 SMA, + VWAP). Last {lookback_days} days; Next 1D/2D/3D/1W % may be blank for latest rows.")
+    st.caption(
+        f"Scoring (v13 — timeframe-weighted): Weekly RSI 2.0/1.5, Daily RSI 1.5/1.0, Hourly RSI 0.75/0.5 (strong/mild); "
+        f"SMA50 +1.5, SMA20 +1.0, SMA8 +0.75; VWAP Above +1.0, Approaching +0.5. Max ≈ 9.0 pts. "
+        f"Last {lookback_days} days; Next 1D/2D/3D/1W % may be blank for the most recent rows."
+    )
     NIFTY50_SYMBOLS = [
         'RELIANCE.NS', 'TCS.NS', 'HDFCBANK.NS', 'INFY.NS', 'ICICIBANK.NS',
         'SBIN.NS', 'BHARTIARTL.NS', 'HINDUNILVR.NS', 'ITC.NS', 'KOTAKBANK.NS',
@@ -2474,7 +2478,8 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
         # Load historical rankings cache (CSV) so we only compute missing dates
         cache_dir = 'data_cache'
         os.makedirs(cache_dir, exist_ok=True)
-        cache_path = os.path.join(cache_dir, f'historical_rankings_cache_v12_{hist_conf_tf_code}_{hist_conf_sector_code}.csv')
+        # v13: cache invalidated to force recomputation with MJ2 timeframe-weighted scoring
+        cache_path = os.path.join(cache_dir, f'historical_rankings_cache_v13_{hist_conf_tf_code}_{hist_conf_sector_code}.csv')
         cache_by_date = {}
         if os.path.isfile(cache_path):
             try:
@@ -2522,6 +2527,19 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                 'Conf Bear #2', 'Conf Bear #2 Sector', 'Conf Bear #2 CMP', 'Conf Bear #2 Dir', 'Conf Bear #2 Score',
                 'Conf Bear #2 1D %', 'Conf Bear #2 2D %', 'Conf Bear #2 3D %', 'Conf Bear #2 1W %',
             ]
+
+            # Helper: compute next-day returns for a scored list (defined once, reused in pre-load)
+            def next_returns_from_list(rec_list):
+                out = []
+                for (sym, sector, name, _s, d, idx) in rec_list:
+                    display_name = name + " ⓕ" if company_data.get(sym, {}).get('is_fo', False) else name
+                    c0 = d['Close'].iloc[idx]
+                    r1 = (d['Close'].iloc[idx + 1] / c0 - 1) * 100 if idx + 1 < len(d) else None
+                    r2 = (d['Close'].iloc[idx + 2] / c0 - 1) * 100 if idx + 2 < len(d) else None
+                    r3 = (d['Close'].iloc[idx + 3] / c0 - 1) * 100 if idx + 3 < len(d) else None
+                    r1w = (d['Close'].iloc[idx + 5] / c0 - 1) * 100 if idx + 5 < len(d) else None
+                    out.append((sector, display_name, r1, r2, r3, r1w))
+                return out
 
             total_dates = len(dates_10)
             for di, date_t in enumerate(dates_10):
@@ -2718,8 +2736,8 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                                     rsi1h = sd.get('rsi_1h_val')
                                     if mrvg_options["bearish"].get("ma8") and sd.get('price_gt_ma8_1h') == 'Yes':
                                         bear_gate_ok = False
-                                    # Bearish VWAP gate: pass only "Below" or "Approaching ↓" (not Approaching ↑)
-                                    if mrvg_options["bearish"].get("vwap") and sd.get('vwap_relation') not in ('Below', 'Approaching ↓'):
+                                    # Bearish VWAP gate: pass only "Below" or "Approaching" (unified label)
+                                    if mrvg_options["bearish"].get("vwap") and sd.get('vwap_relation') not in ('Below', 'Approaching'):
                                         bear_gate_ok = False
                                     if mrvg_options["bearish"].get("use_rsi") and rsi1h is not None and rsi1h > mrvg_options["bearish"].get("rsi_max", 50):
                                         bear_gate_ok = False
@@ -2735,19 +2753,6 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                                 bear_screener_list.append((sym, rec['sector'], rec['name'], bear_score, d, idx))
                     except Exception:
                         continue
-
-                def next_returns_from_list(rec_list):
-                    out = []
-                    for (sym, sector, name, _s, d, idx) in rec_list:
-                        # ⓕ badge: suffix name for F&O stocks
-                        display_name = name + " ⓕ" if company_data.get(sym, {}).get('is_fo', False) else name
-                        c0 = d['Close'].iloc[idx]
-                        r1 = (d['Close'].iloc[idx + 1] / c0 - 1) * 100 if idx + 1 < len(d) else None
-                        r2 = (d['Close'].iloc[idx + 2] / c0 - 1) * 100 if idx + 2 < len(d) else None
-                        r3 = (d['Close'].iloc[idx + 3] / c0 - 1) * 100 if idx + 3 < len(d) else None
-                        r1w = (d['Close'].iloc[idx + 5] / c0 - 1) * 100 if idx + 5 < len(d) else None  # ~1 week (5 trading days)
-                        out.append((sector, display_name, r1, r2, r3, r1w))
-                    return out
 
                 # Sort separately: bull by bull_score desc, bear by bear_score desc
                 bull_screener_list.sort(key=lambda x: x[3], reverse=True)
@@ -3216,7 +3221,312 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                     )
         else:
             st.info(f"No rows computed for the {lookback_days}-day table.")
-    
+
+        # ===== 30-day intelligent pre-load =====
+        # When viewing 10 days: silently compute+cache the older 20 days below the table.
+        # Next time user switches to "30 days" the cached rows load near-instantly.
+        if hist_days_choice == 10 and len(benchmark_data) >= 31:
+            _extra_dates_all = benchmark_data.index[-30:].tolist()
+            _dates_to_preload = _extra_dates_all[:20]  # oldest 20 of last 30 (days 11-30)
+            _uncached_preload = [_d for _d in _dates_to_preload
+                                 if _d.strftime('%Y-%m-%d') not in cache_by_date]
+            _pl_msg = st.empty()
+            if _uncached_preload:
+                _pl_msg.caption(
+                    f"⚙️ Pre-warming 30-day cache: {len(_uncached_preload)} date(s) remaining — "
+                    "selecting '30 days' will be near-instant after this completes…"
+                )
+                _pl_pb = st.progress(0)
+                for _pi, _pl_dt in enumerate(_uncached_preload):
+                    _pl_pb.progress((_pi + 1) / len(_uncached_preload))
+                    _pl_ds = _pl_dt.strftime('%Y-%m-%d')
+                    if _pl_ds in cache_by_date:
+                        continue
+                    # ---- Row computation (mirrors main loop body) ----
+                    _row = {'Date': _pl_ds}
+                    # A/D ratio + 10 DMA breadth (Nifty 50)
+                    _adv = 0; _dec = 0; _above10 = 0; _tot10 = 0
+                    for _sym, _ser in nifty_closes.items():
+                        try:
+                            _ix = _ser.index.get_indexer([_pl_dt], method='ffill')[0]
+                            if _ix < 0 or _ix >= len(_ser) or _ix == 0:
+                                continue
+                            _ct = _ser.iloc[_ix]; _cp = _ser.iloc[_ix - 1]
+                            if _ct > _cp: _adv += 1
+                            elif _ct < _cp: _dec += 1
+                            _s10 = _ser.rolling(10).mean()
+                            if _ix >= 9:
+                                _d10v = _s10.iloc[_ix]
+                                if not pd.isna(_d10v):
+                                    _tot10 += 1
+                                    if _ct > _d10v: _above10 += 1
+                        except Exception:
+                            continue
+                    _tot_ad = _adv + _dec
+                    _row['Advance/Total %'] = round((_adv / _tot_ad * 100), 1) if _tot_ad else None
+                    _row['Stocks % above 10 DMA'] = round((_above10 / _tot10 * 100), 1) if _tot10 else None
+                    # Sector momentum ranking (point-in-time)
+                    _sec_sc = []
+                    _use_gw = (gates_sector_interval == "Weekly" and sector_data_for_gates is not None)
+                    _dfr = sector_data_for_gates if _use_gw else sector_data_dict
+                    _bfr = sector_data_for_gates.get('Nifty 50') if _use_gw else benchmark_data
+                    if _bfr is None:
+                        _bfr = benchmark_data
+                    for _sn, _sd in _dfr.items():
+                        if _sn == 'Nifty 50' or len(_sd) < 14:
+                            continue
+                        try:
+                            _six = _sd.index.get_indexer([_pl_dt], method='ffill')[0]
+                            if _six < 0 or _six < 13:
+                                continue
+                            _sub = _sd.iloc[:_six + 1]
+                            _bsub = _bfr.iloc[:_six + 1] if hasattr(_bfr, 'iloc') and len(_bfr) > 0 else None
+                            if _bsub is None or len(_bsub) < 14:
+                                continue
+                            _rsi2 = calculate_rsi(_sub)
+                            _adx2, _, _, _di2 = calculate_adx(_sub)
+                            _az2 = calculate_z_score(_adx2.dropna())
+                            _cmf2 = calculate_cmf(_sub)
+                            _sr2 = _sub['Close'].pct_change().dropna()
+                            _br2 = _bsub['Close'].pct_change().dropna()
+                            _cm2 = _sr2.index.intersection(_br2.index)
+                            _rsr = 5.0
+                            if len(_cm2) > 1:
+                                _cre = (1 + _sr2.loc[_cm2]).prod() - 1
+                                _cbe = (1 + _br2.loc[_cm2]).prod() - 1
+                                if not pd.isna(_cre) and not pd.isna(_cbe):
+                                    _rsr = max(0, min(10, 5 + (_cre - _cbe) * 25))
+                            _sec_sc.append({
+                                'sector': _sn,
+                                'rsi': _rsi2.iloc[-1] if not _rsi2.isna().all() else 50,
+                                'adx_z': _az2 if not pd.isna(_az2) else 0,
+                                'rs_rating': _rsr,
+                                'di_spread': _di2.iloc[-1] if not _di2.isna().all() else 0,
+                                'cmf': _cmf2.iloc[-1] if not _cmf2.isna().all() else 0,
+                            })
+                        except Exception:
+                            continue
+                    _top4_pl = []; _bot6_pl = []
+                    if _sec_sc:
+                        _dfs2 = pd.DataFrame(_sec_sc)
+                        _utr = _is_trending_mode(momentum_weights)
+                        if _utr and 'rsi' in _dfs2.columns and 'cmf' in _dfs2.columns and len(_dfs2) > 1:
+                            _rm = _dfs2['rsi'].mean(); _rs_std = _dfs2['rsi'].std()
+                            _cm_m = _dfs2['cmf'].mean(); _cs_std = _dfs2['cmf'].std()
+                            _rz = (_dfs2['rsi'] - _rm) / _rs_std if _rs_std and not pd.isna(_rs_std) else pd.Series(0.0, index=_dfs2.index)
+                            _cz = (_dfs2['cmf'] - _cm_m) / _cs_std if _cs_std and not pd.isna(_cs_std) else pd.Series(0.0, index=_dfs2.index)
+                            _dfs2['Score'] = 0.5 * _rz.fillna(0.0) + 0.5 * _cz.fillna(0.0)
+                            _dfs2 = _dfs2.sort_values('Score', ascending=False)
+                        else:
+                            for _c in ['ADX_Z', 'RS_Rating', 'RSI', 'DI_Spread']:
+                                _dfs2[_c + '_Rank'] = _dfs2[_c.lower() if _c != 'DI_Spread' else 'di_spread'].rank(ascending=False, method='average')
+                            _tw2 = sum(momentum_weights.values()) or 1
+                            _dfs2['Score'] = (
+                                _dfs2['ADX_Z_Rank'] * momentum_weights.get('ADX_Z', 20) / _tw2 +
+                                _dfs2['RS_Rating_Rank'] * momentum_weights.get('RS_Rating', 40) / _tw2 +
+                                _dfs2['RSI_Rank'] * momentum_weights.get('RSI', 30) / _tw2 +
+                                _dfs2['DI_Spread_Rank'] * momentum_weights.get('DI_Spread', 10) / _tw2
+                            )
+                            _dfs2 = _dfs2.sort_values('Score', ascending=True)
+                        _t2 = _dfs2.head(2)['sector'].tolist()
+                        _row['Momentum #1 Sector'] = _t2[0] if len(_t2) >= 1 else ''
+                        _row['Momentum #2 Sector'] = _t2[1] if len(_t2) >= 2 else ''
+                        _top4_pl = _dfs2.head(n_bull_sectors)['sector'].tolist() if _bull_gate_on else []
+                        _bot6_pl = _dfs2.tail(n_bear_sectors)['sector'].tolist() if _bear_gate_on else []
+                    else:
+                        _row['Momentum #1 Sector'] = ''
+                        _row['Momentum #2 Sector'] = ''
+                    # Company screening (fetch 1H per-date, same as main loop)
+                    _comp_h2, _ = fetch_all_sectors_parallel(company_symbols_dict, end_date=_pl_dt, interval='1h')
+                    _snap_h2 = st.session_state.get("_screener_snap_h", 14)
+                    _snap_m2 = st.session_state.get("_screener_snap_m", 15)
+                    if _comp_h2:
+                        _comp_h2 = {
+                            _s: _slice_hourly_to_snapshot(_h, _snap_h2, _snap_m2)[0]
+                            for _s, _h in _comp_h2.items() if _h is not None
+                        }
+                    _bull_sl2 = []; _bear_sl2 = []; _all_sl2 = []
+                    for _sym2, _rec2 in company_data.items():
+                        try:
+                            _d2 = _rec2['data']
+                            _idx2 = _d2.index.get_indexer([_pl_dt], method='ffill')[0]
+                            if _idx2 < 59:
+                                continue
+                            _sub2 = _d2.iloc[:_idx2 + 1]
+                            _hor2 = _comp_h2.get(_sym2) if _comp_h2 else None
+                            _bs2, _be2, _sd2 = _compute_screener_score(
+                                _sub2, _hor2,
+                                w_vwap_above=w_vwap_above,
+                                w_vwap_approach=w_vwap_approach,
+                                vwap_band_pct=vwap_band_pct,
+                            )
+                            if _bs2 is not None:
+                                _all_sl2.append((_sym2, _rec2['sector'], _rec2['name'], _bs2, _d2, _idx2))
+                                _r1dv2 = (_sd2 or {}).get('rsi_1d_val')
+                                _r1hv2 = (_sd2 or {}).get('rsi_1h_val')
+                                _bo2 = (mrvg_options or {}).get("bullish", {})
+                                _brsi_ok2 = not (
+                                    (_bo2.get("excl_rsi_1d_overbought", True) and _r1dv2 is not None and _r1dv2 > 75) or
+                                    (_bo2.get("excl_rsi_1h_overbought", True) and _r1hv2 is not None and _r1hv2 > 75)
+                                )
+                                _barsi_ok2 = not (_r1dv2 is not None and _r1dv2 < 30)
+                                _bg_ok2 = True; _brg_ok2 = True
+                                if mrvg_options:
+                                    _sdd2 = _sd2 or {}
+                                    if mrvg_options.get("bullish", {}).get("enabled"):
+                                        _r1hv2b = _sdd2.get('rsi_1h_val')
+                                        if mrvg_options["bullish"].get("ma8") and _sdd2.get('price_gt_ma8_1h') == 'No':
+                                            _bg_ok2 = False
+                                        if mrvg_options["bullish"].get("vwap") and _sdd2.get('vwap_relation') != 'Above':
+                                            _bg_ok2 = False
+                                        if mrvg_options["bullish"].get("use_rsi") and _r1hv2b is not None and _r1hv2b < mrvg_options["bullish"].get("rsi_min", 50):
+                                            _bg_ok2 = False
+                                    if mrvg_options.get("bearish", {}).get("enabled"):
+                                        _r1hv2b = _sdd2.get('rsi_1h_val')
+                                        if mrvg_options["bearish"].get("ma8") and _sdd2.get('price_gt_ma8_1h') == 'Yes':
+                                            _brg_ok2 = False
+                                        if mrvg_options["bearish"].get("vwap") and _sdd2.get('vwap_relation') not in ('Below', 'Approaching'):
+                                            _brg_ok2 = False
+                                        if mrvg_options["bearish"].get("use_rsi") and _r1hv2b is not None and _r1hv2b > mrvg_options["bearish"].get("rsi_max", 50):
+                                            _brg_ok2 = False
+                                _ts2 = _rec2['sector']
+                                _bso2 = (_ts2 in _top4_pl) if (_bull_gate_on and _top4_pl) else True
+                                _brso2 = (_ts2 in _bot6_pl) if (_bear_gate_on and _bot6_pl) else True
+                                if _brsi_ok2 and _bg_ok2 and _bso2:
+                                    _bull_sl2.append((_sym2, _rec2['sector'], _rec2['name'], _bs2, _d2, _idx2))
+                                if _barsi_ok2 and _brg_ok2 and _brso2 and _rec2.get('is_fo', False):
+                                    _bear_sl2.append((_sym2, _rec2['sector'], _rec2['name'], _be2, _d2, _idx2))
+                        except Exception:
+                            continue
+                    _bull_sl2.sort(key=lambda x: x[3], reverse=True)
+                    _bear_sl2.sort(key=lambda x: x[3], reverse=True)
+                    _all_sl2.sort(key=lambda x: x[3], reverse=True)
+                    _b2l = _bull_sl2[:2]; _be2l = _bear_sl2[:2]
+                    if _b2l or _be2l:
+                        _br2 = next_returns_from_list(_b2l)
+                        _ber2 = next_returns_from_list(_be2l)
+                        _row['Bullish #1 Stock'] = _br2[0][1] if len(_br2) >= 1 else ''
+                        _row['Bullish #1 Score'] = round(_b2l[0][3], 1) if len(_b2l) >= 1 else None
+                        _row['Bullish #1 Next 1D %'] = round(_br2[0][2], 1) if len(_br2) >= 1 and _br2[0][2] is not None else None
+                        _row['Bullish #1 Next 2D %'] = round(_br2[0][3], 1) if len(_br2) >= 1 and _br2[0][3] is not None else None
+                        _row['Bullish #1 Next 3D %'] = round(_br2[0][4], 1) if len(_br2) >= 1 and _br2[0][4] is not None else None
+                        _row['Bullish #1 Next 1W %'] = round(_br2[0][5], 1) if len(_br2) >= 1 and len(_br2[0]) > 5 and _br2[0][5] is not None else None
+                        _row['Bullish #2 Stock'] = _br2[1][1] if len(_br2) >= 2 else ''
+                        _row['Bullish #2 Score'] = round(_b2l[1][3], 1) if len(_b2l) >= 2 else None
+                        _row['Bullish #2 Next 1D %'] = round(_br2[1][2], 1) if len(_br2) >= 2 and _br2[1][2] is not None else None
+                        _row['Bullish #2 Next 2D %'] = round(_br2[1][3], 1) if len(_br2) >= 2 and _br2[1][3] is not None else None
+                        _row['Bullish #2 Next 3D %'] = round(_br2[1][4], 1) if len(_br2) >= 2 and _br2[1][4] is not None else None
+                        _row['Bullish #2 Next 1W %'] = round(_br2[1][5], 1) if len(_br2) >= 2 and len(_br2[1]) > 5 and _br2[1][5] is not None else None
+                        _row['Bearish #1 Stock'] = _ber2[0][1] if len(_ber2) >= 1 else ''
+                        _row['Bearish #1 Score'] = round(_be2l[0][3], 1) if len(_be2l) >= 1 else None
+                        _row['Bearish #1 Next 1D %'] = round(_ber2[0][2], 1) if len(_ber2) >= 1 and _ber2[0][2] is not None else None
+                        _row['Bearish #1 Next 2D %'] = round(_ber2[0][3], 1) if len(_ber2) >= 1 and _ber2[0][3] is not None else None
+                        _row['Bearish #1 Next 3D %'] = round(_ber2[0][4], 1) if len(_ber2) >= 1 and _ber2[0][4] is not None else None
+                        _row['Bearish #1 Next 1W %'] = round(_ber2[0][5], 1) if len(_ber2) >= 1 and len(_ber2[0]) > 5 and _ber2[0][5] is not None else None
+                        _row['Bearish #2 Stock'] = _ber2[1][1] if len(_ber2) >= 2 else ''
+                        _row['Bearish #2 Score'] = round(_be2l[1][3], 1) if len(_be2l) >= 2 else None
+                        _row['Bearish #2 Next 1D %'] = round(_ber2[1][2], 1) if len(_ber2) >= 2 and _ber2[1][2] is not None else None
+                        _row['Bearish #2 Next 2D %'] = round(_ber2[1][3], 1) if len(_ber2) >= 2 and _ber2[1][3] is not None else None
+                        _row['Bearish #2 Next 3D %'] = round(_ber2[1][4], 1) if len(_ber2) >= 2 and _ber2[1][4] is not None else None
+                        _row['Bearish #2 Next 1W %'] = round(_ber2[1][5], 1) if len(_ber2) >= 2 and len(_ber2[1]) > 5 and _ber2[1][5] is not None else None
+                        # Confluence scoring for pre-loaded rows
+                        _conf_bull2_pl = []; _conf_bear2_pl = []; _conf_det_pl = {}
+                        _conf_items_pl = _all_sl2 if enable_hist_confluence else []
+                        for (_s2pl, _sec2pl, _nm2pl, _sc2pl, _d2pl, _idx2pl) in _conf_items_pl:
+                            _bso_pl = (_sec2pl in _top4_pl) if (_bull_gate_on and _top4_pl) else True
+                            _brso_pl = (_sec2pl in _bot6_pl) if (_bear_gate_on and _bot6_pl) else True
+                            if not _bso_pl and not _brso_pl:
+                                continue
+                            if hist_conf_tf_code == '1d':
+                                _cde_pl = _d2pl.iloc[:_idx2pl + 1] if _idx2pl + 1 <= len(_d2pl) else _d2pl
+                                _cd1d_pl = _cde_pl; _ctf_pl = hist_conf_tf_code
+                            else:
+                                _min_b = 80 if hist_conf_tf_code == '4h' else 40
+                                _cde_pl = _comp_h2.get(_s2pl) if _comp_h2 else None
+                                _cd1d_pl = _d2pl.iloc[:_idx2pl + 1] if _idx2pl + 1 <= len(_d2pl) else _d2pl
+                                if _cde_pl is None or len(_cde_pl) < _min_b:
+                                    continue
+                                _ctf_pl = hist_conf_tf_code
+                            _bsc_pl, _ssc_pl, _cdt_pl = _compute_confluence_score(
+                                _cde_pl, data_1d=_cd1d_pl, timeframe=_ctf_pl, gate_options=confluence_gate_options
+                            )
+                            if _bsc_pl is not None:
+                                if _bso_pl and _bsc_pl > _GATE_FAIL_SCORE:
+                                    _conf_bull2_pl.append((_s2pl, _sec2pl, _nm2pl, _bsc_pl, _d2pl, _idx2pl))
+                                if _brso_pl and _ssc_pl is not None and _ssc_pl > _GATE_FAIL_SCORE:
+                                    _conf_bear2_pl.append((_s2pl, _sec2pl, _nm2pl, _ssc_pl, _d2pl, _idx2pl))
+                                if _cdt_pl:
+                                    _conf_det_pl[_s2pl] = _cdt_pl
+                        if _conf_bull2_pl:
+                            _conf_bull2_pl.sort(key=lambda x: x[3], reverse=True)
+                            _cb2_pl = _conf_bull2_pl[:2]
+                            _cbr_pl = next_returns_from_list(_cb2_pl)
+                            _conf_bear2_pl.sort(key=lambda x: x[3], reverse=True)
+                            _cbear2_pl = _conf_bear2_pl[:2]
+                            _crr_pl = next_returns_from_list(_cbear2_pl)
+                            _row['Conf Bull #1'] = _cbr_pl[0][1] if len(_cbr_pl) >= 1 else ''
+                            _row['Conf Bull #1 Sector'] = _cbr_pl[0][0] if len(_cbr_pl) >= 1 else ''
+                            _row['Conf Bull #1 CMP'] = round(float(_cb2_pl[0][4]['Close'].iloc[_cb2_pl[0][5]]), 0) if len(_cb2_pl) >= 1 else None
+                            _row['Conf Bull #1 Dir'] = _conf_det_pl.get(_cb2_pl[0][0], {}).get('Direction', '') if len(_cb2_pl) >= 1 else ''
+                            _row['Conf Bull #1 Score'] = int(round(_cb2_pl[0][3])) if len(_cb2_pl) >= 1 else None
+                            _row['Conf Bull #1 1D %'] = round(_cbr_pl[0][2], 1) if len(_cbr_pl) >= 1 and _cbr_pl[0][2] is not None else None
+                            _row['Conf Bull #1 2D %'] = round(_cbr_pl[0][3], 1) if len(_cbr_pl) >= 1 and _cbr_pl[0][3] is not None else None
+                            _row['Conf Bull #1 3D %'] = round(_cbr_pl[0][4], 1) if len(_cbr_pl) >= 1 and _cbr_pl[0][4] is not None else None
+                            _row['Conf Bull #1 1W %'] = round(_cbr_pl[0][5], 1) if len(_cbr_pl) >= 1 and len(_cbr_pl[0]) > 5 and _cbr_pl[0][5] is not None else None
+                            _row['Conf Bull #2'] = _cbr_pl[1][1] if len(_cbr_pl) >= 2 else ''
+                            _row['Conf Bull #2 Sector'] = _cbr_pl[1][0] if len(_cbr_pl) >= 2 else ''
+                            _row['Conf Bull #2 CMP'] = round(float(_cb2_pl[1][4]['Close'].iloc[_cb2_pl[1][5]]), 0) if len(_cb2_pl) >= 2 else None
+                            _row['Conf Bull #2 Dir'] = _conf_det_pl.get(_cb2_pl[1][0], {}).get('Direction', '') if len(_cb2_pl) >= 2 else ''
+                            _row['Conf Bull #2 Score'] = int(round(_cb2_pl[1][3])) if len(_cb2_pl) >= 2 else None
+                            _row['Conf Bull #2 1D %'] = round(_cbr_pl[1][2], 1) if len(_cbr_pl) >= 2 and _cbr_pl[1][2] is not None else None
+                            _row['Conf Bull #2 2D %'] = round(_cbr_pl[1][3], 1) if len(_cbr_pl) >= 2 and _cbr_pl[1][3] is not None else None
+                            _row['Conf Bull #2 3D %'] = round(_cbr_pl[1][4], 1) if len(_cbr_pl) >= 2 and _cbr_pl[1][4] is not None else None
+                            _row['Conf Bull #2 1W %'] = round(_cbr_pl[1][5], 1) if len(_cbr_pl) >= 2 and len(_cbr_pl[1]) > 5 and _cbr_pl[1][5] is not None else None
+                            _row['Conf Bear #1'] = _crr_pl[0][1] if len(_crr_pl) >= 1 else ''
+                            _row['Conf Bear #1 Sector'] = _crr_pl[0][0] if len(_crr_pl) >= 1 else ''
+                            _row['Conf Bear #1 CMP'] = round(float(_cbear2_pl[0][4]['Close'].iloc[_cbear2_pl[0][5]]), 0) if len(_cbear2_pl) >= 1 else None
+                            _row['Conf Bear #1 Dir'] = _conf_det_pl.get(_cbear2_pl[0][0], {}).get('Direction', '') if len(_cbear2_pl) >= 1 else ''
+                            _row['Conf Bear #1 Score'] = int(round(_cbear2_pl[0][3])) if len(_cbear2_pl) >= 1 else None
+                            _row['Conf Bear #1 1D %'] = round(_crr_pl[0][2], 1) if len(_crr_pl) >= 1 and _crr_pl[0][2] is not None else None
+                            _row['Conf Bear #1 2D %'] = round(_crr_pl[0][3], 1) if len(_crr_pl) >= 1 and _crr_pl[0][3] is not None else None
+                            _row['Conf Bear #1 3D %'] = round(_crr_pl[0][4], 1) if len(_crr_pl) >= 1 and _crr_pl[0][4] is not None else None
+                            _row['Conf Bear #1 1W %'] = round(_crr_pl[0][5], 1) if len(_crr_pl) >= 1 and len(_crr_pl[0]) > 5 and _crr_pl[0][5] is not None else None
+                            _row['Conf Bear #2'] = _crr_pl[1][1] if len(_crr_pl) >= 2 else ''
+                            _row['Conf Bear #2 Sector'] = _crr_pl[1][0] if len(_crr_pl) >= 2 else ''
+                            _row['Conf Bear #2 CMP'] = round(float(_cbear2_pl[1][4]['Close'].iloc[_cbear2_pl[1][5]]), 0) if len(_cbear2_pl) >= 2 else None
+                            _row['Conf Bear #2 Dir'] = _conf_det_pl.get(_cbear2_pl[1][0], {}).get('Direction', '') if len(_cbear2_pl) >= 2 else ''
+                            _row['Conf Bear #2 Score'] = int(round(_cbear2_pl[1][3])) if len(_cbear2_pl) >= 2 else None
+                            _row['Conf Bear #2 1D %'] = round(_crr_pl[1][2], 1) if len(_crr_pl) >= 2 and _crr_pl[1][2] is not None else None
+                            _row['Conf Bear #2 2D %'] = round(_crr_pl[1][3], 1) if len(_crr_pl) >= 2 and _crr_pl[1][3] is not None else None
+                            _row['Conf Bear #2 3D %'] = round(_crr_pl[1][4], 1) if len(_crr_pl) >= 2 and _crr_pl[1][4] is not None else None
+                            _row['Conf Bear #2 1W %'] = round(_crr_pl[1][5], 1) if len(_crr_pl) >= 2 and len(_crr_pl[1]) > 5 and _crr_pl[1][5] is not None else None
+                        else:
+                            for _k in _CONF_COLS_ALL:
+                                _row[_k] = None
+                    else:
+                        for _k in (['Bullish #1 Stock', 'Bullish #1 Score',
+                                    'Bullish #1 Next 1D %', 'Bullish #1 Next 2D %', 'Bullish #1 Next 3D %', 'Bullish #1 Next 1W %',
+                                    'Bullish #2 Stock', 'Bullish #2 Score',
+                                    'Bullish #2 Next 1D %', 'Bullish #2 Next 2D %', 'Bullish #2 Next 3D %', 'Bullish #2 Next 1W %',
+                                    'Bearish #1 Stock', 'Bearish #1 Score',
+                                    'Bearish #1 Next 1D %', 'Bearish #1 Next 2D %', 'Bearish #1 Next 3D %', 'Bearish #1 Next 1W %',
+                                    'Bearish #2 Stock', 'Bearish #2 Score',
+                                    'Bearish #2 Next 1D %', 'Bearish #2 Next 2D %', 'Bearish #2 Next 3D %', 'Bearish #2 Next 1W %'] + _CONF_COLS_ALL):
+                            _row[_k] = None
+                    # ---- End pre-load row computation ----
+                    cache_by_date[_pl_ds] = _row.copy()
+
+                _pl_pb.empty()
+                # Persist updated cache (includes newly pre-loaded rows)
+                try:
+                    _df_save2 = pd.DataFrame(sorted(cache_by_date.values(), key=lambda r: r['Date'], reverse=True))
+                    _df_save2.to_csv(cache_path, index=False)
+                except Exception:
+                    pass
+                _pl_msg.success("✅ 30-day view pre-warmed — select '30 days' above for near-instant results")
+            else:
+                _pl_msg.success("✅ 30-day view ready — select '30 days' above for instant results")
+
     st.markdown("---")
     st.markdown("#### 📈 Secondary: Sector evolution (Momentum & Reversal)")
     
@@ -5417,9 +5727,9 @@ VWAP band width is set in the sidebar under *Stock Scoring Settings*.
         if _mrvg["bearish"].get("ma8"):
             bear_candidates_filtered = bear_candidates_filtered[bear_candidates_filtered["Price > 8 SMA (1H)"] == "No"]
         if _mrvg["bearish"].get("vwap"):
-            # Bearish VWAP gate: accept "Below" or "Approaching ↓" (price just above VWAP coming down)
+            # Bearish VWAP gate: accept "Below" or "Approaching" (unified label, no directional arrow)
             bear_candidates_filtered = bear_candidates_filtered[
-                bear_candidates_filtered["Price vs VWAP (1H)"].isin(["Below", "Approaching ↓"])
+                bear_candidates_filtered["Price vs VWAP (1H)"].isin(["Below", "Approaching"])
             ]
         if _mrvg["bearish"].get("use_rsi"):   # only apply RSI threshold when explicitly enabled
             bear_candidates_filtered = bear_candidates_filtered[bear_candidates_filtered["RSI (1H)"].fillna(100) <= _rsi_max]
