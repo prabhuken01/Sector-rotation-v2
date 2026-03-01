@@ -6,9 +6,8 @@ Version: 2.4.2 - Confluence gates: user toggles for Bullish/Bearish in sidebar; 
 """
 
 # Visible app version (shown on main page for deploy verification)
-# Bumped to 2.5.4 (prev 2.5.3N) — MJ1 Momentum Velocity col, M1 VWAP band slider, M2+MJ2 timeframe-weighted
-# RSI scoring, MJ5 Market Regime banner (Nifty RSI + VIX@15), gates interval mismatch fix, sidebar sync
-APP_VERSION = "2.5.4 (prev 2.5.3N)"
+# Bumped to 2.5.3N — F&O filter on Bearish, ⓕ badge on F&O stocks, smart time default
+APP_VERSION = "2.5.3N"
 
 import os
 import io
@@ -311,15 +310,7 @@ def get_sidebar_controls():
         options=["Daily", "Weekly", "Hourly"],
         index=0,
         key="analysis_interval",
-        help=(
-            "Controls the timeframe used to fetch SECTOR data for the Momentum Ranking, "
-            "Company Momentum, and Company Reversal tabs.\n\n"
-            "⚠️ Stock Screener & Historical Rankings always score individual stocks "
-            "using 1D (daily) + 1H (hourly) data regardless of this setting — "
-            "because VWAP and intraday RSI are only meaningful on hourly bars.\n\n"
-            "To change which sectors appear in the Screener/Historical gates, "
-            "use the separate 'Sector selection interval (for gates)' control below."
-        )
+        help="Controls sector data timeframe for Momentum Ranking and tabs. Daily (default); Weekly = broader sector rotation; Hourly = finer view."
     )
     
     # Data source selection
@@ -479,42 +470,6 @@ def get_sidebar_controls():
         },
     }
 
-    # ── Stock Screener & Historical Rankings scoring settings ──────────────
-    # Centralised here so BOTH tabs receive identical settings (sidebar = single source of truth)
-    st.sidebar.subheader("📐 Stock Scoring Settings")
-    st.sidebar.caption("These settings apply equally to Stock Screener AND Historical Rankings tabs.")
-
-    # M1: VWAP band — configurable proximity threshold (steps of 0.5%)
-    vwap_band_pct = st.sidebar.slider(
-        "VWAP Band (±%)",
-        min_value=0.5, max_value=3.0, value=0.5, step=0.5,
-        key="vwap_band_pct",
-        help=(
-            "Defines how close price must be to VWAP to be classified as 'Approaching'.\n\n"
-            "• Price > VWAP + Band% → 'Above' (full bullish credit)\n"
-            "• Within ±Band% of VWAP → 'Approaching' (partial credit)\n"
-            "• Price < VWAP − Band% → 'Below' (full bearish credit)\n\n"
-            "Wider band = more stocks classified as 'Approaching'. "
-            "Narrow (0.5%) is best for large-caps; widen for mid-caps with higher volatility."
-        )
-    )
-
-    # VWAP credit weights (moved from inside screener tab to sidebar for sync across both tabs)
-    with st.sidebar.expander("VWAP Score Weights", expanded=False):
-        st.caption(
-            "How much score credit is given for VWAP position.\n"
-            "'Above' = price clearly above VWAP band.\n"
-            "'Approaching' = price within the VWAP band."
-        )
-        w_vwap_above = st.slider(
-            "Credit: Price Above VWAP", 0.0, 2.0, 1.0, 0.25, key="w_vwap_above",
-            help="Score added when price is clearly above VWAP (bullish). Default 1.0."
-        )
-        w_vwap_approach = st.slider(
-            "Credit: Price Approaching VWAP", 0.0, 1.0, 0.5, 0.25, key="w_vwap_approach",
-            help="Score added when price is within the VWAP band. Default 0.5."
-        )
-
     # Confluence gate options (v3.1) — apply in Stock Screener and Historical Rankings
     st.sidebar.subheader("Confluence gates (v3.1)")
     st.sidebar.caption("Toggle gates for Bullish and Bearish separately. Default = all on (keep).")
@@ -549,7 +504,7 @@ def get_sidebar_controls():
         except FileNotFoundError:
             st.caption("Logic Guide file not found.")
 
-    return use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding, confluence_gate_options, mrvg_options, gates_sector_interval, vwap_band_pct, w_vwap_above, w_vwap_approach
+    return use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding, confluence_gate_options, mrvg_options, gates_sector_interval
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -1463,34 +1418,10 @@ def display_momentum_tab(df, sector_data_dict, benchmark_data, enable_color_codi
     # Store original df for reference in trend analysis
     original_df = df.copy()
     
-    # Select columns for display — include RSI_Velocity if available (MJ1: momentum persistence)
-    _base_cols = ['Sector', 'Symbol', 'Price', 'Change_%', 'Momentum_Score', 'Mansfield_RS', 'RS_Rating',
-                  'ADX', 'ADX_Z', 'RSI', 'DI_Spread', 'CMF']
-    if 'RSI_Velocity' in df.columns:
-        _base_cols.insert(_base_cols.index('RSI') + 1, 'RSI_Velocity')
-    momentum_df = df[[c for c in _base_cols if c in df.columns]].copy()
-
-    # MJ1: Derive a human-readable Trend column from RSI_Velocity
-    # 🟢 Accelerating (velocity > +3), 🔴 Fading (velocity < −3), ⬜ Steady otherwise
-    if 'RSI_Velocity' in momentum_df.columns:
-        def _vel_label(v):
-            try:
-                v = float(v)
-                if v > 3:
-                    return f"🟢 +{v:.1f}"
-                elif v < -3:
-                    return f"🔴 {v:.1f}"
-                else:
-                    return f"⬜ {v:+.1f}"
-            except Exception:
-                return "⬜"
-        momentum_df.insert(
-            momentum_df.columns.get_loc('Momentum_Score') + 1,
-            'Trend',
-            momentum_df['RSI_Velocity'].apply(_vel_label)
-        )
-        momentum_df = momentum_df.drop(columns=['RSI_Velocity'])
-
+    # Select columns for display
+    momentum_df = df[['Sector', 'Symbol', 'Price', 'Change_%', 'Momentum_Score', 'Mansfield_RS', 'RS_Rating', 
+                      'ADX', 'ADX_Z', 'RSI', 'DI_Spread', 'CMF']].copy()
+    
     # SORT FIRST by Momentum_Score (before formatting to strings)
     momentum_df = momentum_df.sort_values('Momentum_Score', ascending=False)
     
@@ -1590,16 +1521,6 @@ def display_momentum_tab(df, sector_data_dict, benchmark_data, enable_color_codi
                 "Momentum Score",
                 help="Ranking-based composite score: (ADX_Z Rank × 20%) + (RS_Rating Rank × 40%) + (RSI Rank × 30%) + (DI_Spread Rank × 10%). Higher is better.",
                 format="%.1f"
-            ),
-            "Trend": st.column_config.TextColumn(
-                "Trend 🔍",
-                help=(
-                    "Momentum Velocity — RSI change over the last 5 bars.\n"
-                    "🟢 Accelerating (RSI up >+3 pts): sector gaining momentum — prefer these.\n"
-                    "⬜ Steady (−3 to +3 pts): momentum stable.\n"
-                    "🔴 Fading (RSI down >3 pts): momentum weakening — watch for exits.\n"
-                    "Use as a tie-breaker: two sectors with equal score → prefer the 🟢 one."
-                )
             ),
             "Mansfield_RS": st.column_config.NumberColumn(
                 "Mansfield RS",
@@ -2377,7 +2298,7 @@ def test_symbol_availability():
     return results
 
 
-def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf, confluence_gate_options=None, mrvg_options=None, gates_sector_interval='Daily', sector_data_for_gates=None, vwap_band_pct=0.5, w_vwap_above=1.0, w_vwap_approach=0.5):
+def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_weights, reversal_weights, reversal_thresholds, use_etf, confluence_gate_options=None, mrvg_options=None, gates_sector_interval='Daily', sector_data_for_gates=None):
     """
     Display historical rankings. Date sequence is always daily (caller passes daily sector_data_dict and benchmark_data).
     gates_sector_interval: 'Daily' or 'Weekly' — which timeframe to use only for picking top/bottom sectors for gates.
@@ -2680,12 +2601,7 @@ def display_historical_rankings_tab(sector_data_dict, benchmark_data, momentum_w
                             continue
                         subset = d.iloc[: idx + 1]
                         hourly = company_hourly.get(sym) if company_hourly else None
-                        bull_score, bear_score, score_details = _compute_screener_score(
-                            subset, hourly,
-                            w_vwap_above=w_vwap_above,
-                            w_vwap_approach=w_vwap_approach,
-                            vwap_band_pct=vwap_band_pct,
-                        )
+                        bull_score, bear_score, score_details = _compute_screener_score(subset, hourly)
                         if bull_score is not None:
                             _all_screener_list.append((sym, rec['sector'], rec['name'], bull_score, d, idx))
                             rsi_1d_v = score_details.get('rsi_1d_val') if score_details else None
@@ -3773,174 +3689,6 @@ def find_last_crossing_time(data, fib_level, current_price):
     return "N/A"
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def _fetch_vix_cached(analysis_date_str):
-    """Fetch India VIX daily data. Returns DataFrame or None."""
-    try:
-        import yfinance as yf
-        vix = yf.download("^INDIAVIX", period="60d", interval="1d", progress=False, auto_adjust=True)
-        if vix is not None and not vix.empty and len(vix) >= 5:
-            return vix
-    except Exception:
-        pass
-    return None
-
-
-def compute_market_regime(benchmark_data, analysis_date=None, vix_threshold=15):
-    """
-    MJ5: Derive market regime from 3 signals — Nifty RSI, Nifty vs SMA50, India VIX.
-
-    Signal rules (VIX threshold = user-configurable, default 15):
-      Bullish Regime  — ALL of: Nifty RSI > 50, Nifty above SMA50, VIX < threshold (or VIX falling)
-      Bearish Regime  — ANY 2 of: Nifty RSI < 45, Nifty below SMA50 by >1%, VIX > threshold+5 (or VIX rising sharply)
-      Mixed/Neutral   — everything else
-
-    Returns dict:
-      regime      : 'Bullish' | 'Bearish' | 'Mixed'
-      emoji       : '🟢' | '🔴' | '🟡'
-      nifty_rsi   : float
-      nifty_vs_sma50_pct : float   (% above/below SMA50)
-      vix_level   : float | None
-      vix_dir     : 'Rising' | 'Falling' | 'Stable' | 'N/A'
-      signals     : list of plain-English signal strings for display
-    """
-    result = {
-        'regime': 'Mixed', 'emoji': '🟡',
-        'nifty_rsi': None, 'nifty_vs_sma50_pct': None,
-        'vix_level': None, 'vix_dir': 'N/A', 'signals': []
-    }
-    if benchmark_data is None or benchmark_data.empty or len(benchmark_data) < 55:
-        result['signals'].append("Insufficient Nifty data for regime calculation.")
-        return result
-
-    try:
-        # Slice to analysis date if provided
-        if analysis_date is not None:
-            end_ts = pd.Timestamp(analysis_date)
-            idx = benchmark_data.index
-            mask = idx <= (end_ts.tz_localize(idx.tz) if idx.tz is not None and end_ts.tz is None else end_ts)
-            nifty = benchmark_data[mask].copy()
-        else:
-            nifty = benchmark_data.copy()
-
-        if len(nifty) < 55:
-            result['signals'].append("Insufficient Nifty history after date filter.")
-            return result
-
-        # 1. Nifty RSI (14-period)
-        nifty_rsi_series = calculate_rsi(nifty)
-        nifty_rsi = float(nifty_rsi_series.dropna().iloc[-1]) if len(nifty_rsi_series.dropna()) > 0 else 50.0
-        result['nifty_rsi'] = round(nifty_rsi, 1)
-
-        # 2. Nifty vs SMA50
-        sma50 = nifty['Close'].rolling(50).mean().iloc[-1]
-        nifty_close = float(nifty['Close'].iloc[-1])
-        vs_sma50_pct = (nifty_close / sma50 - 1) * 100 if not pd.isna(sma50) and sma50 > 0 else 0.0
-        result['nifty_vs_sma50_pct'] = round(vs_sma50_pct, 2)
-
-        # 3. India VIX
-        analysis_date_str = analysis_date.strftime('%Y-%m-%d') if analysis_date else 'latest'
-        vix_df = _fetch_vix_cached(analysis_date_str)
-        vix_level = None
-        vix_dir = 'N/A'
-        if vix_df is not None and not vix_df.empty:
-            # Align to analysis date
-            vix_close = vix_df['Close'] if 'Close' in vix_df.columns else vix_df.iloc[:, 0]
-            vix_level = float(vix_close.dropna().iloc[-1])
-            if len(vix_close.dropna()) >= 6:
-                vix_5d_ago = float(vix_close.dropna().iloc[-6])
-                vix_chg = vix_level - vix_5d_ago
-                if vix_chg > vix_level * 0.15:      # rose >15% in 5 days = sharply rising
-                    vix_dir = 'Rising'
-                elif vix_chg < -vix_level * 0.10:
-                    vix_dir = 'Falling'
-                else:
-                    vix_dir = 'Stable'
-        result['vix_level'] = round(vix_level, 1) if vix_level else None
-        result['vix_dir'] = vix_dir
-
-        # Score individual signals (True = bullish evidence, False = bearish evidence)
-        bull_rsi    = nifty_rsi > 50
-        bull_sma    = vs_sma50_pct > 0
-        bull_vix    = (vix_level is not None and (vix_level < vix_threshold or vix_dir == 'Falling'))
-
-        bear_rsi    = nifty_rsi < 45
-        bear_sma    = vs_sma50_pct < -1.0
-        bear_vix    = (vix_level is not None and (vix_level > vix_threshold + 5 or vix_dir == 'Rising'))
-
-        # Build readable signals list
-        rsi_str    = f"Nifty RSI {nifty_rsi:.1f} ({'bullish' if bull_rsi else 'bearish' if bear_rsi else 'neutral'})"
-        sma_str    = f"Nifty {'above' if vs_sma50_pct > 0 else 'below'} SMA50 by {abs(vs_sma50_pct):.1f}% ({'bullish' if bull_sma else 'bearish' if bear_sma else 'neutral'})"
-        vix_str    = (
-            f"India VIX {vix_level:.1f} ({vix_dir}) — threshold {vix_threshold} ({'bullish' if bull_vix else 'bearish' if bear_vix else 'neutral'})"
-            if vix_level else "India VIX data unavailable"
-        )
-        result['signals'] = [rsi_str, sma_str, vix_str]
-
-        # Regime decision
-        bull_count  = sum([bull_rsi, bull_sma, bull_vix])
-        bear_count  = sum([bear_rsi, bear_sma, bear_vix])
-
-        if bull_count == 3:
-            result['regime'], result['emoji'] = 'Bullish', '🟢'
-        elif bear_count >= 2:
-            result['regime'], result['emoji'] = 'Bearish', '🔴'
-        else:
-            result['regime'], result['emoji'] = 'Mixed', '🟡'
-
-    except Exception as e:
-        result['signals'].append(f"Regime calculation error: {e}")
-
-    return result
-
-
-def display_market_regime_banner(benchmark_data, analysis_date=None, vix_threshold=15):
-    """
-    MJ5: Show a prominent market regime banner above the tabs.
-    Signals (Nifty RSI, SMA50, VIX) are summarised with a colour-coded status + expandable detail.
-    """
-    regime_info = compute_market_regime(benchmark_data, analysis_date, vix_threshold=vix_threshold)
-    emoji   = regime_info['emoji']
-    regime  = regime_info['regime']
-
-    colour_map = {'Bullish': '#1a6b38', 'Bearish': '#8b1a1a', 'Mixed': '#6b5a1a'}
-    bg_colour  = colour_map.get(regime, '#444444')
-
-    advice_map = {
-        'Bullish': "All 3 regime signals align bullish. Favour long setups; bullish screener picks carry lower macro risk.",
-        'Bearish': "≥2 regime signals are bearish. Elevate caution on longs; prefer short/bearish setups or stay flat.",
-        'Mixed':   "Signals are mixed. Trade selectively — size down and favour high-confluence setups only.",
-    }
-
-    st.markdown(
-        f"""
-        <div style="background-color:{bg_colour}; padding:10px 16px; border-radius:8px;
-                    margin-bottom:8px; color:#ffffff; font-size:15px;">
-          <b>{emoji} Market Regime: {regime}</b> &nbsp;|&nbsp; {advice_map[regime]}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    with st.expander(f"📊 Regime Signal Details (VIX threshold: {vix_threshold})", expanded=False):
-        vix_l = regime_info.get('vix_level')
-        st.markdown(
-            f"""
-| Signal | Value | Status |
-|---|---|---|
-| **Nifty RSI (14D)** | {regime_info.get('nifty_rsi', 'N/A')} | {'🟢 Bullish (>50)' if (regime_info.get('nifty_rsi') or 0) > 50 else '🔴 Bearish (<45)' if (regime_info.get('nifty_rsi') or 50) < 45 else '⬜ Neutral'} |
-| **Nifty vs SMA50** | {regime_info.get('nifty_vs_sma50_pct', 'N/A')}% | {'🟢 Above SMA50' if (regime_info.get('nifty_vs_sma50_pct') or 0) > 0 else '🔴 Below SMA50 by >1%' if (regime_info.get('nifty_vs_sma50_pct') or 0) < -1 else '⬜ Near SMA50'} |
-| **India VIX** | {vix_l if vix_l else 'N/A'} ({regime_info.get('vix_dir', 'N/A')}) | {'🟢 Low / Falling' if (vix_l and (vix_l < vix_threshold or regime_info.get('vix_dir') == 'Falling')) else '🔴 Elevated / Rising' if (vix_l and (vix_l > vix_threshold + 5 or regime_info.get('vix_dir') == 'Rising')) else '⬜ Moderate'} |
-
-**How to read this:**
-- 🟢 Bullish Regime = all 3 signals bullish → macro tailwind, lean into momentum longs.
-- 🔴 Bearish Regime = ≥2 signals bearish → macro headwind, prefer shorts or reduce position size.
-- 🟡 Mixed = conflicting signals → trade only high-conviction setups, smaller size.
-- VIX threshold is fixed at {vix_threshold}. Above {vix_threshold+5} = elevated fear; below {vix_threshold} = complacency/calm.
-            """
-        )
-
-
 def display_market_breadth_block(benchmark_data, analysis_date=None):
     """
     Display Market Breadth: Nifty 50 price, Advance/Total %, Advances, Declines.
@@ -4711,50 +4459,37 @@ def _slice_hourly_to_snapshot(hourly_df, target_hour, target_minute):
         return hourly_df, None
 
 
-def _compute_screener_score(daily, hourly, w_vwap_above=1.0, w_vwap_approach=0.5, vwap_band_pct=0.5):
+def _compute_screener_score(daily, hourly, w_vwap_above=1.0, w_vwap_approach=0.5):
     """
-    MA+RSI+VWAP scoring with timeframe-weighted, magnitude-graded RSI (M2 + MJ2).
-
-    Timeframe weights (MJ2):
-      Weekly RSI  : strong move (+>5 pts) → 2.0 | mild (+1–5) → 1.5 | flat/down → 0
-      Daily RSI   : strong → 1.5 | mild → 1.0 | flat/down → 0
-      Hourly RSI  : strong → 0.75 | mild → 0.5 | flat/down → 0
-      Price > SMA50 → 1.5  |  SMA20 → 1.0  |  SMA8 → 0.75
-      VWAP Above → w_vwap_above (default 1.0) | Approaching → w_vwap_approach (default 0.5)
-    Max bullish/bearish = 9.0 (with defaults).
-
-    vwap_band_pct (M1): configurable proximity band (default ±0.5%).
-
-    Returns (bull_score, bear_score, details):
-      - bull_score : higher = more bullish
-      - bear_score : higher = more bearish
-      - details    : dict for gate filtering (rsi_1d_val, rsi_1h_val, price_gt_ma8_1h, vwap_relation)
+    MA+RSI+VWAP scoring: 1 pt each for RSI (1W/1D/1H) up, 1 pt each for Price > 8/20/50 SMA,
+    plus VWAP (1H). RSI divergence not used.
+    Returns (bull_score, bear_score, details) tuple:
+      - bull_score: higher = more bullish (criteria met = +1)
+      - bear_score: higher = more bearish (criteria NOT met = +1)
+      - details: dict with rsi_1d_val, rsi_1h_val, price_gt_ma8_1h, vwap_relation for gate filtering
     """
     if daily is None or len(daily) < 60:
         return None, None, None
     try:
         price = float(daily["Close"].iloc[-1])
-        sma8  = daily["Close"].rolling(8).mean().iloc[-1]
+        sma8 = daily["Close"].rolling(8).mean().iloc[-1]
         sma20 = daily["Close"].rolling(20).mean().iloc[-1]
         sma50 = daily["Close"].rolling(50).mean().iloc[-1]
-        p_gt_8  = "Yes" if not pd.isna(sma8)  and price > sma8  else "No"
+        p_gt_8 = "Yes" if not pd.isna(sma8) and price > sma8 else "No"
         p_gt_20 = "Yes" if not pd.isna(sma20) and price > sma20 else "No"
         p_gt_50 = "Yes" if not pd.isna(sma50) and price > sma50 else "No"
-
         rsi_d = calculate_rsi(daily)
-        rsi_1d_val  = float(rsi_d.dropna().iloc[-1]) if len(rsi_d.dropna()) >= 2 else None
-        rsi_1d_prev = float(rsi_d.dropna().iloc[-2]) if len(rsi_d.dropna()) >= 2 else None
-
+        rsi_1d_val = float(rsi_d.iloc[-1]) if len(rsi_d.dropna()) >= 2 else None
+        rsi_1d_prev = float(rsi_d.iloc[-2]) if len(rsi_d.dropna()) >= 2 else None
         weekly = daily.resample("W").last()
         rsi_w = calculate_rsi(weekly)
-        rsi_1w_val  = float(rsi_w.dropna().iloc[-1]) if len(rsi_w.dropna()) >= 2 else None
-        rsi_1w_prev = float(rsi_w.dropna().iloc[-2]) if len(rsi_w.dropna()) >= 2 else None
-
+        rsi_1w_val = float(rsi_w.iloc[-1]) if len(rsi_w.dropna()) >= 2 else None
+        rsi_1w_prev = float(rsi_w.iloc[-2]) if len(rsi_w.dropna()) >= 2 else None
         rsi_1h_val = rsi_1h_prev = None
         if hourly is not None and len(hourly) >= 30:
             rsi_h = calculate_rsi(hourly)
-            rsi_1h_val  = float(rsi_h.dropna().iloc[-1]) if len(rsi_h.dropna()) >= 2 else None
-            rsi_1h_prev = float(rsi_h.dropna().iloc[-2]) if len(rsi_h.dropna()) >= 2 else None
+            rsi_1h_val = float(rsi_h.iloc[-1]) if len(rsi_h.dropna()) >= 2 else None
+            rsi_1h_prev = float(rsi_h.iloc[-2]) if len(rsi_h.dropna()) >= 2 else None
 
         # 1H MA8 for gate filtering
         price_gt_ma8_1h = "N/A"
@@ -4763,37 +4498,23 @@ def _compute_screener_score(daily, hourly, w_vwap_above=1.0, w_vwap_approach=0.5
             if not pd.isna(ma8_1h):
                 price_gt_ma8_1h = "Yes" if float(hourly["Close"].iloc[-1]) > ma8_1h else "No"
 
-        # M2: magnitude-graded RSI direction
-        # Returns (display_label, bull_credit, bear_credit) for a given timeframe's full/mild credits
-        def _rsi_grade(cur, prev, full_bull, mild_bull, full_bear, mild_bear):
-            """Grade RSI direction with magnitude awareness.
-            full_bull/mild_bull = credits when RSI rising strongly / mildly.
-            full_bear/mild_bear = credits when RSI falling strongly / mildly.
-            Returns (label, bull_credit, bear_credit).
-            """
+        def _dir(cur, prev):
             if cur is None or prev is None:
-                return "N/A", 0.0, full_bear  # unknown → no bull credit, full bear credit
-            delta = cur - prev
-            if delta > 5:
-                return "↑↑ Strong", full_bull, 0.0
-            elif delta > 1:
-                return "↑ Mild",    mild_bull, 0.0
-            elif delta < -5:
-                return "↓↓ Strong", 0.0, full_bear
-            elif delta < -1:
-                return "↓ Mild",    0.0, mild_bear
-            else:
-                return "→ Flat",    0.0, 0.0
+                return "N/A"
+            if cur > prev + 1:
+                return "Up"
+            if cur < prev - 1:
+                return "Down"
+            return "Flat"
 
-        rsi_1w_label, rsi_1w_bull, rsi_1w_bear = _rsi_grade(rsi_1w_val, rsi_1w_prev, 2.0, 1.5, 2.0, 1.5)
-        rsi_1d_label, rsi_1d_bull, rsi_1d_bear = _rsi_grade(rsi_1d_val, rsi_1d_prev, 1.5, 1.0, 1.5, 1.0)
-        rsi_1h_label, rsi_1h_bull, rsi_1h_bear = _rsi_grade(rsi_1h_val, rsi_1h_prev, 0.75, 0.5, 0.75, 0.5)
-
-        # M1: configurable VWAP band
+        rsi_1w_dir = _dir(rsi_1w_val, rsi_1w_prev)
+        rsi_1d_dir = _dir(rsi_1d_val, rsi_1d_prev)
+        rsi_1h_dir = _dir(rsi_1h_val, rsi_1h_prev)
         vwap_relation = "N/A"
         if hourly is not None and len(hourly) > 0:
-            last_day  = hourly.index[-1].date()
-            day_data  = hourly[hourly.index.date == last_day]
+            last_day = hourly.index[-1].date()
+            day_mask = hourly.index.date == last_day
+            day_data = hourly[day_mask]
             if not day_data.empty:
                 if "Volume" in day_data.columns and day_data["Volume"].sum() > 0:
                     vwap = (day_data["Close"] * day_data["Volume"]).sum() / day_data["Volume"].sum()
@@ -4801,47 +4522,64 @@ def _compute_screener_score(daily, hourly, w_vwap_above=1.0, w_vwap_approach=0.5
                     vwap = day_data["Close"].mean()
                 if vwap:
                     diff_pct = (price / vwap - 1) * 100
-                    if diff_pct > vwap_band_pct:
+                    if diff_pct > 0.5:
                         vwap_relation = "Above"
-                    elif diff_pct >= -vwap_band_pct:
-                        vwap_relation = "Approaching"   # within ±band = neutral zone
+                    elif diff_pct >= 0:
+                        # Price is slightly above VWAP — approaching from above (potential bearish signal)
+                        vwap_relation = "Approaching ↓"
+                    elif diff_pct >= -0.5:
+                        # Price is slightly below VWAP — approaching from below (not a bearish entry merit)
+                        vwap_relation = "Approaching ↑"
                     else:
                         vwap_relation = "Below"
 
-        # MJ2: timeframe-weighted bullish score (max ≈ 9.0 with defaults)
+        # Bullish score: criteria met = +1
         bull_score = 0.0
-        bull_score += rsi_1w_bull                                         # weekly RSI: up to 2.0
-        bull_score += rsi_1d_bull                                         # daily  RSI: up to 1.5
-        bull_score += rsi_1h_bull                                         # hourly RSI: up to 0.75
-        bull_score += 0.75 if p_gt_8  == "Yes" else 0.0                  # SMA8  short-term
-        bull_score += 1.0  if p_gt_20 == "Yes" else 0.0                  # SMA20 medium
-        bull_score += 1.5  if p_gt_50 == "Yes" else 0.0                  # SMA50 structural
+        if rsi_1w_dir == "Up":
+            bull_score += 1.0
+        if rsi_1d_dir == "Up":
+            bull_score += 1.0
+        if rsi_1h_dir == "Up":
+            bull_score += 1.0
+        if p_gt_8 == "Yes":
+            bull_score += 1.0
+        if p_gt_20 == "Yes":
+            bull_score += 1.0
+        if p_gt_50 == "Yes":
+            bull_score += 1.0
+        # Bullish VWAP: Above = full credit; Approaching ↓ (price just above VWAP) = partial credit
         if vwap_relation == "Above":
             bull_score += w_vwap_above
-        elif vwap_relation == "Approaching":
+        elif vwap_relation == "Approaching ↓":
             bull_score += w_vwap_approach
+        # Approaching ↑ (price just below VWAP, coming up) — no bullish VWAP credit
 
-        # MJ2: timeframe-weighted bearish score (max ≈ 9.0 with defaults)
+        # Bearish score: criteria NOT met = +1 (higher = more bearish signals)
         bear_score = 0.0
-        bear_score += rsi_1w_bear                                         # weekly RSI falling
-        bear_score += rsi_1d_bear                                         # daily  RSI falling
-        bear_score += rsi_1h_bear                                         # hourly RSI falling
-        bear_score += 0.75 if p_gt_8  != "Yes" else 0.0                  # below SMA8
-        bear_score += 1.0  if p_gt_20 != "Yes" else 0.0                  # below SMA20
-        bear_score += 1.5  if p_gt_50 != "Yes" else 0.0                  # below SMA50
+        if rsi_1w_dir != "Up":
+            bear_score += 1.0
+        if rsi_1d_dir != "Up":
+            bear_score += 1.0
+        if rsi_1h_dir != "Up":
+            bear_score += 1.0
+        if p_gt_8 != "Yes":
+            bear_score += 1.0
+        if p_gt_20 != "Yes":
+            bear_score += 1.0
+        if p_gt_50 != "Yes":
+            bear_score += 1.0
+        # Bearish VWAP: Below = full credit; Approaching ↓ (price just above, about to break below) = partial credit
         if vwap_relation == "Below":
             bear_score += w_vwap_above
-        elif vwap_relation == "Approaching":
+        elif vwap_relation == "Approaching ↓":
             bear_score += w_vwap_approach
+        # Approaching ↑ (price just below VWAP coming up) — no bearish credit
 
         details = {
-            'rsi_1d_val':      rsi_1d_val,
-            'rsi_1h_val':      rsi_1h_val,
-            'rsi_1w_label':    rsi_1w_label,
-            'rsi_1d_label':    rsi_1d_label,
-            'rsi_1h_label':    rsi_1h_label,
+            'rsi_1d_val': rsi_1d_val,
+            'rsi_1h_val': rsi_1h_val,
             'price_gt_ma8_1h': price_gt_ma8_1h,
-            'vwap_relation':   vwap_relation,
+            'vwap_relation': vwap_relation,
         }
         return round(bull_score, 2), round(bear_score, 2), details
     except Exception:
@@ -4888,7 +4626,7 @@ def _compute_confluence_score(data_entry_raw, data_1d=None, timeframe='2h', gate
         return None, None, None
 
 
-def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_data_dict=None, momentum_weights=None, df_momentum=None, confluence_gate_options=None, mrvg_options=None, sector_data_for_gates=None, gates_sector_interval='Daily', vwap_band_pct=0.5, w_vwap_above=1.0, w_vwap_approach=0.5):
+def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_data_dict=None, momentum_weights=None, df_momentum=None, confluence_gate_options=None, mrvg_options=None, sector_data_for_gates=None, gates_sector_interval='Daily'):
     """
     Stock Screener (MA+RSI+VWAP) on sector-company universe (from Sector-Company.xlsx, sheet Main).
     Sector filter uses gates_sector_interval (Daily/Weekly): sector_data_for_gates when provided, else sector_data_dict.
@@ -5140,37 +4878,10 @@ def display_stock_screener_tab(analysis_date=None, benchmark_data=None, sector_d
         st.warning("⚠️ No companies found in Sector-Company universe.")
         return
 
-    # M2: Scoring guide expander — explains magnitude-graded RSI + timeframe weights to the user
-    with st.expander("ℹ️ How Stocks Are Scored (hover over column headers for quick tips)", expanded=False):
-        st.markdown(
-            """
-**Scoring uses timeframe-weighted, magnitude-graded signals (max ≈ 9.0 pts).**
-All settings are controlled from the sidebar → *Stock Scoring Settings*.
-
-| Signal | Strong move | Mild move | Flat / Down |
-|---|---|---|---|
-| **RSI Weekly** (highest weight) | ↑↑ +2.0 | ↑ +1.5 | 0 |
-| **RSI Daily** | ↑↑ +1.5 | ↑ +1.0 | 0 |
-| **RSI Hourly** (lowest weight — noisy) | ↑↑ +0.75 | ↑ +0.5 | 0 |
-
-*RSI "Strong" = change > 5 pts vs prev bar. "Mild" = 1–5 pts. "Flat" = within ±1 pt.*
-
-| MA Condition | Score |
-|---|---|
-| Price > SMA 50 (structural level) | +1.5 |
-| Price > SMA 20 (medium-term) | +1.0 |
-| Price > SMA 8 (short-term) | +0.75 |
-| Price **Above** VWAP (beyond band) | +{vwap_above:.2f} *(sidebar)* |
-| Price **Approaching** VWAP (within ±{band:.1f}%) | +{vwap_app:.2f} *(sidebar)* |
-
-**Bearish score** uses the same weights in reverse (signals NOT met = credit).
-VWAP band width is set in the sidebar under *Stock Scoring Settings*.
-            """.format(
-                vwap_above=w_vwap_above,
-                band=vwap_band_pct,
-                vwap_app=w_vwap_approach,
-            )
-        )
+    # Scoring: MA+RSI+VWAP (1 pt each for RSI 1W/1D/1H up, 1 pt each for Price > 8/20/50 SMA; RSI divergence removed)
+    with st.expander("⚙️ Scoring weights (optional) – MA+RSI+VWAP", expanded=False):
+        w_vwap_above = st.slider("Weight: Price above VWAP (1H)", 0.0, 5.0, 1.0, 0.5)
+        w_vwap_approach = st.slider("Weight: Price approaching VWAP (1H)", 0.0, 5.0, 0.5, 0.5)
 
     results = []
     progress = st.progress(0.0)
@@ -5248,28 +4959,20 @@ VWAP band width is set in the sidebar under *Stock Scoring Settings*.
             else:
                 rsi_1h_val = rsi_1h_prev = None
 
-            # M2: magnitude-graded RSI direction (mirrors _compute_screener_score logic)
-            def _rsi_dir_grade(cur, prev, full_bull, mild_bull, full_bear, mild_bear):
-                """Return (display_label, bull_credit, bear_credit) for a RSI pair."""
+            def rsi_direction(cur, prev):
                 if cur is None or prev is None:
-                    return "N/A", 0.0, full_bear
-                delta = cur - prev
-                if delta > 5:
-                    return "↑↑ Strong", full_bull, 0.0
-                elif delta > 1:
-                    return "↑ Mild",    mild_bull, 0.0
-                elif delta < -5:
-                    return "↓↓ Strong", 0.0, full_bear
-                elif delta < -1:
-                    return "↓ Mild",    0.0, mild_bear
-                else:
-                    return "→ Flat",    0.0, 0.0
+                    return "N/A"
+                if cur > prev + 1:
+                    return "Up"
+                if cur < prev - 1:
+                    return "Down"
+                return "Flat"
 
-            rsi_1w_dir, rsi_1w_bull, rsi_1w_bear = _rsi_dir_grade(rsi_1w_val, rsi_1w_prev, 2.0, 1.5, 2.0, 1.5)
-            rsi_1d_dir, rsi_1d_bull, rsi_1d_bear = _rsi_dir_grade(rsi_1d_val, rsi_1d_prev, 1.5, 1.0, 1.5, 1.0)
-            rsi_1h_dir, rsi_1h_bull, rsi_1h_bear = _rsi_dir_grade(rsi_1h_val, rsi_1h_prev, 0.75, 0.5, 0.75, 0.5)
+            rsi_1w_dir = rsi_direction(rsi_1w_val, rsi_1w_prev)
+            rsi_1d_dir = rsi_direction(rsi_1d_val, rsi_1d_prev)
+            rsi_1h_dir = rsi_direction(rsi_1h_val, rsi_1h_prev)
 
-            # --- VWAP (M1: configurable band) & 2H divergence from hourly data ---
+            # --- VWAP & 2H divergence from hourly data ---
             vwap_relation = "N/A"
             rsi_div_2h = "No"
 
@@ -5284,10 +4987,9 @@ VWAP band width is set in the sidebar under *Stock Scoring Settings*.
                         vwap = day_data["Close"].mean()
                     if vwap:
                         diff_pct = (price / vwap - 1) * 100
-                        # M1: use sidebar-configured band instead of hardcoded 0.5%
-                        if diff_pct > vwap_band_pct:
+                        if diff_pct > 0.5:
                             vwap_relation = "Above"
-                        elif diff_pct >= -vwap_band_pct:
+                        elif abs(diff_pct) <= 0.5:
                             vwap_relation = "Approaching"
                         else:
                             vwap_relation = "Below"
@@ -5312,27 +5014,39 @@ VWAP band width is set in the sidebar under *Stock Scoring Settings*.
                 if not pd.isna(ma8_1h):
                     price_gt_ma8_1h = "Yes" if float(hourly["Close"].iloc[-1]) > ma8_1h else "No"
 
-            # MJ2: timeframe-weighted bullish score (max ≈ 9.0 with default sidebar values)
+            # --- Final score (MA+RSI+VWAP): 1 pt each for RSI 1W/1D/1H up, 1 pt each for Price > 8/20/50 SMA; RSI divergence not used
             score = 0.0
-            score += rsi_1w_bull                                    # weekly RSI: up to 2.0
-            score += rsi_1d_bull                                    # daily  RSI: up to 1.5
-            score += rsi_1h_bull                                    # hourly RSI: up to 0.75
-            score += 0.75 if p_gt_8  == "Yes" else 0.0             # SMA8  short-term
-            score += 1.0  if p_gt_20 == "Yes" else 0.0             # SMA20 medium
-            score += 1.5  if p_gt_50 == "Yes" else 0.0             # SMA50 structural
+            if rsi_1w_dir == "Up":
+                score += 1.0
+            if rsi_1d_dir == "Up":
+                score += 1.0
+            if rsi_1h_dir == "Up":
+                score += 1.0
+            if p_gt_8 == "Yes":
+                score += 1.0
+            if p_gt_20 == "Yes":
+                score += 1.0
+            if p_gt_50 == "Yes":
+                score += 1.0
             if vwap_relation == "Above":
                 score += w_vwap_above
             elif vwap_relation == "Approaching":
                 score += w_vwap_approach
 
-            # MJ2: timeframe-weighted bearish score (max ≈ 9.0 with default sidebar values)
+            # Bearish score: criteria NOT met = +1 (higher = more bearish signals)
             bearish_score = 0.0
-            bearish_score += rsi_1w_bear
-            bearish_score += rsi_1d_bear
-            bearish_score += rsi_1h_bear
-            bearish_score += 0.75 if p_gt_8  != "Yes" else 0.0
-            bearish_score += 1.0  if p_gt_20 != "Yes" else 0.0
-            bearish_score += 1.5  if p_gt_50 != "Yes" else 0.0
+            if rsi_1w_dir != "Up":
+                bearish_score += 1.0
+            if rsi_1d_dir != "Up":
+                bearish_score += 1.0
+            if rsi_1h_dir != "Up":
+                bearish_score += 1.0
+            if p_gt_8 != "Yes":
+                bearish_score += 1.0
+            if p_gt_20 != "Yes":
+                bearish_score += 1.0
+            if p_gt_50 != "Yes":
+                bearish_score += 1.0
             if vwap_relation == "Below":
                 bearish_score += w_vwap_above
             elif vwap_relation == "Approaching":
@@ -6502,7 +6216,7 @@ def main():
         
         # Sidebar controls
         try:
-            use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding, confluence_gate_options, mrvg_options, gates_sector_interval, vwap_band_pct, w_vwap_above, w_vwap_approach = get_sidebar_controls()
+            use_etf, momentum_weights, reversal_weights, analysis_date, time_interval, reversal_thresholds, enable_color_coding, confluence_gate_options, mrvg_options, gates_sector_interval = get_sidebar_controls()
         except Exception as e:
             st.error(f"❌ Error loading sidebar controls: {str(e)}")
             return
@@ -6542,33 +6256,23 @@ def main():
             st.info("💡 Tip: Ensure yfinance can reach Yahoo Finance servers. If the issue persists, try again in a few moments.")
             return
         
-        # Historical Rankings: always use daily date sequence (daily benchmark + sector data for the table).
-        # Fetch daily data first so it can also be reused for gates if needed.
+        # Sector data for gates (top N / bottom N): use weekly when gates_sector_interval is Weekly, else main
+        sector_data_for_gates = sector_data
+        if gates_sector_interval == "Weekly":
+            with st.spinner("Fetching weekly sector data for gates..."):
+                _, sector_data_weekly, _ = analyze_sectors_with_progress(use_etf, momentum_weights, reversal_weights, analysis_datetime, "Weekly", reversal_thresholds)
+            if sector_data_weekly:
+                sector_data_for_gates = sector_data_weekly
+        
+        # Historical Rankings: always use daily date sequence (daily benchmark + sector data for the table)
         hist_benchmark = sector_data.get('Nifty 50') if sector_data else None
         hist_sector_data = sector_data
-        sector_data_daily = None
         if time_interval != 'Daily':
             with st.spinner("Fetching daily data for Historical Rankings date sequence..."):
                 _, sector_data_daily, _ = analyze_sectors_with_progress(use_etf, momentum_weights, reversal_weights, analysis_datetime, "Daily", reversal_thresholds)
             if sector_data_daily:
                 hist_sector_data = sector_data_daily
                 hist_benchmark = sector_data_daily.get('Nifty 50')
-
-        # Sector data for gates (top N / bottom N sector selection in Screener & Historical).
-        # 'gates_sector_interval' is a SEPARATE control from 'time_interval':
-        #   • Weekly → use weekly-fetched sector data for gate ranking
-        #   • Daily  → use daily-fetched sector data for gate ranking
-        # Fix: if main interval is non-Daily but gates need Daily, use the daily data we already fetched above.
-        if gates_sector_interval == "Weekly":
-            with st.spinner("Fetching weekly sector data for gates..."):
-                _, sector_data_weekly, _ = analyze_sectors_with_progress(use_etf, momentum_weights, reversal_weights, analysis_datetime, "Weekly", reversal_thresholds)
-            sector_data_for_gates = sector_data_weekly if sector_data_weekly else sector_data
-        elif time_interval != 'Daily':
-            # Gates want Daily but main fetch was non-Daily — use the daily fetch done above
-            sector_data_for_gates = sector_data_daily if sector_data_daily else sector_data
-        else:
-            # Both main and gates are Daily — use the same data
-            sector_data_for_gates = sector_data
         
         # Display combined data source and date information with IST timezone
         data_source_type = "ETF Proxy" if use_etf else "NSE Indices"
@@ -6589,10 +6293,7 @@ def main():
         # Market Breadth block (Nifty, Advance/Total %) - always visible above tabs
         benchmark_data = sector_data.get('Nifty 50') if sector_data else None
         display_market_breadth_block(benchmark_data, analysis_date)
-
-        # MJ5: Market Regime banner — always visible above tabs (VIX threshold fixed at 15)
-        display_market_regime_banner(benchmark_data, analysis_date, vix_threshold=15)
-
+        
         # Create tabs (10 total: Market breadth first, then Momentum, Stock Screener, ...)
         try:
             tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
@@ -6639,9 +6340,6 @@ def main():
                         mrvg_options=mrvg_options,
                         sector_data_for_gates=sector_data_for_gates,
                         gates_sector_interval=gates_sector_interval,
-                        vwap_band_pct=vwap_band_pct,
-                        w_vwap_above=w_vwap_above,
-                        w_vwap_approach=w_vwap_approach,
                     )
                 except Exception as e:
                     st.error(f"❌ Error displaying stock screener tab: {str(e)}")
@@ -6649,17 +6347,7 @@ def main():
             
             with tab4:
                 try:
-                    display_historical_rankings_tab(
-                        hist_sector_data, hist_benchmark, momentum_weights, reversal_weights,
-                        reversal_thresholds, use_etf,
-                        confluence_gate_options=confluence_gate_options,
-                        mrvg_options=mrvg_options,
-                        gates_sector_interval=gates_sector_interval,
-                        sector_data_for_gates=sector_data_for_gates,
-                        vwap_band_pct=vwap_band_pct,
-                        w_vwap_above=w_vwap_above,
-                        w_vwap_approach=w_vwap_approach,
-                    )
+                    display_historical_rankings_tab(hist_sector_data, hist_benchmark, momentum_weights, reversal_weights, reversal_thresholds, use_etf, confluence_gate_options=confluence_gate_options, mrvg_options=mrvg_options, gates_sector_interval=gates_sector_interval, sector_data_for_gates=sector_data_for_gates)
                     display_tooltip_legend()
                 except Exception as e:
                     st.error(f"❌ Error displaying historical rankings tab: {str(e)}")

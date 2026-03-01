@@ -74,14 +74,6 @@ def analyze_sector(name, data, benchmark_data, momentum_weights=None, reversal_w
         latest_adx = adx.iloc[-1] if not adx.isna().all() else 0.0
         latest_di_spread = di_spread.iloc[-1] if not di_spread.isna().all() else 0.0
         latest_cmf = cmf.iloc[-1] if not cmf.isna().all() else 0.0
-
-        # RSI Velocity: change in RSI over last 5 bars — proxy for momentum persistence.
-        # Positive = accelerating momentum; Negative = fading momentum.
-        rsi_clean = rsi.dropna()
-        if len(rsi_clean) >= 6:
-            rsi_velocity = float(rsi_clean.iloc[-1]) - float(rsi_clean.iloc[-6])
-        else:
-            rsi_velocity = 0.0
         
         # Calculate Z-Score for ADX
         adx_z_score = calculate_z_score(adx.dropna())
@@ -127,7 +119,6 @@ def analyze_sector(name, data, benchmark_data, momentum_weights=None, reversal_w
             'Price': current_price,
             'Change_%': pct_change,
             'RSI': latest_rsi,
-            'RSI_Velocity': rsi_velocity,   # MJ1: RSI change over last 5 bars
             'ADX': latest_adx,
             'ADX_Z': adx_z_score,
             'DI_Spread': latest_di_spread,
